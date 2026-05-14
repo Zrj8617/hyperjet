@@ -3,10 +3,10 @@
 Convenience script to compare multiple algorithm training runs and generate comparative plots.
 
 Usage:
-    python utils/compare_algorithms.py --logs log_dir1 log_dir2 log_dir3 --names MADDPG MATD3 MAPPO --output comparison_plots
+    python plotting/compare_algorithms.py --logs log_dir1 log_dir2 log_dir3 --names MADDPG MATD3 MAPPO --output comparison_plots
 
 Example:
-    python utils/compare_algorithms.py \
+    python plotting/compare_algorithms.py \
         --logs train_logs/maddpg train_logs/matd3 train_logs/mappo \
         --names MADDPG MATD3 MAPPO \
         --output comparative_plots \
@@ -17,8 +17,9 @@ import argparse
 import sys
 from pathlib import Path
 
-# Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from utils.comparative_plots import compare_algorithms
 

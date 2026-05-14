@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import heapq
 import math
 import numpy as np
@@ -33,6 +33,9 @@ class PhaseOneStepStats:
     score_heuristic_disagreements: int = 0
     step_delay: float = 0.0
     step_energy: float = 0.0
+    completed_tasks_by_uav: dict[int, int] = field(default_factory=dict)
+    on_time_completed_tasks_by_uav: dict[int, int] = field(default_factory=dict)
+    progress_by_uav: dict[int, float] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -41,6 +44,7 @@ class TaskSupervisionTarget:
     feasible_uav_ids: list[int]
     heuristic_best_uav: int
     heuristic_eft_by_uav: dict[int, float]
+    heuristic_score_by_uav: dict[int, float]
 
 
 @dataclass(slots=True)
@@ -192,6 +196,10 @@ class PhaseOneTaskExecutor:
                     )
                     uav._energy_current_slot += energy_share
                     stats.step_energy += energy_share
+                    stats.progress_by_uav[uav.id] = (
+                        stats.progress_by_uav.get(uav.id, 0.0)
+                        + active_duration / max(config.TIME_SLOT_DURATION, config.EPSILON)
+                    )
                     slot_cursor = active_end
                 else:
                     slot_cursor = max(slot_cursor, running.planned_start)
@@ -236,16 +244,97 @@ class PhaseOneTaskExecutor:
                     candidates.append(schedule)
             if not candidates:
                 continue
-            heuristic_best = min(candidates, key=lambda schedule: schedule.planned_finish)
+            teacher_scores = {
+                schedule.uav_id: self._compute_teacher_score(
+                    schedule,
+                    task,
+                    task_manager,
+                    uavs[schedule.uav_id],
+                    current_time_step,
+                )
+                for schedule in candidates
+            }
+            heuristic_best = min(candidates, key=lambda schedule: teacher_scores[schedule.uav_id])
             targets.append(
                 TaskSupervisionTarget(
                     task_id=task.task_id,
                     feasible_uav_ids=[schedule.uav_id for schedule in candidates],
                     heuristic_best_uav=heuristic_best.uav_id,
                     heuristic_eft_by_uav={schedule.uav_id: float(schedule.planned_finish) for schedule in candidates},
+                    heuristic_score_by_uav={uav_id: float(score) for uav_id, score in teacher_scores.items()},
                 )
             )
         return targets
+
+    def _compute_teacher_score(
+        self,
+        schedule: ScheduledTask,
+        task: TaskNode,
+        task_manager: DAGTaskManager,
+        uav,
+        current_time_step: float,
+    ) -> float:
+        if not config.USE_DAG_AWARE_TEACHER_SCORE:
+            return float(schedule.planned_finish)
+
+        max_compute = float(max(np.max(config.UAV_COMPUTING_CAPACITY), 1.0))
+        compute_ratio = float(config.UAV_COMPUTING_CAPACITY[schedule.uav_id] / max_compute)
+        remaining_energy_ratio = float(getattr(uav, "remaining_energy_ratio", 1.0))
+        resource_quality = 0.7 * compute_ratio + 0.3 * remaining_energy_ratio
+
+        immediate_successors = len(task.successors)
+        descendant_count = task_manager.get_descendant_count(task.task_id)
+        unlock_bonus = (
+            config.DAG_TEACHER_SUCCESSOR_COMPUTE_BONUS
+            * config.TIME_SLOT_DURATION
+            * float(immediate_successors + 0.25 * descendant_count)
+            * resource_quality
+        )
+
+        critical_bonus = 0.0
+        if task_manager.is_critical_path_task(task.task_id):
+            critical_bonus = (
+                config.DAG_TEACHER_CRITICAL_COMPUTE_BONUS
+                * config.TIME_SLOT_DURATION
+                * resource_quality
+            )
+
+        same_parent_count = 0
+        for parent_id in task.predecessors:
+            parent_task = task_manager.tasks[parent_id]
+            if parent_task.assigned_uav == schedule.uav_id:
+                same_parent_count += 1
+        parent_locality_bonus = (
+            config.DAG_TEACHER_PARENT_LOCALITY_BONUS
+            * config.TIME_SLOT_DURATION
+            * float(same_parent_count)
+        )
+
+        dag_slack = task_manager.get_dag_remaining_slack(task.dag_id, current_time_step)
+        urgency = max(0.0, config.DAG_CRITICAL_SLACK_THRESHOLD - dag_slack) / float(max(config.DAG_CRITICAL_SLACK_THRESHOLD, 1))
+        completion_ratio = task_manager.get_dag_completion_ratio(task.dag_id)
+        deadline_margin = max(float(task.deadline) - float(schedule.planned_finish), 0.0)
+        margin_bonus = (
+            config.DAG_TEACHER_URGENCY_WEIGHT
+            * config.TIME_SLOT_DURATION
+            * urgency
+            * min(deadline_margin / float(max(config.DAG_CRITICAL_SLACK_THRESHOLD, 1)), 1.0)
+        )
+        completion_bonus = (
+            config.DAG_TEACHER_COMPLETION_WEIGHT
+            * config.TIME_SLOT_DURATION
+            * completion_ratio
+            * resource_quality
+        )
+
+        return float(
+            schedule.planned_finish
+            - unlock_bonus
+            - critical_bonus
+            - parent_locality_bonus
+            - margin_bonus
+            - completion_bonus
+        )
 
     def _start_due_task(self, task_manager: DAGTaskManager, uav_id: int, slot_end: float) -> None:
         queue = self._queued[uav_id]
@@ -278,11 +367,15 @@ class PhaseOneTaskExecutor:
         task = task_manager.tasks[running.task_id]
         self._finished_count += 1
         stats.completed_tasks += 1
+        stats.completed_tasks_by_uav[running.uav_id] = stats.completed_tasks_by_uav.get(running.uav_id, 0) + 1
         delay = max(0.0, running.planned_finish - task.arrival_time)
         stats.step_delay += delay
         if running.planned_finish <= task.deadline:
             self._on_time_finished_count += 1
             stats.on_time_completed_tasks += 1
+            stats.on_time_completed_tasks_by_uav[running.uav_id] = (
+                stats.on_time_completed_tasks_by_uav.get(running.uav_id, 0) + 1
+            )
         else:
             self._deadline_violations += 1
 

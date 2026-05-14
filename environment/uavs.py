@@ -42,6 +42,7 @@ class UAV:
         self._neighbors: list[UAV] = []
         self._current_service_request_count: int = 0
         self._energy_current_slot: float = 0.0  # Energy consumed for this time slot
+        self._remaining_energy: float = float(config.UAV_ENERGY_CAPACITY)
         self.collision_violation: bool = False  # Track if UAV has violated minimum separation
         self.boundary_violation: bool = False  # Track if UAV has gone out of bounds
 
@@ -56,6 +57,14 @@ class UAV:
     @property
     def energy(self) -> float:
         return self._energy_current_slot
+
+    @property
+    def remaining_energy(self) -> float:
+        return self._remaining_energy
+
+    @property
+    def remaining_energy_ratio(self) -> float:
+        return float(np.clip(self._remaining_energy / max(config.UAV_ENERGY_CAPACITY, config.EPSILON), 0.0, 1.0))
 
     @property
     def current_covered_ues(self) -> list[UE]:
@@ -297,3 +306,4 @@ class UAV:
         has_energy_request: bool = any(ue.current_request[0] == 2 for ue in self._current_covered_ues)
         if has_energy_request:
             self._energy_current_slot += config.WPT_TRANSMIT_POWER * config.TIME_SLOT_DURATION
+        self._remaining_energy = max(0.0, self._remaining_energy - self._energy_current_slot)

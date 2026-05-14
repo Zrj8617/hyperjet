@@ -29,8 +29,14 @@ class GraphSupervisionSample:
                 "task_uav_edges": self.snapshot.task_uav_edges,
                 "task_uav_edge_features": self.snapshot.task_uav_edge_features.tolist(),
                 "uav_uav_edges": self.snapshot.uav_uav_edges,
+                "service_domain_hyperedges": self.snapshot.service_domain_hyperedges,
+                "resource_competition_hyperedges": self.snapshot.resource_competition_hyperedges,
                 "collaborative_hyperedges": self.snapshot.collaborative_hyperedges,
                 "critical_hyperedges": self.snapshot.critical_hyperedges,
+                "critical_support_hyperedges": self.snapshot.critical_support_hyperedges,
+                "compute_attribute_hyperedges": self.snapshot.compute_attribute_hyperedges,
+                "communication_attribute_hyperedges": self.snapshot.communication_attribute_hyperedges,
+                "candidate_scarce_attribute_hyperedges": self.snapshot.candidate_scarce_attribute_hyperedges,
                 "attribute_hyperedges": self.snapshot.attribute_hyperedges,
             },
             "targets": [
@@ -39,6 +45,7 @@ class GraphSupervisionSample:
                     "feasible_uav_ids": target.feasible_uav_ids,
                     "heuristic_best_uav": target.heuristic_best_uav,
                     "heuristic_eft_by_uav": target.heuristic_eft_by_uav,
+                    "heuristic_score_by_uav": target.heuristic_score_by_uav,
                 }
                 for target in self.targets
             ],
@@ -49,9 +56,11 @@ def collect_score_supervision_dataset(
     num_episodes: int,
     steps_per_episode: int,
     action_mode: str = "zero",
+    seed: int | None = None,
 ) -> list[GraphSupervisionSample]:
-    np.random.seed(config.SEED)
-    torch.manual_seed(config.SEED)
+    base_seed = config.SEED if seed is None else int(seed)
+    np.random.seed(base_seed)
+    torch.manual_seed(base_seed)
     config.USE_HGNN_SCORE_ASSIGNMENT = False
     env = Env()
     samples: list[GraphSupervisionSample] = []

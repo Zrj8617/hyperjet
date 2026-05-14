@@ -114,12 +114,26 @@ DAG_MAX_READY_TASKS_FOR_GRAPH: int = 12
 DAG_COLLAB_TOP_M_TASKS: int = 5
 # 协同超边局部构造：候选UAV数 top-K
 DAG_COLLAB_TOP_K_UAVS: int = 3
+# 资源竞争超边：每个任务只把前K个候选UAV视为真实竞争对象
+DAG_RESOURCE_COMPETITION_TOP_K_UAVS: int = 2
 # task-UAV可执行边的最远距离阈值
 DAG_TASK_UAV_MAX_DISTANCE: float = 220.0
 # 单个UAV在阶段一中允许保留的最大排队任务数
 DAG_MAX_QUEUE_PER_UAV: int = 8
 # critical hyperedge使用的slack阈值
 DAG_CRITICAL_SLACK_THRESHOLD: int = 8
+# 高风险DAG评估阈值：按DAG内最紧原始deadline offset粗分高风险任务流
+DAG_HIGH_RISK_DEADLINE_THRESHOLD: int = DAG_CRITICAL_SLACK_THRESHOLD * 2
+# critical hyperedge单条最多任务数，避免全局urgent大超边过平滑
+DAG_CRITICAL_MAX_SIZE: int = 8
+# critical support超边：每步最多选择的高风险DAG数量
+DAG_CRITICAL_SUPPORT_TOP_DAGS: int = 3
+# critical support超边：每条边最多选择的紧急ready任务数
+DAG_CRITICAL_SUPPORT_TOP_TASKS: int = 5
+# critical support超边：每条边最多选择的UAV总数，包含anchor与support
+DAG_CRITICAL_SUPPORT_MAX_UAVS: int = 3
+# critical support超边：每个anchor最多选择的通信支持UAV数量
+DAG_CRITICAL_SUPPORT_MAX_NEIGHBORS: int = 2
 # 任务属性超边：每簇最多任务数
 DAG_ATTRIBUTE_TOP_M_TASKS: int = 5
 # 任务属性超边：按属性邻域构造时保留的簇数
@@ -134,6 +148,27 @@ PHASE_ONE_FINISH_REWARD: float = 2.0
 PHASE_ONE_DEADLINE_PENALTY: float = 2.5
 PHASE_ONE_ENERGY_PENALTY: float = 0.002
 PHASE_ONE_INVALID_PENALTY: float = 0.5
+# 阶段一RL轻量DAG job级奖励塑形：保留子任务级reward，同时追加完整DAG完成/失败增量项
+USE_PHASE_ONE_DAG_REWARD_SHAPING: bool = True
+PHASE_ONE_DAG_SUCCESS_REWARD: float = 6.0
+PHASE_ONE_DAG_ON_TIME_BONUS: float = 4.0
+PHASE_ONE_DAG_FAILURE_PENALTY: float = 6.0
+# Stage B专用MAPPO移动奖励：只给移动 actor 短因果链反馈，DAG指标继续logging
+USE_STAGE_B_MOVEMENT_REWARD: bool = False
+STAGE_B_READY_COVERAGE_REWARD: float = 0.3
+STAGE_B_ASSIGNED_COVERAGE_REWARD: float = 1.2
+STAGE_B_READY_COVERAGE_DELTA_REWARD: float = 0.0
+STAGE_B_ASSIGNED_COVERAGE_DELTA_REWARD: float = 0.0
+STAGE_B_ASSIGNED_DISTANCE_REWARD: float = 0.0
+STAGE_B_FEASIBLE_EDGE_REWARD: float = 0.1
+STAGE_B_PROGRESS_REWARD: float = 0.3
+STAGE_B_LOCAL_FINISH_REWARD: float = 0.0
+STAGE_B_LOCAL_ON_TIME_FINISH_REWARD: float = 0.0
+STAGE_B_DAG_SUCCESS_DELTA_REWARD: float = 0.05
+STAGE_B_DAG_FAILURE_DELTA_PENALTY: float = 0.03
+STAGE_B_MOVE_ENERGY_PENALTY: float = 0.2
+STAGE_B_COLLISION_PENALTY: float = 1.5
+STAGE_B_BOUNDARY_PENALTY: float = 1.5
 
 # ===================== 阶段一后半段：HGNN/Score 参数 =====================
 # 是否启用图编码后的 score assignment
@@ -142,16 +177,51 @@ USE_HGNN_SCORE_ASSIGNMENT: bool = False
 HGNN_SCORE_CHECKPOINT: str = ""
 # 若 score assignment 不可用或无分数时，是否回退到启发式调度
 SCORE_FALLBACK_TO_HEURISTIC: bool = True
+# 是否只让HGNN score接管高风险ready task；普通ready task继续走fallback
+USE_SELECTIVE_HGNN_SCORING: bool = False
+# selective scoring高风险判据：DAG/task剩余slack阈值
+SELECTIVE_HGNN_SLACK_THRESHOLD: int = DAG_CRITICAL_SLACK_THRESHOLD
+# selective scoring上下文风险窗口：critical/successor信号只在DAG slack进入该窗口时触发
+SELECTIVE_HGNN_CONTEXT_SLACK_MULTIPLIER: float = 2.0
+# selective scoring每步最多交给HGNN打分的ready task数；其余ready task回退fallback
+SELECTIVE_HGNN_MAX_TASKS_PER_STEP: int = 40
+# selective scoring高风险判据：候选UAV数量稀缺阈值
+SELECTIVE_HGNN_CANDIDATE_THRESHOLD: int = 2
+# selective scoring高风险判据：所属DAG已接近闭环的完成比例阈值
+SELECTIVE_HGNN_COMPLETION_THRESHOLD: float = 0.6
+# selective scoring高风险判据开关
+SELECTIVE_HGNN_USE_CRITICAL_PATH: bool = True
+SELECTIVE_HGNN_USE_CANDIDATE_SCARCITY: bool = True
+SELECTIVE_HGNN_USE_SUCCESSOR_UNLOCK: bool = True
+SELECTIVE_HGNN_USE_DAG_COMPLETION: bool = True
 # 消融实验开关：是否启用阶段一超边编码
 USE_PHASE_ONE_HYPEREDGES: bool = True
-# 消融实验开关：是否启用协同/资源联合超边
+# 消融实验开关：是否启用旧口径的协同/资源联合超边组
 USE_COLLABORATIVE_HYPEREDGES: bool = True
+# 消融实验开关：是否启用局部服务域超边
+USE_SERVICE_DOMAIN_HYPEREDGES: bool = True
+# 消融实验开关：是否启用共享候选资源竞争超边
+USE_RESOURCE_COMPETITION_HYPEREDGES: bool = True
 # 消融实验开关：是否启用关键阶段超边
 USE_CRITICAL_HYPEREDGES: bool = True
 # 消融实验开关：是否启用任务属性超边
-USE_ATTRIBUTE_HYPEREDGES: bool = True
+USE_ATTRIBUTE_HYPEREDGES: bool = False
+# 消融实验开关：是否启用计算密集属性风险超边
+USE_COMPUTE_ATTRIBUTE_HYPEREDGES: bool = False
+# 消融实验开关：是否启用通信密集属性风险超边
+USE_COMMUNICATION_ATTRIBUTE_HYPEREDGES: bool = False
+# 消融实验开关：是否启用候选资源稀缺属性风险超边
+USE_CANDIDATE_SCARCE_ATTRIBUTE_HYPEREDGES: bool = False
 # 消融实验开关：是否启用 task-UAV pair feature；关闭时保留维度但置零
 USE_TASK_UAV_PAIR_FEATURES: bool = True
+# task-UAV基础pair feature维度：上传/迁移/计算/排队/deadline/父节点迁移/队列/距离
+BASE_TASK_UAV_PAIR_FEATURE_DIM: int = 9
+# 是否把超边参与摘要直接拼入score head的pair feature
+USE_PAIR_HYPEREDGE_SCORE_FEATURES: bool = True
+# pair-level超边摘要维度：
+# service_pair, resource_pair, critical_pair, service_uav_ratio,
+# resource_uav_ratio, critical_uav_ratio, service_task_ratio, resource_task_ratio
+PAIR_HYPEREDGE_SCORE_FEATURE_DIM: int = 8
 # HGNN 隐层维度
 HGNN_HIDDEN_DIM: int = 64
 # HGNN 层数
@@ -169,6 +239,14 @@ SCORE_PRETRAIN_ACTION_MODE: str = "zero"  # 可选: "zero", "random"
 SCORE_RANKING_MARGIN: float = 0.05
 SCORE_RANKING_TOP1_WEIGHT: float = 0.2
 SCORE_SOFT_TARGET_TAU: float = 0.2
+# Stage A teacher目标：从纯planned_finish扩展到轻量DAG-aware utility。
+# 分数仍然越小越好；权重以TIME_SLOT_DURATION量级为基准，避免一次性偏离EFT teacher过大。
+USE_DAG_AWARE_TEACHER_SCORE: bool = True
+DAG_TEACHER_SUCCESSOR_COMPUTE_BONUS: float = 2.0
+DAG_TEACHER_CRITICAL_COMPUTE_BONUS: float = 4.0
+DAG_TEACHER_PARENT_LOCALITY_BONUS: float = 1.0
+DAG_TEACHER_URGENCY_WEIGHT: float = 0.3
+DAG_TEACHER_COMPLETION_WEIGHT: float = 0.2
 
 # ===================== 无人机参数 =====================
 # 无人机飞行高度，单位：米
@@ -220,6 +298,8 @@ assert MAX_ASSOCIATED_UES >= 1 and MAX_ASSOCIATED_UES <= NUM_UES
 POWER_MOVE: float = 100.0
 # 无人机悬停功耗，单位：瓦特
 POWER_HOVER: float = 80.0
+# 无人机初始/最大电量，单位：焦耳
+UAV_ENERGY_CAPACITY: float = 1_000_000.0
 
 # ===================== 请求相关参数 =====================
 # 服务类型数量
@@ -292,14 +372,48 @@ ALPHA_4 = 50.0
 REWARD_SCALING_FACTOR: float = 0.01
 
 # ===================== 神经网络输入输出维度 =====================
-# 智能体自身观测维度：位置(2)+缓存状态
-SELF_OBS_DIM: int = 2 + NUM_FILES
-# 用户设备观测维度：位置(2)+请求(3)+电量(1)
-UE_OBS_DIM: int = 2 + 3 + 1
-# 邻居无人机观测维度：位置(2)
-NEIGHBOR_OBS_DIM: int = 2
-# 单个智能体总观测维度
-OBS_DIM_SINGLE: int = SELF_OBS_DIM + (MAX_UAV_NEIGHBORS * NEIGHBOR_OBS_DIM) + (MAX_ASSOCIATED_UES * UE_OBS_DIM)
+# 旧请求/缓存管线观测维度：自身位置(2)+缓存状态(NUM_FILES)
+LEGACY_SELF_OBS_DIM: int = 2 + NUM_FILES
+# 旧请求/缓存管线UE观测维度：相对位置(2)+请求类型/大小/ID(3)+电量(1)
+LEGACY_UE_OBS_DIM: int = 2 + 3 + 1
+# 旧请求/缓存管线邻居观测维度：相对位置(2)
+LEGACY_NEIGHBOR_OBS_DIM: int = 2
+
+# 阶段一专用观测开关：去掉旧own_cache 75维，只保留UAV移动控制需要的局部摘要
+USE_PHASE_ONE_DEDICATED_OBS: bool = True
+# MAPPO紧凑观测开关：阶段一RL接入时只给UAV移动控制所需的局部统计摘要
+USE_MAPPO_COMPACT_OBS: bool = True
+# 阶段一自身观测维度：位置(2)+队列/忙闲/电量/邻居数/算力(5)
+PHASE_ONE_SELF_OBS_DIM: int = 7
+# 阶段一邻居观测维度：相对位置(2)+邻居队列长度/忙闲(2)
+PHASE_ONE_NEIGHBOR_OBS_DIM: int = 4
+# 阶段一任务摘要维度：相对位置(2)+slack/input/level/state(4)
+PHASE_ONE_TASK_OBS_DIM: int = 6
+# MAPPO紧凑局部任务/压力摘要维度
+MAPPO_COMPACT_LOCAL_OBS_DIM: int = 22
+
+_USE_PHASE_ONE_OBS_DIM: bool = (
+    ENABLE_DYNAMIC_DAG
+    and ENABLE_PHASE_ONE_EXECUTION
+    and not ENABLE_LEGACY_REQUEST_PIPELINE
+    and USE_PHASE_ONE_DEDICATED_OBS
+)
+_USE_MAPPO_COMPACT_OBS_DIM: bool = _USE_PHASE_ONE_OBS_DIM and USE_MAPPO_COMPACT_OBS
+# 以下三个名称保持给现有模型/attention模块使用，默认随当前实验管线选择活动obs维度
+SELF_OBS_DIM: int = PHASE_ONE_SELF_OBS_DIM if _USE_PHASE_ONE_OBS_DIM else LEGACY_SELF_OBS_DIM
+UE_OBS_DIM: int = (
+    MAPPO_COMPACT_LOCAL_OBS_DIM
+    if _USE_MAPPO_COMPACT_OBS_DIM
+    else PHASE_ONE_TASK_OBS_DIM
+    if _USE_PHASE_ONE_OBS_DIM
+    else LEGACY_UE_OBS_DIM
+)
+NEIGHBOR_OBS_DIM: int = PHASE_ONE_NEIGHBOR_OBS_DIM if _USE_PHASE_ONE_OBS_DIM else LEGACY_NEIGHBOR_OBS_DIM
+OBS_DIM_SINGLE: int = (
+    SELF_OBS_DIM + (MAX_UAV_NEIGHBORS * NEIGHBOR_OBS_DIM) + UE_OBS_DIM
+    if _USE_MAPPO_COMPACT_OBS_DIM
+    else SELF_OBS_DIM + (MAX_UAV_NEIGHBORS * NEIGHBOR_OBS_DIM) + (MAX_ASSOCIATED_UES * UE_OBS_DIM)
+)
 # 动作维度：移动角度+移动距离
 ACTION_DIM: int = 2
 # 神经网络隐藏层维度

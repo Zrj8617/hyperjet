@@ -77,22 +77,22 @@ def train_score_imitation(
                 if mode == "top1":
                     task_loss = loss_fn(logits_tensor, labels)
                 elif mode == "ranking":
-                    eft_lookup = target.heuristic_eft_by_uav
+                    score_lookup = target.heuristic_score_by_uav
                     pair_losses: list[torch.Tensor] = []
                     for i, uav_pos in enumerate(valid_uav_ids):
                         for j, uav_neg in enumerate(valid_uav_ids):
                             if i == j:
                                 continue
-                            eft_pos = eft_lookup[uav_pos]
-                            eft_neg = eft_lookup[uav_neg]
-                            if eft_pos >= eft_neg:
+                            score_pos = score_lookup[uav_pos]
+                            score_neg = score_lookup[uav_neg]
+                            if score_pos >= score_neg:
                                 continue
                             pos_score = edge_score_lookup[(target.task_id, uav_pos)].view(1)
                             neg_score = edge_score_lookup[(target.task_id, uav_neg)].view(1)
                             target_rank = torch.ones(1, device=pos_score.device)
                             raw_pair_loss = ranking_loss_fn(pos_score, neg_score, target_rank).view(())
-                            eft_gap = max(float(eft_neg - eft_pos), 0.0)
-                            gap_weight = 1.0 + eft_gap / max(abs(float(eft_neg)), config.EPSILON)
+                            teacher_gap = max(float(score_neg - score_pos), 0.0)
+                            gap_weight = 1.0 + teacher_gap / max(abs(float(score_neg)), config.EPSILON)
                             pair_losses.append(raw_pair_loss * gap_weight)
                     if not pair_losses:
                         task_loss = loss_fn(logits_tensor, labels)
@@ -101,9 +101,9 @@ def train_score_imitation(
                         top1_term = loss_fn(logits_tensor, labels)
                         task_loss = ranking_term + config.SCORE_RANKING_TOP1_WEIGHT * top1_term
                 elif mode == "soft":
-                    eft_lookup = target.heuristic_eft_by_uav
-                    eft_values = [float(eft_lookup[uav_id]) for uav_id in valid_uav_ids]
-                    soft_target = _build_soft_target(eft_values, logits_tensor.device).unsqueeze(0)
+                    score_lookup = target.heuristic_score_by_uav
+                    teacher_scores = [float(score_lookup[uav_id]) for uav_id in valid_uav_ids]
+                    soft_target = _build_soft_target(teacher_scores, logits_tensor.device).unsqueeze(0)
                     log_probs = F.log_softmax(logits_tensor, dim=1)
                     task_loss = kl_loss_fn(log_probs, soft_target)
                 else:

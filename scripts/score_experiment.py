@@ -6,6 +6,11 @@ import json
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+import sys
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import numpy as np
 import torch
@@ -25,8 +30,13 @@ class ExperimentConfigState:
     score_fallback_to_heuristic: bool
     use_phase_one_hyperedges: bool
     use_collaborative_hyperedges: bool
+    use_service_domain_hyperedges: bool
+    use_resource_competition_hyperedges: bool
     use_critical_hyperedges: bool
     use_attribute_hyperedges: bool
+    use_compute_attribute_hyperedges: bool
+    use_communication_attribute_hyperedges: bool
+    use_candidate_scarce_attribute_hyperedges: bool
     use_task_uav_pair_features: bool
 
 
@@ -43,8 +53,13 @@ def temporary_score_config(
         score_fallback_to_heuristic=config.SCORE_FALLBACK_TO_HEURISTIC,
         use_phase_one_hyperedges=config.USE_PHASE_ONE_HYPEREDGES,
         use_collaborative_hyperedges=config.USE_COLLABORATIVE_HYPEREDGES,
+        use_service_domain_hyperedges=config.USE_SERVICE_DOMAIN_HYPEREDGES,
+        use_resource_competition_hyperedges=config.USE_RESOURCE_COMPETITION_HYPEREDGES,
         use_critical_hyperedges=config.USE_CRITICAL_HYPEREDGES,
         use_attribute_hyperedges=config.USE_ATTRIBUTE_HYPEREDGES,
+        use_compute_attribute_hyperedges=config.USE_COMPUTE_ATTRIBUTE_HYPEREDGES,
+        use_communication_attribute_hyperedges=config.USE_COMMUNICATION_ATTRIBUTE_HYPEREDGES,
+        use_candidate_scarce_attribute_hyperedges=config.USE_CANDIDATE_SCARCE_ATTRIBUTE_HYPEREDGES,
         use_task_uav_pair_features=config.USE_TASK_UAV_PAIR_FEATURES,
     )
     config.USE_HGNN_SCORE_ASSIGNMENT = use_score
@@ -58,8 +73,13 @@ def temporary_score_config(
         config.SCORE_FALLBACK_TO_HEURISTIC = old_state.score_fallback_to_heuristic
         config.USE_PHASE_ONE_HYPEREDGES = old_state.use_phase_one_hyperedges
         config.USE_COLLABORATIVE_HYPEREDGES = old_state.use_collaborative_hyperedges
+        config.USE_SERVICE_DOMAIN_HYPEREDGES = old_state.use_service_domain_hyperedges
+        config.USE_RESOURCE_COMPETITION_HYPEREDGES = old_state.use_resource_competition_hyperedges
         config.USE_CRITICAL_HYPEREDGES = old_state.use_critical_hyperedges
         config.USE_ATTRIBUTE_HYPEREDGES = old_state.use_attribute_hyperedges
+        config.USE_COMPUTE_ATTRIBUTE_HYPEREDGES = old_state.use_compute_attribute_hyperedges
+        config.USE_COMMUNICATION_ATTRIBUTE_HYPEREDGES = old_state.use_communication_attribute_hyperedges
+        config.USE_CANDIDATE_SCARCE_ATTRIBUTE_HYPEREDGES = old_state.use_candidate_scarce_attribute_hyperedges
         config.USE_TASK_UAV_PAIR_FEATURES = old_state.use_task_uav_pair_features
 
 
@@ -194,10 +214,40 @@ def _episode_seed(seed: int, episode_idx: int) -> int:
 
 
 def _apply_ablation_config(ablation: str) -> None:
+    no_attribute_modes = {
+        "no_attribute",
+        "no_attribute_no_service_domain",
+        "no_attribute_no_resource_competition",
+        "no_attribute_no_collaborative",
+    }
+    no_service_domain_modes = {"no_service_domain", "no_attribute_no_service_domain", "no_attribute_no_collaborative"}
+    no_resource_competition_modes = {
+        "no_resource_competition",
+        "no_attribute_no_resource_competition",
+        "no_attribute_no_collaborative",
+    }
     config.USE_PHASE_ONE_HYPEREDGES = ablation != "no_hyperedge"
     config.USE_COLLABORATIVE_HYPEREDGES = ablation not in {"no_hyperedge", "no_collaborative"}
+    config.USE_SERVICE_DOMAIN_HYPEREDGES = (
+        ablation not in {"no_hyperedge", "no_collaborative"} and ablation not in no_service_domain_modes
+    )
+    config.USE_RESOURCE_COMPETITION_HYPEREDGES = (
+        ablation not in {"no_hyperedge", "no_collaborative"} and ablation not in no_resource_competition_modes
+    )
     config.USE_CRITICAL_HYPEREDGES = ablation not in {"no_hyperedge", "no_critical"}
-    config.USE_ATTRIBUTE_HYPEREDGES = ablation not in {"no_hyperedge", "no_attribute"}
+    config.USE_ATTRIBUTE_HYPEREDGES = ablation not in {"no_hyperedge"} and ablation not in no_attribute_modes
+    config.USE_COMPUTE_ATTRIBUTE_HYPEREDGES = config.USE_ATTRIBUTE_HYPEREDGES
+    config.USE_COMMUNICATION_ATTRIBUTE_HYPEREDGES = config.USE_ATTRIBUTE_HYPEREDGES
+    config.USE_CANDIDATE_SCARCE_ATTRIBUTE_HYPEREDGES = config.USE_ATTRIBUTE_HYPEREDGES
+    if ablation in {"no_compute_attribute", "no_communication_attribute", "no_candidate_scarce_attribute"}:
+        config.USE_COMPUTE_ATTRIBUTE_HYPEREDGES = ablation != "no_compute_attribute"
+        config.USE_COMMUNICATION_ATTRIBUTE_HYPEREDGES = ablation != "no_communication_attribute"
+        config.USE_CANDIDATE_SCARCE_ATTRIBUTE_HYPEREDGES = ablation != "no_candidate_scarce_attribute"
+    elif ablation in {"only_compute_attribute", "only_communication_attribute", "only_candidate_scarce_attribute"}:
+        config.USE_ATTRIBUTE_HYPEREDGES = True
+        config.USE_COMPUTE_ATTRIBUTE_HYPEREDGES = ablation == "only_compute_attribute"
+        config.USE_COMMUNICATION_ATTRIBUTE_HYPEREDGES = ablation == "only_communication_attribute"
+        config.USE_CANDIDATE_SCARCE_ATTRIBUTE_HYPEREDGES = ablation == "only_candidate_scarce_attribute"
     config.USE_TASK_UAV_PAIR_FEATURES = ablation != "no_pair_feature"
 
 
@@ -289,8 +339,8 @@ def pretrain_mode(
 ) -> tuple[str, list[dict[str, float]]]:
     np.random.seed(seed)
     torch.manual_seed(seed)
-    print(f"[score-exp] Collecting supervision for mode={mode}, action_mode={action_mode} on {device} ...")
-    samples = collect_score_supervision_dataset(episodes, steps_per_episode, action_mode=action_mode)
+    print(f"[score-exp] Collecting supervision for mode={mode}, action_mode={action_mode}, seed={seed} on {device} ...")
+    samples = collect_score_supervision_dataset(episodes, steps_per_episode, action_mode=action_mode, seed=seed)
     print(f"[score-exp] Collected {len(samples)} graph samples for mode={mode}.")
     scheduler, metrics = train_score_imitation(samples, epochs, learning_rate, device, mode=mode)
     run_dir = output_dir / f"{mode}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
@@ -325,11 +375,33 @@ def main() -> None:
         "--ablation",
         type=str,
         default="full",
-        choices=["full", "no_hyperedge", "no_pair_feature", "no_collaborative", "no_critical", "no_attribute"],
+        choices=[
+            "full",
+            "no_hyperedge",
+            "no_pair_feature",
+            "no_collaborative",
+            "no_service_domain",
+            "no_resource_competition",
+            "no_critical",
+            "no_attribute",
+            "no_attribute_no_service_domain",
+            "no_attribute_no_resource_competition",
+            "no_attribute_no_collaborative",
+            "no_compute_attribute",
+            "no_communication_attribute",
+            "no_candidate_scarce_attribute",
+            "only_compute_attribute",
+            "only_communication_attribute",
+            "only_candidate_scarce_attribute",
+        ],
         help=(
             "Ablation mode. full keeps all graph inputs; no_hyperedge disables all hyperedges; "
-            "no_pair_feature zeros pair features; no_collaborative/no_critical/no_attribute "
-            "disable one hyperedge type while keeping pair features."
+            "no_pair_feature zeros pair features; no_collaborative disables both split collaborative subtypes; "
+            "no_service_domain/no_resource_competition/no_critical/no_attribute "
+            "disable one hyperedge type while keeping pair features. no_attribute_no_service_domain, "
+            "no_attribute_no_resource_competition, and no_attribute_no_collaborative support paired "
+            "service/resource ablations under the no-attribute baseline. Attribute subtype modes can "
+            "disable or keep only compute/communication/candidate-scarce attribute hyperedges."
         ),
     )
     args = parser.parse_args()
@@ -345,8 +417,13 @@ def main() -> None:
         "feature_switches": {
             "use_phase_one_hyperedges": config.USE_PHASE_ONE_HYPEREDGES,
             "use_collaborative_hyperedges": config.USE_COLLABORATIVE_HYPEREDGES,
+            "use_service_domain_hyperedges": config.USE_SERVICE_DOMAIN_HYPEREDGES,
+            "use_resource_competition_hyperedges": config.USE_RESOURCE_COMPETITION_HYPEREDGES,
             "use_critical_hyperedges": config.USE_CRITICAL_HYPEREDGES,
             "use_attribute_hyperedges": config.USE_ATTRIBUTE_HYPEREDGES,
+            "use_compute_attribute_hyperedges": config.USE_COMPUTE_ATTRIBUTE_HYPEREDGES,
+            "use_communication_attribute_hyperedges": config.USE_COMMUNICATION_ATTRIBUTE_HYPEREDGES,
+            "use_candidate_scarce_attribute_hyperedges": config.USE_CANDIDATE_SCARCE_ATTRIBUTE_HYPEREDGES,
             "use_task_uav_pair_features": config.USE_TASK_UAV_PAIR_FEATURES,
         },
         "pretrain": {

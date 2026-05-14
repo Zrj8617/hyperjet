@@ -5,8 +5,14 @@ import numpy as np
 import torch
 import json
 from datetime import datetime
+from pathlib import Path
 import warnings
 import optuna.visualization as vis
+import sys
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import config
 from environment.env import Env

@@ -22,7 +22,34 @@ def _update_phase_one_diagnostics(accumulator: dict[str, float], diagnostics: di
 def _finalize_phase_one_diagnostics(accumulator: dict[str, float], episode_steps: int) -> dict[str, float]:
     if not accumulator or episode_steps <= 0:
         return {}
-    averaged_keys = {"ready_tasks", "active_tasks", "feasible_edges", "score_edge_count"}
+    averaged_keys = {
+        "ready_tasks",
+        "active_tasks",
+        "feasible_edges",
+        "score_edge_count",
+        "selective_scoring_enabled",
+        "selective_ready_tasks",
+        "selective_high_risk_tasks",
+        "selective_normal_tasks",
+        "selective_high_risk_ratio",
+        "selective_score_edges",
+        "stage_b_reward_enabled",
+        "stage_b_ready_coverage",
+        "stage_b_assigned_coverage",
+        "stage_b_ready_coverage_delta",
+        "stage_b_assigned_coverage_delta",
+        "stage_b_assigned_distance_reward",
+        "stage_b_feasible_edge_score",
+        "stage_b_progress_reward",
+        "stage_b_local_finish_reward",
+        "stage_b_local_on_time_finish_reward",
+        "stage_b_dag_success_delta",
+        "stage_b_dag_failure_delta",
+        "stage_b_dag_shaping_reward",
+        "stage_b_move_penalty",
+        "stage_b_collision_penalty",
+        "stage_b_boundary_penalty",
+    }
     finalized: dict[str, float] = {}
     for key, value in accumulator.items():
         if key in averaged_keys:
@@ -32,7 +59,21 @@ def _finalize_phase_one_diagnostics(accumulator: dict[str, float], episode_steps
     return finalized
 
 
-def train_on_policy(env: Env, model: MARLModel, logger: Logger, num_episodes: int, trial: optuna.Trial | None = None) -> float:
+def _finalize_phase_one_episode_metrics(env: Env, accumulator: dict[str, float], episode_steps: int) -> dict[str, float]:
+    metrics = _finalize_phase_one_diagnostics(accumulator, episode_steps)
+    if config.ENABLE_DYNAMIC_DAG and config.ENABLE_PHASE_ONE_EXECUTION:
+        metrics.update(env.task_manager.get_job_summary())
+    return metrics
+
+
+def train_on_policy(
+    env: Env,
+    model: MARLModel,
+    logger: Logger,
+    num_episodes: int,
+    trial: optuna.Trial | None = None,
+    progress_callback=None,
+) -> float:
     start_time: float = time.time()
     BufferClass: type[RolloutBuffer] = AttentionRolloutBuffer if "attention" in model.model_name.lower() else RolloutBuffer
     buffer: RolloutBuffer = BufferClass(num_agents=config.NUM_UAVS, obs_dim=config.OBS_DIM_SINGLE, action_dim=config.ACTION_DIM, buffer_size=config.PPO_ROLLOUT_LENGTH, device=model.device)
@@ -99,7 +140,7 @@ def train_on_policy(env: Env, model: MARLModel, logger: Logger, num_episodes: in
                     episode_energy,
                     episode_fairness,
                     episode_offline_rate,
-                    extra_metrics=_finalize_phase_one_diagnostics(episode_phase_one_diag, episode_step),
+                    extra_metrics=_finalize_phase_one_episode_metrics(env, episode_phase_one_diag, episode_step),
                 )
 
                 # Optuna Pruning Check
@@ -112,6 +153,13 @@ def train_on_policy(env: Env, model: MARLModel, logger: Logger, num_episodes: in
                 if episode % config.LOG_FREQ == 0:
                     elapsed_time: float = time.time() - start_time
                     logger.log_metrics(episode, episode_log, config.LOG_FREQ, elapsed_time, losses=recent_losses)
+                    if progress_callback is not None:
+                        progress_callback(
+                            episode,
+                            episode_reward,
+                            _finalize_phase_one_episode_metrics(env, episode_phase_one_diag, episode_step),
+                            recent_losses,
+                        )
 
                 obs = env.reset()
                 obs_arr = np.asarray(obs, dtype=np.float32)
@@ -225,7 +273,7 @@ def train_off_policy(env: Env, model: MARLModel, logger: Logger, num_episodes: i
             episode_energy,
             episode_fairness,
             episode_offline_rate,
-            extra_metrics=_finalize_phase_one_diagnostics(episode_phase_one_diag, step),
+            extra_metrics=_finalize_phase_one_episode_metrics(env, episode_phase_one_diag, step),
         )
         if episode % config.LOG_FREQ == 0:
             elapsed_time: float = time.time() - start_time
@@ -302,7 +350,7 @@ def train_random(env: Env, model: MARLModel, logger: Logger, num_episodes: int) 
             episode_energy,
             episode_fairness,
             episode_offline_rate,
-            extra_metrics=_finalize_phase_one_diagnostics(episode_phase_one_diag, step),
+            extra_metrics=_finalize_phase_one_episode_metrics(env, episode_phase_one_diag, step),
         )
         if episode % config.LOG_FREQ == 0:
             elapsed_time: float = time.time() - start_time

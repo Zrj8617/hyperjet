@@ -1,8 +1,10 @@
 # 导入用户设备(UE)类，用于表示终端用户设备
+from dataclasses import replace
+
 from environment.user_equipments import UE
 # 导入无人机(UAV)类，用于表示无人机执行节点
 from environment.uavs import UAV
-from environment.dag_tasks import DAGTaskManager
+from environment.dag_tasks import DAGTaskManager, TASK_STATE_QUEUED, TASK_STATE_RUNNING
 from environment.graph_builder import HeteroGraphBuilder, HeteroGraphSnapshot
 from environment.task_execution import PhaseOneTaskExecutor
 from marl_models.hgnn.scheduler import PhaseOneGraphScheduler, GraphSchedulingOutput
@@ -12,6 +14,23 @@ import config
 import numpy as np
 import os
 import torch
+
+
+def _load_scheduler_state_compatible(scheduler: PhaseOneGraphScheduler, state_dict: dict) -> None:
+    model_state = scheduler.state_dict()
+    compatible_state = {
+        key: value
+        for key, value in state_dict.items()
+        if key in model_state and tuple(value.shape) == tuple(model_state[key].shape)
+    }
+    skipped = sorted(set(state_dict) - set(compatible_state))
+    scheduler.load_state_dict(compatible_state, strict=False)
+    if skipped:
+        print(
+            "HGNN checkpoint partially loaded; skipped incompatible keys: "
+            + ", ".join(skipped[:8])
+            + (" ..." if len(skipped) > 8 else "")
+        )
 
 
 class Env:
@@ -35,7 +54,14 @@ class Env:
         self._task_executor: PhaseOneTaskExecutor = PhaseOneTaskExecutor()
         self._graph_scheduler: PhaseOneGraphScheduler | None = None
         self._latest_graph_scheduling_output: GraphSchedulingOutput | None = None
+        self._latest_selective_score_stats: dict[str, float] = {}
         self._latest_phase_one_diagnostics: dict[str, float] = {}
+        self._last_phase_one_job_counts: dict[str, float] = {
+            "dag_successful_jobs": 0.0,
+            "dag_on_time_successful_jobs": 0.0,
+            "dag_failed_jobs": 0.0,
+        }
+        self._latest_phase_one_reward_terms: dict[str, float] = {}
         if config.USE_HGNN_SCORE_ASSIGNMENT:
             device = "cuda" if torch.cuda.is_available() else "cpu"
             self._graph_scheduler = PhaseOneGraphScheduler(device=device)
@@ -43,7 +69,7 @@ class Env:
                 if not os.path.exists(config.HGNN_SCORE_CHECKPOINT):
                     raise FileNotFoundError(f"HGNN score checkpoint not found: {config.HGNN_SCORE_CHECKPOINT}")
                 state_dict = torch.load(config.HGNN_SCORE_CHECKPOINT, map_location=device)
-                self._graph_scheduler.load_state_dict(state_dict)
+                _load_scheduler_state_compatible(self._graph_scheduler, state_dict)
                 self._graph_scheduler.eval()
 
     @property
@@ -90,7 +116,14 @@ class Env:
         self._task_manager.reset()
         self._latest_graph_snapshot = None
         self._latest_graph_scheduling_output = None
+        self._latest_selective_score_stats = {}
         self._latest_phase_one_diagnostics = {}
+        self._last_phase_one_job_counts = {
+            "dag_successful_jobs": 0.0,
+            "dag_on_time_successful_jobs": 0.0,
+            "dag_failed_jobs": 0.0,
+        }
+        self._latest_phase_one_reward_terms = {}
         self._task_executor.reset(self._uavs)
         # 返回重置后的初始观测
         return self._get_obs()
@@ -123,9 +156,11 @@ class Env:
                 self._task_executor,
             )
             self._latest_graph_scheduling_output = None
+            self._latest_selective_score_stats = {}
             edge_scores: dict[tuple[str, int], float] | None = None
             if config.USE_HGNN_SCORE_ASSIGNMENT and self._graph_scheduler is not None and self._latest_graph_snapshot is not None:
-                self._latest_graph_scheduling_output = self._graph_scheduler.score_graph(self._latest_graph_snapshot)
+                score_snapshot = self._build_selective_score_snapshot(self._latest_graph_snapshot)
+                self._latest_graph_scheduling_output = self._graph_scheduler.score_graph(score_snapshot)
                 edge_scores = self._latest_graph_scheduling_output.edge_scores
             allowed_edges = (
                 set(self._latest_graph_snapshot.task_uav_edges) if self._latest_graph_snapshot is not None else None
@@ -178,12 +213,126 @@ class Env:
             uav.reset_for_next_step()
 
         # 9. 执行智能体输出的动作（更新无人机位置、避撞、越界处理）
+        assigned_distances_before_action = None
+        coverages_before_action = None
+        if config.ENABLE_PHASE_ONE_EXECUTION and config.USE_STAGE_B_MOVEMENT_REWARD:
+            assigned_distances_before_action = self._get_assigned_task_distances_by_uav()
+            coverages_before_action = self._get_stage_b_coverages_by_uav()
         self._apply_actions_to_env(actions)
+        if config.ENABLE_PHASE_ONE_EXECUTION and config.USE_STAGE_B_MOVEMENT_REWARD:
+            rewards = self._get_stage_b_movement_rewards(assigned_distances_before_action, coverages_before_action)
+            self._latest_phase_one_diagnostics.update(self._latest_phase_one_reward_terms)
 
         # 10. 获取下一步观测
         next_obs: list[np.ndarray] = self._get_obs()
         # 返回：下一观测、奖励、系统指标
         return next_obs, rewards, metrics
+
+    def _build_selective_score_snapshot(self, snapshot: HeteroGraphSnapshot) -> HeteroGraphSnapshot:
+        if not config.USE_SELECTIVE_HGNN_SCORING:
+            self._latest_selective_score_stats = {
+                "selective_scoring_enabled": 0.0,
+                "selective_ready_tasks": float(len(self._task_manager.get_ready_tasks())),
+                "selective_high_risk_tasks": 0.0,
+                "selective_normal_tasks": 0.0,
+                "selective_high_risk_ratio": 0.0,
+                "selective_score_edges": float(len(snapshot.task_uav_edges)),
+            }
+            return snapshot
+
+        high_risk_task_ids = self._selective_high_risk_task_ids(snapshot)
+        selected_indices = [
+            edge_idx
+            for edge_idx, (task_id, _) in enumerate(snapshot.task_uav_edges)
+            if task_id in high_risk_task_ids
+        ]
+        selected_edges = [snapshot.task_uav_edges[edge_idx] for edge_idx in selected_indices]
+        if selected_indices:
+            selected_edge_features = snapshot.task_uav_edge_features[selected_indices]
+        else:
+            feature_dim = snapshot.task_uav_edge_features.shape[1] if snapshot.task_uav_edge_features.ndim == 2 else 0
+            selected_edge_features = np.zeros((0, feature_dim), dtype=np.float32)
+
+        ready_count = len(self._task_manager.get_ready_tasks())
+        high_risk_count = len(high_risk_task_ids)
+        self._latest_selective_score_stats = {
+            "selective_scoring_enabled": 1.0,
+            "selective_ready_tasks": float(ready_count),
+            "selective_high_risk_tasks": float(high_risk_count),
+            "selective_normal_tasks": float(max(ready_count - high_risk_count, 0)),
+            "selective_high_risk_ratio": high_risk_count / float(max(ready_count, 1)),
+            "selective_score_edges": float(len(selected_edges)),
+        }
+        return replace(
+            snapshot,
+            task_uav_edges=selected_edges,
+            task_uav_edge_features=selected_edge_features,
+        )
+
+    def _selective_high_risk_task_ids(self, snapshot: HeteroGraphSnapshot) -> set[str]:
+        candidate_counts: dict[str, int] = {}
+        for task_id, _ in snapshot.task_uav_edges:
+            candidate_counts[task_id] = candidate_counts.get(task_id, 0) + 1
+
+        high_risk_candidates: list[tuple[float, str]] = []
+        for task in self._task_manager.get_ready_tasks():
+            candidate_count = candidate_counts.get(task.task_id, 0)
+            if candidate_count <= 0:
+                continue
+            task_slack = task.remaining_slack(self._time_step)
+            dag_slack = self._task_manager.get_dag_remaining_slack(task.dag_id, self._time_step)
+            dag_completion = self._task_manager.get_dag_completion_ratio(task.dag_id)
+            context_slack_threshold = (
+                config.SELECTIVE_HGNN_SLACK_THRESHOLD
+                * config.SELECTIVE_HGNN_CONTEXT_SLACK_MULTIPLIER
+            )
+            critical_path_task = (
+                config.SELECTIVE_HGNN_USE_CRITICAL_PATH
+                and self._task_manager.is_critical_path_task(task.task_id)
+            )
+            successor_unlock_task = (
+                config.SELECTIVE_HGNN_USE_SUCCESSOR_UNLOCK
+                and len(task.successors) > 0
+            )
+            is_high_risk = (
+                task_slack <= config.SELECTIVE_HGNN_SLACK_THRESHOLD
+                or dag_slack <= config.SELECTIVE_HGNN_SLACK_THRESHOLD
+            )
+            if config.SELECTIVE_HGNN_USE_CANDIDATE_SCARCITY:
+                is_high_risk = is_high_risk or candidate_count <= config.SELECTIVE_HGNN_CANDIDATE_THRESHOLD
+            if critical_path_task:
+                is_high_risk = (
+                    is_high_risk
+                    or dag_slack <= context_slack_threshold
+                    or dag_completion >= config.SELECTIVE_HGNN_COMPLETION_THRESHOLD
+                )
+            if successor_unlock_task:
+                is_high_risk = is_high_risk or dag_slack <= context_slack_threshold
+            if config.SELECTIVE_HGNN_USE_DAG_COMPLETION:
+                is_high_risk = (
+                    is_high_risk
+                    or (
+                        dag_completion >= config.SELECTIVE_HGNN_COMPLETION_THRESHOLD
+                        and (critical_path_task or successor_unlock_task)
+                    )
+                )
+            if is_high_risk:
+                risk_score = 0.0
+                risk_score += max(0.0, config.SELECTIVE_HGNN_SLACK_THRESHOLD - task_slack) * 4.0
+                risk_score += max(0.0, config.SELECTIVE_HGNN_SLACK_THRESHOLD - dag_slack) * 4.0
+                risk_score += max(0.0, context_slack_threshold - dag_slack)
+                risk_score += 40.0 if critical_path_task else 0.0
+                risk_score += 30.0 if candidate_count <= config.SELECTIVE_HGNN_CANDIDATE_THRESHOLD else 0.0
+                risk_score += 20.0 if successor_unlock_task else 0.0
+                risk_score += 20.0 * dag_completion
+                risk_score += float(len(task.successors))
+                high_risk_candidates.append((risk_score, task.task_id))
+
+        max_tasks = max(int(config.SELECTIVE_HGNN_MAX_TASKS_PER_STEP), 0)
+        high_risk_candidates.sort(reverse=True)
+        if max_tasks > 0:
+            high_risk_candidates = high_risk_candidates[:max_tasks]
+        return {task_id for _, task_id in high_risk_candidates}
 
     def _get_obs(self) -> list[np.ndarray]:
         """
@@ -211,8 +360,13 @@ class Env:
                 self._task_executor if config.ENABLE_PHASE_ONE_EXECUTION else None,
             )
             self._latest_graph_scheduling_output = None
+            self._latest_selective_score_stats = {}
             if config.USE_HGNN_SCORE_ASSIGNMENT and self._graph_scheduler is not None and self._latest_graph_snapshot is not None:
-                self._latest_graph_scheduling_output = self._graph_scheduler.score_graph(self._latest_graph_snapshot)
+                score_snapshot = self._build_selective_score_snapshot(self._latest_graph_snapshot)
+                self._latest_graph_scheduling_output = self._graph_scheduler.score_graph(score_snapshot)
+
+        if phase_one_mode and config.USE_MAPPO_COMPACT_OBS:
+            return self._get_mappo_compact_obs()
 
         # 存储所有UAV的观测
         all_obs: list[np.ndarray] = []
@@ -221,37 +375,67 @@ class Env:
         for uav in self._uavs:
             # ==================== Part 1: 无人机自身状态 ====================
             # 位置归一化（除以区域宽高）
-            own_pos: np.ndarray = uav.pos[:2] / np.array([config.AREA_WIDTH, config.AREA_HEIGHT], dtype=np.float32)
-            if phase_one_mode:
+            own_pos: np.ndarray = np.clip(
+                uav.pos[:2] / np.array([config.AREA_WIDTH, config.AREA_HEIGHT], dtype=np.float32),
+                0.0,
+                1.0,
+            )
+            if phase_one_mode and config.USE_PHASE_ONE_DEDICATED_OBS:
+                own_state = np.array(
+                    [
+                        own_pos[0],
+                        own_pos[1],
+                        min(self._task_executor.get_queue_length(uav.id) / float(max(config.DAG_MAX_QUEUE_PER_UAV, 1)), 1.0),
+                        1.0 if self._task_executor.is_uav_busy(uav.id) else 0.0,
+                        uav.remaining_energy_ratio,
+                        len(uav.neighbors) / float(max(config.NUM_UAVS - 1, 1)),
+                        config.UAV_COMPUTING_CAPACITY[uav.id] / float(np.max(config.UAV_COMPUTING_CAPACITY)),
+                    ],
+                    dtype=np.float32,
+                )
+            elif phase_one_mode:
                 own_cache = np.zeros(config.NUM_FILES, dtype=np.float32)
                 own_cache[0] = min(self._task_executor.get_queue_length(uav.id) / float(max(config.DAG_MAX_QUEUE_PER_UAV, 1)), 1.0)
                 own_cache[1] = 1.0 if self._task_executor.is_uav_busy(uav.id) else 0.0
-                own_cache[2] = min(uav.energy / max(config.POWER_MOVE + config.POWER_HOVER, config.EPSILON), 1.0)
+                own_cache[2] = uav.remaining_energy_ratio
                 own_cache[3] = len(uav.neighbors) / float(max(config.NUM_UAVS - 1, 1))
                 own_cache[4] = config.UAV_COMPUTING_CAPACITY[uav.id] / float(np.max(config.UAV_COMPUTING_CAPACITY))
+                own_state = np.concatenate([own_pos, own_cache])
             else:
                 # 缓存状态
                 own_cache = uav.cache.astype(np.float32)
-            # 拼接自身状态
-            own_state: np.ndarray = np.concatenate([own_pos, own_cache])
+                own_state = np.concatenate([own_pos, own_cache])
 
             # ==================== Part 2: 邻居无人机状态 ====================
             # 初始化邻居状态矩阵（最大邻居数 × 邻居观测维度）
-            neighbor_states: np.ndarray = np.zeros((config.MAX_UAV_NEIGHBORS, config.NEIGHBOR_OBS_DIM), dtype=np.float32)
+            neighbor_obs_dim = config.PHASE_ONE_NEIGHBOR_OBS_DIM if phase_one_mode and config.USE_PHASE_ONE_DEDICATED_OBS else config.LEGACY_NEIGHBOR_OBS_DIM
+            neighbor_states: np.ndarray = np.zeros((config.MAX_UAV_NEIGHBORS, neighbor_obs_dim), dtype=np.float32)
             # 按距离排序邻居，取前K个
             neighbors: list[UAV] = sorted(uav.neighbors, key=lambda n: float(np.linalg.norm(uav.pos - n.pos)))[: config.MAX_UAV_NEIGHBORS]
             # 逐个填入邻居相对位置
             for i, neighbor in enumerate(neighbors):
-                relative_pos: np.ndarray = (neighbor.pos[:2] - uav.pos[:2]) / config.UAV_SENSING_RANGE
-                neighbor_states[i, :] = relative_pos
+                relative_pos: np.ndarray = np.clip((neighbor.pos[:2] - uav.pos[:2]) / config.UAV_SENSING_RANGE, -1.0, 1.0)
+                if phase_one_mode and config.USE_PHASE_ONE_DEDICATED_OBS:
+                    neighbor_states[i, :] = np.array(
+                        [
+                            relative_pos[0],
+                            relative_pos[1],
+                            min(self._task_executor.get_queue_length(neighbor.id) / float(max(config.DAG_MAX_QUEUE_PER_UAV, 1)), 1.0),
+                            1.0 if self._task_executor.is_uav_busy(neighbor.id) else 0.0,
+                        ],
+                        dtype=np.float32,
+                    )
+                else:
+                    neighbor_states[i, :] = relative_pos
 
             # ==================== Part 3: 关联UE / 阶段一任务摘要 ====================
             # 初始化UE状态矩阵
-            ue_states: np.ndarray = np.zeros((config.MAX_ASSOCIATED_UES, config.UE_OBS_DIM), dtype=np.float32)
+            ue_obs_dim = config.PHASE_ONE_TASK_OBS_DIM if phase_one_mode and config.USE_PHASE_ONE_DEDICATED_OBS else config.LEGACY_UE_OBS_DIM
+            ue_states: np.ndarray = np.zeros((config.MAX_ASSOCIATED_UES, ue_obs_dim), dtype=np.float32)
             if phase_one_mode:
                 task_summaries = self._get_phase_one_task_summaries(uav.id)
                 for i, task in enumerate(task_summaries[: config.MAX_ASSOCIATED_UES]):
-                    delta_pos: np.ndarray = (task.source_pos - uav.pos[:2]) / config.AREA_WIDTH
+                    delta_pos: np.ndarray = np.clip((task.source_pos - uav.pos[:2]) / config.AREA_WIDTH, -1.0, 1.0)
                     state_norm = {
                         "ready": 0.0,
                         "queued": 1.0 / 3.0,
@@ -260,9 +444,9 @@ class Env:
                     }.get(task.state, 1.0)
                     task_info = np.array(
                         [
-                            max(task.remaining_slack(self._time_step), 0.0) / float(config.DAG_MAX_DEADLINE_OFFSET),
-                            task.input_size / float(config.DAG_MAX_INPUT_SIZE),
-                            task.level / float(max(config.DAG_MAX_TASK_LEVELS - 1, 1)),
+                            np.clip(task.remaining_slack(self._time_step) / float(max(config.DAG_MAX_DEADLINE_OFFSET, 1)), -1.0, 1.0),
+                            np.clip(task.input_size / float(max(config.DAG_MAX_INPUT_SIZE, 1)), 0.0, 1.0),
+                            np.clip(task.level / float(max(config.DAG_MAX_TASK_LEVELS - 1, 1)), 0.0, 1.0),
                             state_norm,
                         ],
                         dtype=np.float32,
@@ -290,6 +474,199 @@ class Env:
             obs: np.ndarray = np.concatenate([own_state, neighbor_states.flatten(), ue_states.flatten()])
             all_obs.append(obs)
 
+        return all_obs
+
+    def _get_mappo_compact_obs(self) -> list[np.ndarray]:
+        """Builds a compact phase-one observation for MAPPO UAV movement control."""
+        all_obs: list[np.ndarray] = []
+        edge_counts_by_uav: dict[int, int] = {uav.id: 0 for uav in self._uavs}
+        candidate_counts_by_task: dict[str, int] = {}
+        if self._latest_graph_snapshot is not None:
+            for task_id, uav_id in self._latest_graph_snapshot.task_uav_edges:
+                edge_counts_by_uav[uav_id] = edge_counts_by_uav.get(uav_id, 0) + 1
+                candidate_counts_by_task[task_id] = candidate_counts_by_task.get(task_id, 0) + 1
+        score_values_by_uav: dict[int, list[float]] = {uav.id: [] for uav in self._uavs}
+        if self._latest_graph_scheduling_output is not None:
+            for (_, uav_id), score in self._latest_graph_scheduling_output.edge_scores.items():
+                score_values_by_uav.setdefault(uav_id, []).append(float(np.tanh(score)))
+
+        service_participation_by_uav: dict[int, float] = {uav.id: 0.0 for uav in self._uavs}
+        resource_participation_by_uav: dict[int, float] = {uav.id: 0.0 for uav in self._uavs}
+        critical_participation_by_uav: dict[int, float] = {uav.id: 0.0 for uav in self._uavs}
+        feasible_tasks_by_uav: dict[int, set[str]] = {uav.id: set() for uav in self._uavs}
+        if self._latest_graph_snapshot is not None:
+            for task_id, uav_id in self._latest_graph_snapshot.task_uav_edges:
+                feasible_tasks_by_uav.setdefault(uav_id, set()).add(task_id)
+            service_total = float(max(len(self._latest_graph_snapshot.service_domain_hyperedges), 1))
+            resource_total = float(max(len(self._latest_graph_snapshot.resource_competition_hyperedges), 1))
+            critical_total = float(
+                max(
+                    len(self._latest_graph_snapshot.critical_hyperedges)
+                    + len(self._latest_graph_snapshot.critical_support_hyperedges),
+                    1,
+                )
+            )
+            for _, uav_ids in self._latest_graph_snapshot.service_domain_hyperedges:
+                for uav_id in uav_ids:
+                    service_participation_by_uav[uav_id] = service_participation_by_uav.get(uav_id, 0.0) + 1.0 / service_total
+            for _, uav_ids in self._latest_graph_snapshot.resource_competition_hyperedges:
+                for uav_id in uav_ids:
+                    resource_participation_by_uav[uav_id] = resource_participation_by_uav.get(uav_id, 0.0) + 1.0 / resource_total
+            for task_ids in self._latest_graph_snapshot.critical_hyperedges:
+                critical_task_set = set(task_ids)
+                for uav_id, feasible_task_ids in feasible_tasks_by_uav.items():
+                    if critical_task_set & feasible_task_ids:
+                        critical_participation_by_uav[uav_id] = critical_participation_by_uav.get(uav_id, 0.0) + 1.0 / critical_total
+            for task_ids, uav_ids in self._latest_graph_snapshot.critical_support_hyperedges:
+                critical_task_set = set(task_ids)
+                for uav_id in uav_ids:
+                    if uav_id in feasible_tasks_by_uav and critical_task_set & feasible_tasks_by_uav[uav_id]:
+                        critical_participation_by_uav[uav_id] = critical_participation_by_uav.get(uav_id, 0.0) + 1.0 / critical_total
+
+        max_capacity = float(max(np.max(config.UAV_COMPUTING_CAPACITY), 1))
+        max_queue = float(max(config.DAG_MAX_QUEUE_PER_UAV, 1))
+        max_ready_ref = float(max(config.MAX_ASSOCIATED_UES, 1))
+        max_slack = float(max(config.DAG_MAX_DEADLINE_OFFSET, 1))
+
+        for uav in self._uavs:
+            own_pos = np.clip(
+                uav.pos[:2] / np.array([config.AREA_WIDTH, config.AREA_HEIGHT], dtype=np.float32),
+                0.0,
+                1.0,
+            )
+            own_state = np.array(
+                [
+                    own_pos[0],
+                    own_pos[1],
+                    min(self._task_executor.get_queue_length(uav.id) / max_queue, 1.0),
+                    1.0 if self._task_executor.is_uav_busy(uav.id) else 0.0,
+                    uav.remaining_energy_ratio,
+                    len(uav.neighbors) / float(max(config.NUM_UAVS - 1, 1)),
+                    config.UAV_COMPUTING_CAPACITY[uav.id] / max_capacity,
+                ],
+                dtype=np.float32,
+            )
+
+            neighbor_states = np.zeros(
+                (config.MAX_UAV_NEIGHBORS, config.PHASE_ONE_NEIGHBOR_OBS_DIM),
+                dtype=np.float32,
+            )
+            neighbors = sorted(
+                uav.neighbors,
+                key=lambda n: float(np.linalg.norm(uav.pos - n.pos)),
+            )[: config.MAX_UAV_NEIGHBORS]
+            for i, neighbor in enumerate(neighbors):
+                relative_pos = np.clip((neighbor.pos[:2] - uav.pos[:2]) / config.UAV_SENSING_RANGE, -1.0, 1.0)
+                neighbor_states[i, :] = np.array(
+                    [
+                        relative_pos[0],
+                        relative_pos[1],
+                        min(self._task_executor.get_queue_length(neighbor.id) / max_queue, 1.0),
+                        1.0 if self._task_executor.is_uav_busy(neighbor.id) else 0.0,
+                    ],
+                    dtype=np.float32,
+                )
+
+            ready_local = []
+            active_local = []
+            assigned_local = []
+            for task in self._task_manager.get_active_tasks():
+                distance = float(np.linalg.norm(task.source_pos - uav.pos[:2]))
+                if distance <= config.DAG_TASK_UAV_MAX_DISTANCE:
+                    active_local.append(task)
+                    if task.is_ready:
+                        ready_local.append(task)
+                if task.assigned_uav == uav.id and task.state in {TASK_STATE_QUEUED, TASK_STATE_RUNNING}:
+                    assigned_local.append(task)
+
+            if ready_local:
+                slacks = np.array([task.remaining_slack(self._time_step) for task in ready_local], dtype=np.float32)
+                avg_slack = float(np.clip(np.mean(slacks) / max_slack, -1.0, 1.0))
+                min_slack = float(np.clip(np.min(slacks) / max_slack, -1.0, 1.0))
+                avg_input = float(np.clip(np.mean([task.input_size for task in ready_local]) / float(max(config.DAG_MAX_INPUT_SIZE, 1)), 0.0, 1.0))
+                avg_output = float(np.clip(np.mean([task.output_size for task in ready_local]) / float(max(config.DAG_MAX_OUTPUT_SIZE, 1)), 0.0, 1.0))
+                avg_cpu = float(np.clip(np.mean([task.cpu_cycles for task in ready_local]) / float(max(config.DAG_MAX_CPU_CYCLES, 1)), 0.0, 1.0))
+                urgent_ratio = float(np.mean(slacks <= config.DAG_CRITICAL_SLACK_THRESHOLD))
+                compute_heavy_ratio = float(
+                    np.mean([task.task_type == config.TASK_TYPE_COMPUTE for task in ready_local])
+                )
+                scarce_ratio = float(
+                    np.mean([candidate_counts_by_task.get(task.task_id, 0) <= 2 for task in ready_local])
+                )
+            else:
+                avg_slack = 0.0
+                min_slack = 0.0
+                avg_input = 0.0
+                avg_output = 0.0
+                avg_cpu = 0.0
+                urgent_ratio = 0.0
+                compute_heavy_ratio = 0.0
+                scarce_ratio = 0.0
+
+            has_critical_task = float(
+                any(
+                    task.remaining_slack(self._time_step) <= config.DAG_CRITICAL_SLACK_THRESHOLD
+                    for task in assigned_local
+                )
+            )
+            score_values = score_values_by_uav.get(uav.id, [])
+            if score_values:
+                score_array = np.array(score_values, dtype=np.float32)
+                score_mean = float(np.clip(np.mean(score_array), -1.0, 1.0))
+                score_max = float(np.clip(np.max(score_array), -1.0, 1.0))
+                score_std = float(np.clip(np.std(score_array), 0.0, 1.0))
+            else:
+                score_mean = 0.0
+                score_max = 0.0
+                score_std = 0.0
+            assigned_scores = []
+            if self._latest_graph_scheduling_output is not None:
+                for task in assigned_local:
+                    score = self._latest_graph_scheduling_output.edge_scores.get((task.task_id, uav.id))
+                    if score is not None:
+                        assigned_scores.append(float(np.tanh(score)))
+            if assigned_scores:
+                assigned_score_array = np.array(assigned_scores, dtype=np.float32)
+                assigned_score_mean = float(np.clip(np.mean(assigned_score_array), -1.0, 1.0))
+                assigned_score_max = float(np.clip(np.max(assigned_score_array), -1.0, 1.0))
+            else:
+                assigned_score_mean = 0.0
+                assigned_score_max = 0.0
+
+            covered_ue_count = sum(
+                1
+                for ue in self._ues
+                if float(np.linalg.norm(ue.pos[:2] - uav.pos[:2])) <= config.UAV_COVERAGE_RADIUS
+            )
+            local_summary = np.array(
+                [
+                    min(len(ready_local) / max_ready_ref, 1.0),
+                    min(len(active_local) / max_ready_ref, 1.0),
+                    min(len(assigned_local) / max_queue, 1.0),
+                    has_critical_task,
+                    min(edge_counts_by_uav.get(uav.id, 0) / max_ready_ref, 1.0),
+                    score_mean,
+                    score_max,
+                    score_std,
+                    assigned_score_mean,
+                    assigned_score_max,
+                    float(np.clip(service_participation_by_uav.get(uav.id, 0.0), 0.0, 1.0)),
+                    float(np.clip(resource_participation_by_uav.get(uav.id, 0.0), 0.0, 1.0)),
+                    float(np.clip(critical_participation_by_uav.get(uav.id, 0.0), 0.0, 1.0)),
+                    avg_slack,
+                    min_slack,
+                    avg_input,
+                    avg_output,
+                    avg_cpu,
+                    urgent_ratio,
+                    compute_heavy_ratio,
+                    scarce_ratio,
+                    min(covered_ue_count / float(max(config.NUM_UES, 1)), 1.0),
+                ],
+                dtype=np.float32,
+            )
+            obs = np.concatenate([own_state, neighbor_states.flatten(), local_summary])
+            all_obs.append(obs.astype(np.float32, copy=False))
         return all_obs
 
     def _get_phase_one_task_summaries(self, uav_id: int) -> list:
@@ -455,13 +832,58 @@ class Env:
     def _get_phase_one_rewards_and_metrics(self) -> tuple[list[float], tuple[float, float, float, float]]:
         stats = self._task_executor.latest_stats
         summary = self._task_executor.get_summary()
-        total_energy = sum(uav.energy for uav in self._uavs)
-        reward = (
-            config.PHASE_ONE_FINISH_REWARD * stats.on_time_completed_tasks
-            - config.PHASE_ONE_DEADLINE_PENALTY * max(stats.completed_tasks - stats.on_time_completed_tasks, 0)
-            - config.PHASE_ONE_ENERGY_PENALTY * total_energy
-            - config.PHASE_ONE_INVALID_PENALTY * stats.invalid_actions
+        job_summary = self._task_manager.get_job_summary()
+        new_successful_jobs = max(
+            job_summary["dag_successful_jobs"] - self._last_phase_one_job_counts["dag_successful_jobs"],
+            0.0,
         )
+        new_on_time_successful_jobs = max(
+            job_summary["dag_on_time_successful_jobs"]
+            - self._last_phase_one_job_counts["dag_on_time_successful_jobs"],
+            0.0,
+        )
+        new_failed_jobs = max(
+            job_summary["dag_failed_jobs"] - self._last_phase_one_job_counts["dag_failed_jobs"],
+            0.0,
+        )
+        self._last_phase_one_job_counts = {
+            "dag_successful_jobs": job_summary["dag_successful_jobs"],
+            "dag_on_time_successful_jobs": job_summary["dag_on_time_successful_jobs"],
+            "dag_failed_jobs": job_summary["dag_failed_jobs"],
+        }
+        total_energy = sum(uav.energy for uav in self._uavs)
+        task_finish_reward = config.PHASE_ONE_FINISH_REWARD * stats.on_time_completed_tasks
+        task_late_penalty = config.PHASE_ONE_DEADLINE_PENALTY * max(stats.completed_tasks - stats.on_time_completed_tasks, 0)
+        energy_penalty = config.PHASE_ONE_ENERGY_PENALTY * total_energy
+        invalid_penalty = config.PHASE_ONE_INVALID_PENALTY * stats.invalid_actions
+        dag_success_reward = 0.0
+        dag_on_time_bonus = 0.0
+        dag_failure_penalty = 0.0
+        if config.USE_PHASE_ONE_DAG_REWARD_SHAPING:
+            dag_success_reward = config.PHASE_ONE_DAG_SUCCESS_REWARD * new_successful_jobs
+            dag_on_time_bonus = config.PHASE_ONE_DAG_ON_TIME_BONUS * new_on_time_successful_jobs
+            dag_failure_penalty = config.PHASE_ONE_DAG_FAILURE_PENALTY * new_failed_jobs
+        reward = (
+            task_finish_reward
+            - task_late_penalty
+            - energy_penalty
+            - invalid_penalty
+            + dag_success_reward
+            + dag_on_time_bonus
+            - dag_failure_penalty
+        )
+        self._latest_phase_one_reward_terms = {
+            "task_finish_reward": float(task_finish_reward),
+            "task_late_penalty": float(task_late_penalty),
+            "energy_penalty": float(energy_penalty),
+            "invalid_penalty": float(invalid_penalty),
+            "dag_success_reward": float(dag_success_reward),
+            "dag_on_time_bonus": float(dag_on_time_bonus),
+            "dag_failure_penalty": float(dag_failure_penalty),
+            "new_successful_jobs": float(new_successful_jobs),
+            "new_on_time_successful_jobs": float(new_on_time_successful_jobs),
+            "new_failed_jobs": float(new_failed_jobs),
+        }
         rewards = [reward] * config.NUM_UAVS
         for uav in self._uavs:
             if uav.collision_violation:
@@ -474,6 +896,184 @@ class Env:
         deadline_violation_rate = summary["deadline_violations"] / max(summary["finished_count"], 1.0)
         invalid_rate = stats.invalid_actions / max(len(self._task_manager.get_ready_tasks()) + stats.newly_assigned_tasks, 1)
         return rewards, (avg_delay, total_energy, on_time_ratio, invalid_rate + deadline_violation_rate)
+
+    def _get_assigned_task_distances_by_uav(self) -> dict[int, float]:
+        distances: dict[int, float] = {}
+        active_tasks = self._task_manager.get_active_tasks()
+        for uav in self._uavs:
+            assigned_distances = [
+                float(np.linalg.norm(task.source_pos - uav.pos[:2]))
+                for task in active_tasks
+                if task.assigned_uav == uav.id and task.state in {TASK_STATE_QUEUED, TASK_STATE_RUNNING}
+            ]
+            if assigned_distances:
+                distances[uav.id] = float(np.mean(assigned_distances))
+        return distances
+
+    def _get_stage_b_coverages_by_uav(self) -> dict[int, tuple[float, float]]:
+        coverages: dict[int, tuple[float, float]] = {}
+        max_ready_ref = float(max(config.MAX_ASSOCIATED_UES, 1))
+        max_queue_ref = float(max(config.DAG_MAX_QUEUE_PER_UAV, 1))
+        active_tasks = self._task_manager.get_active_tasks()
+        for uav in self._uavs:
+            local_ready_count = 0
+            local_assigned_count = 0
+            for task in active_tasks:
+                distance = float(np.linalg.norm(task.source_pos - uav.pos[:2]))
+                if task.is_ready and distance <= config.DAG_TASK_UAV_MAX_DISTANCE:
+                    local_ready_count += 1
+                if (
+                    task.assigned_uav == uav.id
+                    and task.state in {TASK_STATE_QUEUED, TASK_STATE_RUNNING}
+                    and distance <= config.DAG_TASK_UAV_MAX_DISTANCE
+                ):
+                    local_assigned_count += 1
+            coverages[uav.id] = (
+                min(local_ready_count / max_ready_ref, 1.0),
+                min(local_assigned_count / max_queue_ref, 1.0),
+            )
+        return coverages
+
+    def _get_stage_b_movement_rewards(
+        self,
+        assigned_distances_before_action: dict[int, float] | None = None,
+        coverages_before_action: dict[int, tuple[float, float]] | None = None,
+    ) -> list[float]:
+        """Stage B MAPPO reward for UAV movement control only.
+
+        The global DAG/task assignment reward is still logged, but the actor
+        receives local signals that the current movement can directly affect.
+        """
+        edge_counts_by_uav: dict[int, int] = {uav.id: 0 for uav in self._uavs}
+        if self._latest_graph_snapshot is not None:
+            for _, uav_id in self._latest_graph_snapshot.task_uav_edges:
+                edge_counts_by_uav[uav_id] = edge_counts_by_uav.get(uav_id, 0) + 1
+
+        max_ready_ref = float(max(config.MAX_ASSOCIATED_UES, 1))
+        max_queue_ref = float(max(config.DAG_MAX_QUEUE_PER_UAV, 1))
+        max_edge_ref = float(max(config.MAX_ASSOCIATED_UES, 1))
+        max_move_energy = float(max(config.POWER_MOVE * config.TIME_SLOT_DURATION, config.EPSILON))
+        rewards: list[float] = []
+        ready_coverages: list[float] = []
+        assigned_coverages: list[float] = []
+        ready_coverage_deltas: list[float] = []
+        assigned_coverage_deltas: list[float] = []
+        assigned_distance_rewards: list[float] = []
+        feasible_edge_scores: list[float] = []
+        progress_rewards: list[float] = []
+        local_finish_rewards: list[float] = []
+        local_on_time_finish_rewards: list[float] = []
+        move_penalties: list[float] = []
+        collision_penalties: list[float] = []
+        boundary_penalties: list[float] = []
+
+        active_tasks = self._task_manager.get_active_tasks()
+        stats = self._task_executor.latest_stats
+        assigned_distances_after_action = self._get_assigned_task_distances_by_uav()
+        new_successful_jobs = float(self._latest_phase_one_reward_terms.get("new_successful_jobs", 0.0))
+        new_failed_jobs = float(self._latest_phase_one_reward_terms.get("new_failed_jobs", 0.0))
+        job_summary = self._task_manager.get_job_summary()
+        active_job_denominator = max(
+            float(job_summary.get("dag_incomplete_jobs", 0.0)) + new_successful_jobs + new_failed_jobs,
+            1.0,
+        )
+        dag_success_delta = float(np.clip(new_successful_jobs / active_job_denominator, 0.0, 1.0))
+        dag_failure_delta = float(np.clip(new_failed_jobs / active_job_denominator, 0.0, 1.0))
+        dag_shaping_reward = (
+            config.STAGE_B_DAG_SUCCESS_DELTA_REWARD * dag_success_delta
+            - config.STAGE_B_DAG_FAILURE_DELTA_PENALTY * dag_failure_delta
+        )
+        for uav in self._uavs:
+            local_ready_count = 0
+            local_assigned_count = 0
+            for task in active_tasks:
+                distance = float(np.linalg.norm(task.source_pos - uav.pos[:2]))
+                if task.is_ready and distance <= config.DAG_TASK_UAV_MAX_DISTANCE:
+                    local_ready_count += 1
+                if (
+                    task.assigned_uav == uav.id
+                    and task.state in {TASK_STATE_QUEUED, TASK_STATE_RUNNING}
+                    and distance <= config.DAG_TASK_UAV_MAX_DISTANCE
+                ):
+                    local_assigned_count += 1
+
+            ready_coverage = min(local_ready_count / max_ready_ref, 1.0)
+            assigned_coverage = min(local_assigned_count / max_queue_ref, 1.0)
+            ready_coverage_delta = 0.0
+            assigned_coverage_delta = 0.0
+            if coverages_before_action is not None and uav.id in coverages_before_action:
+                ready_before, assigned_before = coverages_before_action[uav.id]
+                ready_coverage_delta = float(np.clip(ready_coverage - ready_before, -1.0, 1.0))
+                assigned_coverage_delta = float(np.clip(assigned_coverage - assigned_before, -1.0, 1.0))
+            assigned_distance_reward = 0.0
+            if assigned_distances_before_action is not None and uav.id in assigned_distances_before_action:
+                after_distance = assigned_distances_after_action.get(
+                    uav.id,
+                    assigned_distances_before_action[uav.id],
+                )
+                distance_improvement = assigned_distances_before_action[uav.id] - after_distance
+                assigned_distance_reward = float(
+                    np.clip(distance_improvement / max(config.DAG_TASK_UAV_MAX_DISTANCE, config.EPSILON), -1.0, 1.0)
+                )
+            feasible_edge_score = min(edge_counts_by_uav.get(uav.id, 0) / max_edge_ref, 1.0)
+            progress_reward = min(float(stats.progress_by_uav.get(uav.id, 0.0)), 1.0)
+            local_finish_reward = float(stats.completed_tasks_by_uav.get(uav.id, 0))
+            local_on_time_finish_reward = float(stats.on_time_completed_tasks_by_uav.get(uav.id, 0))
+            time_moving = float(getattr(uav, "_dist_moved", 0.0)) / float(max(config.UAV_SPEED, config.EPSILON))
+            move_energy = config.POWER_MOVE * min(time_moving, config.TIME_SLOT_DURATION)
+            move_penalty = min(move_energy / max_move_energy, 1.0)
+            collision_penalty = 1.0 if uav.collision_violation else 0.0
+            boundary_penalty = 1.0 if uav.boundary_violation else 0.0
+            reward = (
+                config.STAGE_B_READY_COVERAGE_REWARD * ready_coverage
+                + config.STAGE_B_ASSIGNED_COVERAGE_REWARD * assigned_coverage
+                + config.STAGE_B_READY_COVERAGE_DELTA_REWARD * ready_coverage_delta
+                + config.STAGE_B_ASSIGNED_COVERAGE_DELTA_REWARD * assigned_coverage_delta
+                + config.STAGE_B_ASSIGNED_DISTANCE_REWARD * assigned_distance_reward
+                + config.STAGE_B_FEASIBLE_EDGE_REWARD * feasible_edge_score
+                + config.STAGE_B_PROGRESS_REWARD * progress_reward
+                + config.STAGE_B_LOCAL_FINISH_REWARD * local_finish_reward
+                + config.STAGE_B_LOCAL_ON_TIME_FINISH_REWARD * local_on_time_finish_reward
+                + dag_shaping_reward
+                - config.STAGE_B_MOVE_ENERGY_PENALTY * move_penalty
+                - config.STAGE_B_COLLISION_PENALTY * collision_penalty
+                - config.STAGE_B_BOUNDARY_PENALTY * boundary_penalty
+            )
+            rewards.append(float(reward))
+            ready_coverages.append(float(ready_coverage))
+            assigned_coverages.append(float(assigned_coverage))
+            ready_coverage_deltas.append(float(ready_coverage_delta))
+            assigned_coverage_deltas.append(float(assigned_coverage_delta))
+            assigned_distance_rewards.append(float(assigned_distance_reward))
+            feasible_edge_scores.append(float(feasible_edge_score))
+            progress_rewards.append(float(progress_reward))
+            local_finish_rewards.append(float(local_finish_reward))
+            local_on_time_finish_rewards.append(float(local_on_time_finish_reward))
+            move_penalties.append(float(move_penalty))
+            collision_penalties.append(float(collision_penalty))
+            boundary_penalties.append(float(boundary_penalty))
+
+        self._latest_phase_one_reward_terms.update(
+            {
+                "stage_b_reward_enabled": 1.0,
+                "stage_b_ready_coverage": float(np.mean(ready_coverages)) if ready_coverages else 0.0,
+                "stage_b_assigned_coverage": float(np.mean(assigned_coverages)) if assigned_coverages else 0.0,
+                "stage_b_ready_coverage_delta": float(np.mean(ready_coverage_deltas)) if ready_coverage_deltas else 0.0,
+                "stage_b_assigned_coverage_delta": float(np.mean(assigned_coverage_deltas)) if assigned_coverage_deltas else 0.0,
+                "stage_b_assigned_distance_reward": float(np.mean(assigned_distance_rewards)) if assigned_distance_rewards else 0.0,
+                "stage_b_feasible_edge_score": float(np.mean(feasible_edge_scores)) if feasible_edge_scores else 0.0,
+                "stage_b_progress_reward": float(np.mean(progress_rewards)) if progress_rewards else 0.0,
+                "stage_b_local_finish_reward": float(np.mean(local_finish_rewards)) if local_finish_rewards else 0.0,
+                "stage_b_local_on_time_finish_reward": float(np.mean(local_on_time_finish_rewards)) if local_on_time_finish_rewards else 0.0,
+                "stage_b_dag_success_delta": dag_success_delta,
+                "stage_b_dag_failure_delta": dag_failure_delta,
+                "stage_b_dag_shaping_reward": dag_shaping_reward,
+                "stage_b_move_penalty": float(np.mean(move_penalties)) if move_penalties else 0.0,
+                "stage_b_collision_penalty": float(np.mean(collision_penalties)) if collision_penalties else 0.0,
+                "stage_b_boundary_penalty": float(np.mean(boundary_penalties)) if boundary_penalties else 0.0,
+            }
+        )
+        return rewards
 
     def _build_phase_one_diagnostics(self) -> dict[str, float]:
         stats = self._task_executor.latest_stats
@@ -489,4 +1089,6 @@ class Env:
             "score_heuristic_disagreements": float(stats.score_heuristic_disagreements),
             "invalid_assignments": float(stats.invalid_actions),
         }
+        diagnostics.update(self._latest_selective_score_stats)
+        diagnostics.update(self._latest_phase_one_reward_terms)
         return diagnostics

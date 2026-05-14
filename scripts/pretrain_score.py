@@ -5,8 +5,14 @@ import dataclasses
 import json
 from datetime import datetime
 from pathlib import Path
+import sys
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import torch
+import numpy as np
 
 import config
 from marl_models.hgnn.pretrain import save_pretrained_scheduler, train_score_imitation
@@ -23,15 +29,18 @@ def main() -> None:
     parser.add_argument("--action_mode", type=str, default=config.SCORE_PRETRAIN_ACTION_MODE, choices=["zero", "random"])
     parser.add_argument("--output_dir", type=str, default="pretrained_score")
     parser.add_argument("--save_dataset", action="store_true")
+    parser.add_argument("--seed", type=int, default=config.SEED)
     args = parser.parse_args()
 
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     device = "cuda" if torch.cuda.is_available() else "cpu"
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
-    print(f"[score-pretrain] device={device} mode={args.mode} action_mode={args.action_mode}")
+    print(f"[score-pretrain] device={device} mode={args.mode} action_mode={args.action_mode} seed={args.seed}")
     print("[score-pretrain] Stage 1/2: collect supervision samples")
-    samples = collect_score_supervision_dataset(args.episodes, args.steps_per_episode, action_mode=args.action_mode)
+    samples = collect_score_supervision_dataset(args.episodes, args.steps_per_episode, action_mode=args.action_mode, seed=args.seed)
     print(f"[score-pretrain] Collected {len(samples)} graph samples.")
 
     if args.save_dataset:

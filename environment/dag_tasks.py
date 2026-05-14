@@ -106,23 +106,138 @@ class DAGTaskManager:
         task_ids = self._tasks_by_ue.get(ue_id, [])
         return [self._tasks[task_id] for task_id in task_ids]
 
+    def get_job_tasks(self, dag_id: str) -> list[TaskNode]:
+        job = self._jobs.get(dag_id)
+        if job is None:
+            return []
+        return [self._tasks[task_id] for task_id in job.task_ids if task_id in self._tasks]
+
+    def get_dag_remaining_slack(self, dag_id: str, current_time_step: float) -> float:
+        active_tasks = [task for task in self.get_job_tasks(dag_id) if not task.is_terminal]
+        if not active_tasks:
+            return 0.0
+        return float(min(task.deadline for task in active_tasks) - current_time_step)
+
+    def get_dag_completion_ratio(self, dag_id: str) -> float:
+        job_tasks = self.get_job_tasks(dag_id)
+        if not job_tasks:
+            return 0.0
+        finished = sum(1 for task in job_tasks if task.state == TASK_STATE_FINISHED)
+        return float(finished / max(len(job_tasks), 1))
+
+    def get_descendant_count(self, task_id: str) -> int:
+        if task_id not in self._tasks:
+            return 0
+        visited: set[str] = set()
+        stack = list(self._tasks[task_id].successors)
+        while stack:
+            child_id = stack.pop()
+            if child_id in visited:
+                continue
+            visited.add(child_id)
+            child = self._tasks.get(child_id)
+            if child is not None:
+                stack.extend(child.successors)
+        return len(visited)
+
+    def is_critical_path_task(self, task_id: str) -> bool:
+        task = self._tasks.get(task_id)
+        if task is None:
+            return False
+        job_tasks = self.get_job_tasks(task.dag_id)
+        if not job_tasks:
+            return False
+        max_level = max(job_task.level for job_task in job_tasks)
+        high_level = task.level >= max_level - 1
+        branching = len(task.successors) >= 2 or self.get_descendant_count(task_id) >= 2
+        tight_slack = task.deadline - task.arrival_time <= config.DAG_CRITICAL_SLACK_THRESHOLD
+        return bool(high_level or branching or tight_slack)
+
+    def is_high_risk_job(self, dag_id: str) -> bool:
+        job_tasks = self.get_job_tasks(dag_id)
+        if not job_tasks:
+            return False
+        min_original_slack = min(task.deadline - task.arrival_time for task in job_tasks)
+        return bool(min_original_slack <= config.DAG_HIGH_RISK_DEADLINE_THRESHOLD)
+
     def get_job_summary(self) -> dict[str, float]:
         total_jobs = len(self._jobs)
         successful_jobs = 0
         failed_jobs = 0
         incomplete_jobs = 0
         on_time_successful_jobs = 0
+        high_risk_jobs = 0
+        high_risk_successful_jobs = 0
+        high_risk_failed_jobs = 0
+        high_risk_incomplete_jobs = 0
+        high_risk_on_time_successful_jobs = 0
+        high_risk_completion_times: list[float] = []
+        completed_job_completion_times: list[float] = []
+        on_time_job_completion_times: list[float] = []
+        completed_job_tardiness: list[float] = []
+        generated_tasks = len(self._tasks)
+        finished_tasks = 0
+        dropped_tasks = 0
+        on_time_finished_tasks = 0
+        critical_path_tasks = 0
+        critical_path_finished_tasks = 0
+        critical_path_dropped_tasks = 0
+        critical_path_on_time_finished_tasks = 0
+        critical_path_completion_times: list[float] = []
+        critical_path_tardiness: list[float] = []
 
         for job in self._jobs.values():
             job_tasks = [self._tasks[task_id] for task_id in job.task_ids]
+            high_risk_job = self.is_high_risk_job(job.dag_id)
+            if high_risk_job:
+                high_risk_jobs += 1
             if all(task.state == TASK_STATE_FINISHED for task in job_tasks):
                 successful_jobs += 1
+                job_finish_time = max(float(task.finish_time) for task in job_tasks if task.finish_time is not None)
+                job_completion_time = job_finish_time - float(job.arrival_time)
+                job_tardiness = max(
+                    max(float(task.finish_time) - float(task.deadline), 0.0)
+                    for task in job_tasks
+                    if task.finish_time is not None
+                )
+                completed_job_completion_times.append(job_completion_time)
+                completed_job_tardiness.append(job_tardiness)
+                if high_risk_job:
+                    high_risk_successful_jobs += 1
+                    high_risk_completion_times.append(job_completion_time)
                 if all(task.finish_time is not None and task.finish_time <= task.deadline for task in job_tasks):
                     on_time_successful_jobs += 1
+                    on_time_job_completion_times.append(job_completion_time)
+                    if high_risk_job:
+                        high_risk_on_time_successful_jobs += 1
             elif any(task.state == TASK_STATE_DROPPED for task in job_tasks):
                 failed_jobs += 1
+                if high_risk_job:
+                    high_risk_failed_jobs += 1
             else:
                 incomplete_jobs += 1
+                if high_risk_job:
+                    high_risk_incomplete_jobs += 1
+
+        for task in self._tasks.values():
+            is_critical_path = self.is_critical_path_task(task.task_id)
+            if is_critical_path:
+                critical_path_tasks += 1
+            if task.state == TASK_STATE_FINISHED:
+                finished_tasks += 1
+                if task.finish_time is not None and task.finish_time <= task.deadline:
+                    on_time_finished_tasks += 1
+                if is_critical_path:
+                    critical_path_finished_tasks += 1
+                    if task.finish_time is not None:
+                        critical_path_completion_times.append(float(task.finish_time) - float(task.arrival_time))
+                        critical_path_tardiness.append(max(float(task.finish_time) - float(task.deadline), 0.0))
+                    if task.finish_time is not None and task.finish_time <= task.deadline:
+                        critical_path_on_time_finished_tasks += 1
+            elif task.state == TASK_STATE_DROPPED:
+                dropped_tasks += 1
+                if is_critical_path:
+                    critical_path_dropped_tasks += 1
 
         return {
             "dag_total_jobs": float(total_jobs),
@@ -134,6 +249,37 @@ class DAGTaskManager:
             "dag_failure_rate": failed_jobs / max(total_jobs, 1),
             "dag_incomplete_rate": incomplete_jobs / max(total_jobs, 1),
             "dag_on_time_success_rate": on_time_successful_jobs / max(total_jobs, 1),
+            "dag_avg_completion_time": float(np.mean(completed_job_completion_times)) if completed_job_completion_times else 0.0,
+            "dag_avg_on_time_completion_time": float(np.mean(on_time_job_completion_times)) if on_time_job_completion_times else 0.0,
+            "dag_avg_tardiness": float(np.mean(completed_job_tardiness)) if completed_job_tardiness else 0.0,
+            "dag_max_tardiness": float(np.max(completed_job_tardiness)) if completed_job_tardiness else 0.0,
+            "dag_generated_tasks": float(generated_tasks),
+            "dag_finished_tasks": float(finished_tasks),
+            "dag_dropped_tasks": float(dropped_tasks),
+            "dag_on_time_finished_tasks": float(on_time_finished_tasks),
+            "dag_task_finish_rate": finished_tasks / max(generated_tasks, 1),
+            "dag_task_drop_rate": dropped_tasks / max(generated_tasks, 1),
+            "dag_task_on_time_rate": on_time_finished_tasks / max(finished_tasks, 1),
+            "dag_high_risk_jobs": float(high_risk_jobs),
+            "dag_high_risk_successful_jobs": float(high_risk_successful_jobs),
+            "dag_high_risk_failed_jobs": float(high_risk_failed_jobs),
+            "dag_high_risk_incomplete_jobs": float(high_risk_incomplete_jobs),
+            "dag_high_risk_on_time_successful_jobs": float(high_risk_on_time_successful_jobs),
+            "dag_high_risk_success_rate": high_risk_successful_jobs / max(high_risk_jobs, 1),
+            "dag_high_risk_failure_rate": high_risk_failed_jobs / max(high_risk_jobs, 1),
+            "dag_high_risk_on_time_success_rate": high_risk_on_time_successful_jobs / max(high_risk_jobs, 1),
+            "dag_high_risk_avg_completion_time": float(np.mean(high_risk_completion_times)) if high_risk_completion_times else 0.0,
+            "dag_critical_path_tasks": float(critical_path_tasks),
+            "dag_critical_path_finished_tasks": float(critical_path_finished_tasks),
+            "dag_critical_path_dropped_tasks": float(critical_path_dropped_tasks),
+            "dag_critical_path_on_time_finished_tasks": float(critical_path_on_time_finished_tasks),
+            "dag_critical_path_finish_rate": critical_path_finished_tasks / max(critical_path_tasks, 1),
+            "dag_critical_path_drop_rate": critical_path_dropped_tasks / max(critical_path_tasks, 1),
+            "dag_critical_path_on_time_rate": critical_path_on_time_finished_tasks / max(critical_path_finished_tasks, 1),
+            "dag_critical_path_avg_completion_time": (
+                float(np.mean(critical_path_completion_times)) if critical_path_completion_times else 0.0
+            ),
+            "dag_critical_path_avg_tardiness": float(np.mean(critical_path_tardiness)) if critical_path_tardiness else 0.0,
         }
 
     def mark_task_queued(self, task_id: str, uav_id: int, current_time_step: float) -> None:
@@ -162,17 +308,22 @@ class DAGTaskManager:
 
     def build_task_features(self, current_time_step: float) -> dict[str, np.ndarray]:
         features: dict[str, np.ndarray] = {}
+        max_input = float(max(config.DAG_MAX_INPUT_SIZE, 1))
+        max_output = float(max(config.DAG_MAX_OUTPUT_SIZE, 1))
+        max_cycles = float(max(config.DAG_MAX_CPU_CYCLES, 1))
+        max_slack = float(max(config.DAG_MAX_DEADLINE_OFFSET, 1))
+        max_level = float(max(config.DAG_MAX_TASK_LEVELS - 1, 1))
         for task in self.get_active_tasks():
             features[task.task_id] = np.array(
                 [
-                    task.input_size / float(config.DAG_MAX_INPUT_SIZE),
-                    task.output_size / float(config.DAG_MAX_OUTPUT_SIZE),
-                    task.cpu_cycles / float(config.DAG_MAX_CPU_CYCLES),
-                    max(task.remaining_slack(current_time_step), 0.0) / float(config.DAG_MAX_DEADLINE_OFFSET),
-                    task.level / float(max(config.DAG_MAX_TASK_LEVELS - 1, 1)),
+                    np.clip(task.input_size / max_input, 0.0, 1.0),
+                    np.clip(task.output_size / max_output, 0.0, 1.0),
+                    np.clip(task.cpu_cycles / max_cycles, 0.0, 1.0),
+                    np.clip(task.remaining_slack(current_time_step) / max_slack, -1.0, 1.0),
+                    np.clip(task.level / max_level, 0.0, 1.0),
                     1.0 if task.is_ready else 0.0,
-                    task.source_pos[0] / float(config.AREA_WIDTH),
-                    task.source_pos[1] / float(config.AREA_HEIGHT),
+                    np.clip(task.source_pos[0] / float(config.AREA_WIDTH), 0.0, 1.0),
+                    np.clip(task.source_pos[1] / float(config.AREA_HEIGHT), 0.0, 1.0),
                     1.0 if task.task_type == config.TASK_TYPE_PREPROCESS else 0.0,
                     1.0 if task.task_type == config.TASK_TYPE_COMPUTE else 0.0,
                     1.0 if task.task_type == config.TASK_TYPE_AGGREGATION else 0.0,

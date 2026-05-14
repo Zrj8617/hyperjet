@@ -5,7 +5,7 @@ import config
 import numpy as np
 
 from environment import comm_model as comms
-from environment.dag_tasks import DAGTaskManager, TaskNode
+from environment.dag_tasks import DAGTaskManager, TASK_STATE_FINISHED, TASK_STATE_WAITING, TaskNode
 from environment.task_execution import PhaseOneTaskExecutor
 
 
@@ -19,8 +19,14 @@ class HeteroGraphSnapshot:
     task_uav_edges: list[tuple[str, int]]
     task_uav_edge_features: np.ndarray
     uav_uav_edges: list[tuple[int, int]]
+    service_domain_hyperedges: list[tuple[list[str], list[int]]]
+    resource_competition_hyperedges: list[tuple[list[str], list[int]]]
     collaborative_hyperedges: list[tuple[list[str], list[int]]]
     critical_hyperedges: list[list[str]]
+    critical_support_hyperedges: list[tuple[list[str], list[int]]]
+    compute_attribute_hyperedges: list[list[str]]
+    communication_attribute_hyperedges: list[list[str]]
+    candidate_scarce_attribute_hyperedges: list[list[str]]
     attribute_hyperedges: list[list[str]]
 
 
@@ -55,20 +61,54 @@ class HeteroGraphBuilder:
         task_uav_edges = self._build_task_uav_edges(active_tasks, task_manager, uavs, current_time_step, executor)
         task_uav_edge_features = self._build_task_uav_edge_features(task_uav_edges, task_manager, uavs, current_time_step, executor)
         uav_uav_edges = self._build_uav_uav_edges(uavs)
-        collaborative_hyperedges = (
-            self._build_collaborative_hyperedges(task_manager, active_tasks, uavs, task_uav_edges)
-            if config.USE_PHASE_ONE_HYPEREDGES and config.USE_COLLABORATIVE_HYPEREDGES
+        service_domain_hyperedges = (
+            self._build_service_domain_hyperedges(task_manager, uavs, task_uav_edges)
+            if config.USE_PHASE_ONE_HYPEREDGES
+            and config.USE_COLLABORATIVE_HYPEREDGES
+            and config.USE_SERVICE_DOMAIN_HYPEREDGES
             else []
         )
-        critical_hyperedges = (
-            self._build_critical_hyperedges(active_tasks, current_time_step)
+        resource_competition_hyperedges = (
+            self._build_resource_competition_hyperedges(
+                task_manager,
+                task_uav_edges,
+                task_uav_edge_features,
+                executor,
+                current_time_step,
+            )
+            if config.USE_PHASE_ONE_HYPEREDGES
+            and config.USE_COLLABORATIVE_HYPEREDGES
+            and config.USE_RESOURCE_COMPETITION_HYPEREDGES
+            else []
+        )
+        collaborative_hyperedges = service_domain_hyperedges + resource_competition_hyperedges
+        critical_support_hyperedges = (
+            self._build_critical_support_hyperedges(
+                active_tasks,
+                task_manager,
+                uavs,
+                task_uav_edges,
+                executor,
+                current_time_step,
+            )
             if config.USE_PHASE_ONE_HYPEREDGES and config.USE_CRITICAL_HYPEREDGES
             else []
         )
-        attribute_hyperedges = (
-            self._build_attribute_hyperedges(active_tasks, current_time_step)
+        critical_hyperedges: list[list[str]] = []
+        ready_tasks = task_manager.get_ready_tasks()
+        (
+            compute_attribute_hyperedges,
+            communication_attribute_hyperedges,
+            candidate_scarce_attribute_hyperedges,
+        ) = (
+            self._build_attribute_hyperedges(ready_tasks, task_uav_edges, current_time_step)
             if config.USE_PHASE_ONE_HYPEREDGES and config.USE_ATTRIBUTE_HYPEREDGES
-            else []
+            else ([], [], [])
+        )
+        attribute_hyperedges = (
+            compute_attribute_hyperedges
+            + communication_attribute_hyperedges
+            + candidate_scarce_attribute_hyperedges
         )
 
         return HeteroGraphSnapshot(
@@ -80,8 +120,14 @@ class HeteroGraphBuilder:
             task_uav_edges=task_uav_edges,
             task_uav_edge_features=task_uav_edge_features,
             uav_uav_edges=uav_uav_edges,
+            service_domain_hyperedges=service_domain_hyperedges,
+            resource_competition_hyperedges=resource_competition_hyperedges,
             collaborative_hyperedges=collaborative_hyperedges,
             critical_hyperedges=critical_hyperedges,
+            critical_support_hyperedges=critical_support_hyperedges,
+            compute_attribute_hyperedges=compute_attribute_hyperedges,
+            communication_attribute_hyperedges=communication_attribute_hyperedges,
+            candidate_scarce_attribute_hyperedges=candidate_scarce_attribute_hyperedges,
             attribute_hyperedges=attribute_hyperedges,
         )
 
@@ -93,14 +139,13 @@ class HeteroGraphBuilder:
             for other_uav in uavs
             if other_uav.id != uav.id and float(np.linalg.norm(uav.pos - other_uav.pos)) <= config.UAV_SENSING_RANGE
         )
-        local_energy_load = uav.energy / max(config.POWER_MOVE + config.POWER_HOVER, config.EPSILON)
         return np.array(
             [
-                uav.pos[0] / float(config.AREA_WIDTH),
-                uav.pos[1] / float(config.AREA_HEIGHT),
+                np.clip(uav.pos[0] / float(config.AREA_WIDTH), 0.0, 1.0),
+                np.clip(uav.pos[1] / float(config.AREA_HEIGHT), 0.0, 1.0),
                 min(queue_length / float(max(config.DAG_MAX_QUEUE_PER_UAV, 1)), 1.0),
                 is_busy,
-                min(local_energy_load, 1.0),
+                uav.remaining_energy_ratio,
                 neighbor_count / float(max(config.NUM_UAVS - 1, 1)),
                 config.UAV_COMPUTING_CAPACITY[uav.id] / float(np.max(config.UAV_COMPUTING_CAPACITY)),
             ],
@@ -186,9 +231,9 @@ class HeteroGraphBuilder:
         executor: PhaseOneTaskExecutor | None,
     ) -> np.ndarray:
         if not task_uav_edges:
-            return np.zeros((0, 9), dtype=np.float32)
+            return np.zeros((0, config.BASE_TASK_UAV_PAIR_FEATURE_DIM), dtype=np.float32)
         if not config.USE_TASK_UAV_PAIR_FEATURES:
-            return np.zeros((len(task_uav_edges), 9), dtype=np.float32)
+            return np.zeros((len(task_uav_edges), config.BASE_TASK_UAV_PAIR_FEATURE_DIM), dtype=np.float32)
 
         uav_map = {uav.id: uav for uav in uavs}
         features: list[np.ndarray] = []
@@ -245,10 +290,9 @@ class HeteroGraphBuilder:
             features.append(feature_vec)
         return np.stack(features, axis=0).astype(np.float32)
 
-    def _build_collaborative_hyperedges(
+    def _build_service_domain_hyperedges(
         self,
         task_manager: DAGTaskManager,
-        active_tasks: list[TaskNode],
         uavs: list,
         task_uav_edges: list[tuple[str, int]],
     ) -> list[tuple[list[str], list[int]]]:
@@ -293,66 +337,387 @@ class HeteroGraphBuilder:
             deduped.append((list(key[0]), list(key[1])))
         return deduped
 
-    def _build_critical_hyperedges(self, active_tasks: list[TaskNode], current_time_step: float) -> list[list[str]]:
-        urgent_tasks = [
-            task.task_id
-            for task in active_tasks
-            if task.remaining_slack(current_time_step) <= config.DAG_CRITICAL_SLACK_THRESHOLD
-        ]
-        return [urgent_tasks] if len(urgent_tasks) >= 2 else []
+    def _build_resource_competition_hyperedges(
+        self,
+        task_manager: DAGTaskManager,
+        task_uav_edges: list[tuple[str, int]],
+        task_uav_edge_features: np.ndarray,
+        executor: PhaseOneTaskExecutor | None,
+        current_time_step: float,
+    ) -> list[tuple[list[str], list[int]]]:
+        edge_map: dict[str, set[int]] = {}
+        for task_id, uav_id in task_uav_edges:
+            edge_map.setdefault(task_id, set()).add(uav_id)
 
-    def _build_attribute_hyperedges(self, active_tasks: list[TaskNode], current_time_step: float) -> list[list[str]]:
-        if len(active_tasks) < 2:
+        ready_task_map = {task.task_id: task for task in task_manager.get_ready_tasks() if task.task_id in edge_map}
+        if len(ready_task_map) < 2:
             return []
 
-        task_features: dict[str, np.ndarray] = {}
-        max_input = float(max(config.DAG_MAX_INPUT_SIZE, 1))
-        max_cycles = float(max(config.DAG_MAX_CPU_CYCLES, 1))
-        max_slack = float(max(config.DAG_MAX_DEADLINE_OFFSET, 1))
-        max_level = float(max(config.DAG_MAX_TASK_LEVELS - 1, 1))
-        for task in active_tasks:
-            task_features[task.task_id] = np.array(
-                [
-                    task.input_size / max_input,
-                    task.cpu_cycles / max_cycles,
-                    max(task.remaining_slack(current_time_step), 0.0) / max_slack,
-                    task.level / max_level,
-                    1.0 if task.task_type == config.TASK_TYPE_PREPROCESS else 0.0,
-                    1.0 if task.task_type == config.TASK_TYPE_COMPUTE else 0.0,
-                    1.0 if task.task_type == config.TASK_TYPE_AGGREGATION else 0.0,
-                ],
-                dtype=np.float32,
-            )
-
-        anchors = sorted(
-            active_tasks,
-            key=lambda task: (
-                0 if task.is_ready else 1,
-                task.deadline,
-                -task.cpu_cycles,
-            ),
-        )[: config.DAG_ATTRIBUTE_MAX_GROUPS]
-
-        hyperedges: list[list[str]] = []
-        seen: set[tuple[str, ...]] = set()
-        for anchor in anchors:
-            anchor_vec = task_features[anchor.task_id]
-            neighbor_scores: list[tuple[float, str]] = []
-            for task in active_tasks:
-                candidate_vec = task_features[task.task_id]
-                distance = float(np.linalg.norm(anchor_vec - candidate_vec))
-                neighbor_scores.append((distance, task.task_id))
-            neighbor_scores.sort(key=lambda item: (item[0], item[1]))
-            members = [task_id for _, task_id in neighbor_scores[: config.DAG_ATTRIBUTE_TOP_M_TASKS]]
-            if len(members) < 2:
+        task_candidate_scores: dict[str, list[tuple[tuple[float, float, float, float, int], int]]] = {}
+        for edge_idx, (task_id, uav_id) in enumerate(task_uav_edges):
+            if task_id not in ready_task_map:
                 continue
-            key = tuple(sorted(members))
+            if task_uav_edge_features.size > 0 and edge_idx < len(task_uav_edge_features):
+                feature = task_uav_edge_features[edge_idx]
+                planned_finish = float(feature[4])
+                deadline_margin = float(feature[5])
+                queue_length = float(feature[7])
+                distance = float(feature[8])
+            else:
+                planned_finish = 0.0
+                deadline_margin = 0.0
+                queue_length = 0.0
+                distance = 0.0
+            rank_key = (planned_finish, -deadline_margin, queue_length, distance, uav_id)
+            task_candidate_scores.setdefault(task_id, []).append((rank_key, uav_id))
+
+        uav_to_top_tasks: dict[int, list[str]] = {}
+        for task_id, ranked_candidates in task_candidate_scores.items():
+            ranked_candidates.sort(key=lambda item: item[0])
+            top_candidates = ranked_candidates[: config.DAG_RESOURCE_COMPETITION_TOP_K_UAVS]
+            for _, uav_id in top_candidates:
+                uav_to_top_tasks.setdefault(uav_id, []).append(task_id)
+
+        hyperedges: list[tuple[list[str], list[int]]] = []
+        for anchor_uav_id, task_ids in sorted(uav_to_top_tasks.items()):
+            candidate_tasks = [ready_task_map[task_id] for task_id in task_ids if task_id in ready_task_map]
+            if len(candidate_tasks) < 2:
+                continue
+            has_queue_pressure = executor is not None and executor.get_queue_length(anchor_uav_id) > 0
+            has_task_density_pressure = len(candidate_tasks) >= 3
+            has_deadline_pressure = any(
+                task.remaining_slack(current_time_step) <= config.DAG_CRITICAL_SLACK_THRESHOLD
+                for task in candidate_tasks
+            )
+            if not (has_queue_pressure or has_task_density_pressure or has_deadline_pressure):
+                continue
+            candidate_tasks.sort(
+                key=lambda task: (
+                task.deadline,
+                len(edge_map.get(task.task_id, set())),
+                task.remaining_slack(current_time_step),
+                task.task_id,
+                )
+            )
+            selected_tasks = candidate_tasks[: config.DAG_COLLAB_TOP_M_TASKS]
+            selected_task_ids = [task.task_id for task in selected_tasks]
+
+            if len(selected_task_ids) >= 2:
+                hyperedges.append((selected_task_ids, [anchor_uav_id]))
+
+        deduped: list[tuple[list[str], list[int]]] = []
+        seen: set[tuple[tuple[str, ...], tuple[int, ...]]] = set()
+        for task_ids, uav_ids in hyperedges:
+            key = (tuple(sorted(task_ids)), tuple(sorted(uav_ids)))
             if key in seen:
                 continue
             seen.add(key)
-            hyperedges.append(list(key))
+            deduped.append((list(key[0]), list(key[1])))
+        return deduped
 
+    def _build_critical_hyperedges(
+        self,
+        active_tasks: list[TaskNode],
+        task_manager: DAGTaskManager,
+        task_uav_edges: list[tuple[str, int]],
+        current_time_step: float,
+    ) -> list[list[str]]:
+        task_candidates: dict[str, set[int]] = {}
+        for task_id, uav_id in task_uav_edges:
+            task_candidates.setdefault(task_id, set()).add(uav_id)
+
+        dag_groups: dict[str, list[TaskNode]] = {}
+        for task in active_tasks:
+            if task.remaining_slack(current_time_step) > config.DAG_CRITICAL_SLACK_THRESHOLD:
+                continue
+            if task.is_ready:
+                if task_candidates.get(task.task_id):
+                    dag_groups.setdefault(task.dag_id, []).append(task)
+                continue
+            if task.state != TASK_STATE_WAITING or not task.predecessors:
+                continue
+            finished_parents = sum(
+                1
+                for parent_id in task.predecessors
+                if task_manager.tasks[parent_id].state == TASK_STATE_FINISHED
+            )
+            predecessor_completion_ratio = finished_parents / float(max(len(task.predecessors), 1))
+            if predecessor_completion_ratio >= 0.5 and task_candidates.get(task.task_id):
+                dag_groups.setdefault(task.dag_id, []).append(task)
+
+        hyperedges: list[list[str]] = []
+        for tasks in dag_groups.values():
+            if len(tasks) < 2:
+                continue
+            tasks.sort(key=lambda task: (task.remaining_slack(current_time_step), task.deadline, task.task_id))
+            used: set[str] = set()
+            for anchor in tasks:
+                if anchor.task_id in used:
+                    continue
+                common_uavs = set(task_candidates.get(anchor.task_id, set()))
+                if not common_uavs:
+                    continue
+                group: list[TaskNode] = [anchor]
+                for other in tasks:
+                    if other.task_id == anchor.task_id or other.task_id in used:
+                        continue
+                    other_candidates = task_candidates.get(other.task_id, set())
+                    intersection = common_uavs & other_candidates
+                    if not intersection:
+                        continue
+                    group.append(other)
+                    common_uavs = intersection
+                    if len(group) >= config.DAG_CRITICAL_MAX_SIZE:
+                        break
+                if len(group) >= 2:
+                    hyperedges.append([task.task_id for task in group])
+                    used.update(task.task_id for task in group)
         return hyperedges
+
+    def _build_critical_support_hyperedges(
+        self,
+        active_tasks: list[TaskNode],
+        task_manager: DAGTaskManager,
+        uavs: list,
+        task_uav_edges: list[tuple[str, int]],
+        executor: PhaseOneTaskExecutor | None,
+        current_time_step: float,
+    ) -> list[tuple[list[str], list[int]]]:
+        task_candidates: dict[str, set[int]] = {}
+        for task_id, uav_id in task_uav_edges:
+            task_candidates.setdefault(task_id, set()).add(uav_id)
+
+        uav_map = {uav.id: uav for uav in uavs}
+        max_compute = float(max(np.max(config.UAV_COMPUTING_CAPACITY), 1))
+
+        def resource_score(uav_id: int) -> float:
+            queue_length = executor.get_queue_length(uav_id) if executor is not None else 0
+            queue_score = 1.0 - min(queue_length / float(max(config.DAG_MAX_QUEUE_PER_UAV, 1)), 1.0)
+            energy_score = float(getattr(uav_map[uav_id], "remaining_energy_ratio", 1.0))
+            compute_score = float(config.UAV_COMPUTING_CAPACITY[uav_id] / max_compute)
+            return 0.5 * queue_score + 0.3 * energy_score + 0.2 * compute_score
+
+        def link_score(uav_id: int, reference_uav_ids: set[int]) -> float:
+            if not reference_uav_ids:
+                return 1.0
+            scores: list[float] = []
+            for ref_id in reference_uav_ids:
+                if ref_id == uav_id or ref_id not in uav_map:
+                    scores.append(1.0)
+                    continue
+                distance = float(np.linalg.norm(uav_map[uav_id].pos - uav_map[ref_id].pos))
+                if distance > config.A2A_MAX_RANGE:
+                    scores.append(0.0)
+                else:
+                    scores.append(1.0 - distance / float(max(config.A2A_MAX_RANGE, config.EPSILON)))
+            return float(np.mean(scores)) if scores else 1.0
+
+        dag_candidates: list[tuple[float, str, list[TaskNode], set[int]]] = []
+        for dag_id, job in task_manager.jobs.items():
+            job_tasks = [task_manager.tasks[task_id] for task_id in job.task_ids if task_id in task_manager.tasks]
+            active_job_tasks = [task for task in job_tasks if not task.is_terminal]
+            if not active_job_tasks:
+                continue
+            ready_tasks = [
+                task
+                for task in active_job_tasks
+                if task.is_ready
+                and task.remaining_slack(current_time_step) <= config.DAG_CRITICAL_SLACK_THRESHOLD
+                and task_candidates.get(task.task_id)
+            ]
+            if not ready_tasks:
+                continue
+
+            min_slack = min(task.remaining_slack(current_time_step) for task in active_job_tasks)
+            urgency = 1.0 - float(np.clip(min_slack / float(max(config.DAG_MAX_DEADLINE_OFFSET, 1)), 0.0, 1.0))
+            remaining_workload = float(
+                np.clip(
+                    sum(task.cpu_cycles for task in active_job_tasks)
+                    / float(max(len(job_tasks), 1) * max(config.DAG_MAX_CPU_CYCLES, 1)),
+                    0.0,
+                    1.0,
+                )
+            )
+            candidate_counts = [len(task_candidates.get(task.task_id, set())) for task in ready_tasks]
+            avg_candidates = float(np.mean(candidate_counts)) if candidate_counts else 0.0
+            bottleneck = 1.0 - float(np.clip(avg_candidates / float(max(config.NUM_UAVS, 1)), 0.0, 1.0))
+            finished_count = sum(1 for task in job_tasks if task.state == TASK_STATE_FINISHED)
+            progress_value = finished_count / float(max(len(job_tasks), 1))
+            risk = 0.4 * urgency + 0.3 * remaining_workload + 0.2 * bottleneck + 0.1 * progress_value
+            dag_candidates.append((risk, dag_id, ready_tasks, set()))
+
+        dag_candidates.sort(key=lambda item: (-item[0], item[1]))
+        hyperedges: list[tuple[list[str], list[int]]] = []
+        for _, _, ready_tasks, _ in dag_candidates[: config.DAG_CRITICAL_SUPPORT_TOP_DAGS]:
+            ready_tasks.sort(
+                key=lambda task: (
+                    task.remaining_slack(current_time_step),
+                    -len(task.successors),
+                    len(task_candidates.get(task.task_id, set())),
+                    task.deadline,
+                    task.task_id,
+                )
+            )
+            selected_tasks = ready_tasks[: min(config.DAG_CRITICAL_SUPPORT_TOP_TASKS, config.DAG_CRITICAL_MAX_SIZE)]
+            selected_task_ids = [task.task_id for task in selected_tasks]
+            if not selected_task_ids:
+                continue
+
+            parent_result_uavs: set[int] = set()
+            total_predecessors = 0
+            parent_count_by_uav: dict[int, int] = {}
+            for task in selected_tasks:
+                for parent_id in task.predecessors:
+                    parent_task = task_manager.tasks.get(parent_id)
+                    if parent_task is None:
+                        continue
+                    total_predecessors += 1
+                    if parent_task.state == TASK_STATE_FINISHED and parent_task.assigned_uav is not None:
+                        parent_result_uavs.add(parent_task.assigned_uav)
+                        parent_count_by_uav[parent_task.assigned_uav] = parent_count_by_uav.get(parent_task.assigned_uav, 0) + 1
+
+            candidate_uavs = sorted(
+                {
+                    uav_id
+                    for task in selected_tasks
+                    for uav_id in task_candidates.get(task.task_id, set())
+                    if uav_id in uav_map
+                }
+            )
+            if not candidate_uavs:
+                continue
+
+            service_count_by_uav = {
+                uav_id: sum(1 for task in selected_tasks if uav_id in task_candidates.get(task.task_id, set()))
+                for uav_id in candidate_uavs
+            }
+
+            scored_uavs: list[tuple[float, int]] = []
+            for uav_id in candidate_uavs:
+                parent_score = parent_count_by_uav.get(uav_id, 0) / float(max(total_predecessors, 1))
+                service_score = service_count_by_uav[uav_id] / float(max(len(selected_tasks), 1))
+                score = (
+                    0.35 * parent_score
+                    + 0.25 * resource_score(uav_id)
+                    + 0.20 * link_score(uav_id, parent_result_uavs)
+                    + 0.20 * service_score
+                )
+                scored_uavs.append((score, uav_id))
+            scored_uavs.sort(key=lambda item: (-item[0], item[1]))
+            anchor_uav = scored_uavs[0][1]
+
+            support_candidates: list[tuple[float, int]] = []
+            for uav_id in candidate_uavs:
+                if uav_id == anchor_uav:
+                    continue
+                if executor is not None and executor.get_queue_length(uav_id) >= config.DAG_MAX_QUEUE_PER_UAV:
+                    continue
+                anchor_distance = float(np.linalg.norm(uav_map[uav_id].pos - uav_map[anchor_uav].pos))
+                if anchor_distance > config.A2A_MAX_RANGE:
+                    continue
+                service_score = service_count_by_uav[uav_id] / float(max(len(selected_tasks), 1))
+                support_score = (
+                    0.45 * link_score(uav_id, {anchor_uav})
+                    + 0.35 * resource_score(uav_id)
+                    + 0.20 * service_score
+                )
+                support_candidates.append((support_score, uav_id))
+            support_candidates.sort(key=lambda item: (-item[0], item[1]))
+            support_uavs = [
+                uav_id
+                for _, uav_id in support_candidates[: config.DAG_CRITICAL_SUPPORT_MAX_NEIGHBORS]
+            ]
+            selected_uavs = [anchor_uav] + support_uavs
+            selected_uavs = selected_uavs[: config.DAG_CRITICAL_SUPPORT_MAX_UAVS]
+            if selected_uavs:
+                hyperedges.append((selected_task_ids, selected_uavs))
+
+        deduped: list[tuple[list[str], list[int]]] = []
+        seen: set[tuple[tuple[str, ...], tuple[int, ...]]] = set()
+        for task_ids, uav_ids in hyperedges:
+            key = (tuple(sorted(task_ids)), tuple(sorted(uav_ids)))
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append((list(key[0]), list(key[1])))
+        return deduped
+
+    def _build_attribute_hyperedges(
+        self,
+        ready_tasks: list[TaskNode],
+        task_uav_edges: list[tuple[str, int]],
+        current_time_step: float,
+    ) -> tuple[list[list[str]], list[list[str]], list[list[str]]]:
+        if len(ready_tasks) < 2:
+            return [], [], []
+
+        candidate_count_by_task: dict[str, int] = {}
+        for task_id, _ in task_uav_edges:
+            candidate_count_by_task[task_id] = candidate_count_by_task.get(task_id, 0) + 1
+
+        max_input = float(max(config.DAG_MAX_INPUT_SIZE, 1))
+        max_output = float(max(config.DAG_MAX_OUTPUT_SIZE, 1))
+        max_cycles = float(max(config.DAG_MAX_CPU_CYCLES, 1))
+
+        seen: set[tuple[str, ...]] = set()
+
+        def build_group(tasks: list[TaskNode]) -> list[list[str]]:
+            members = [task.task_id for task in tasks[: config.DAG_ATTRIBUTE_TOP_M_TASKS]]
+            if len(members) < 2:
+                return []
+            key = tuple(sorted(members))
+            if key in seen:
+                return []
+            seen.add(key)
+            return [list(key)]
+
+        compute_heavy_tasks = sorted(
+            ready_tasks,
+            key=lambda task: (
+                -float(np.clip(task.cpu_cycles / max_cycles, 0.0, 1.0)),
+                task.deadline,
+                task.task_id,
+            ),
+        )
+        compute_hyperedges = (
+            build_group(compute_heavy_tasks)
+            if config.USE_COMPUTE_ATTRIBUTE_HYPEREDGES
+            else []
+        )
+
+        communication_heavy_tasks = sorted(
+            ready_tasks,
+            key=lambda task: (
+                -(
+                    float(np.clip(task.input_size / max_input, 0.0, 1.0))
+                    + float(np.clip(task.output_size / max_output, 0.0, 1.0))
+                ),
+                task.deadline,
+                task.task_id,
+            ),
+        )
+        communication_hyperedges = (
+            build_group(communication_heavy_tasks)
+            if config.USE_COMMUNICATION_ATTRIBUTE_HYPEREDGES
+            else []
+        )
+
+        candidate_scarce_tasks = sorted(
+            [task for task in ready_tasks if candidate_count_by_task.get(task.task_id, 0) > 0],
+            key=lambda task: (
+                candidate_count_by_task.get(task.task_id, 0),
+                task.deadline,
+                -task.cpu_cycles,
+                task.task_id,
+            ),
+        )
+        candidate_scarce_hyperedges = (
+            build_group(candidate_scarce_tasks)
+            if config.USE_CANDIDATE_SCARCE_ATTRIBUTE_HYPEREDGES
+            else []
+        )
+
+        return compute_hyperedges, communication_hyperedges, candidate_scarce_hyperedges
 
     def _estimate_ue_uav_rate(self, source_pos: np.ndarray, uav_pos: np.ndarray) -> float:
         return comms.calculate_g2a_rate(source_pos, uav_pos, 1)
