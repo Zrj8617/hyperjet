@@ -19,6 +19,7 @@ import config
 from environment.env import Env
 from environment.dag_tasks import TASK_STATE_DROPPED, TASK_STATE_FINISHED
 from environment.task_execution import AssignmentCandidateRecord, AssignmentDecisionRecord, ScheduledTask
+from utils.progress import TerminalProgress
 
 
 def _refresh_dimension_config() -> None:
@@ -464,6 +465,12 @@ def run_static_eval(args: argparse.Namespace) -> dict[str, object]:
     dag_outcomes: list[dict[str, Any]] = []
     attribution_writer: _AttributionWriter | None = None
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    progress = None
+    if not args.no_progress:
+        progress = TerminalProgress(
+            args.episodes * args.steps,
+            f"static:{args.mode}:seed{args.seed}",
+        )
     if args.write_attribution:
         attribution_writer = _AttributionWriter(
             args.attribution_path,
@@ -505,6 +512,14 @@ def run_static_eval(args: argparse.Namespace) -> dict[str, object]:
             fairness_last = float(fairness)
             offline_total += float(offline_rate)
             _update_diagnostics(diagnostics, env.latest_phase_one_diagnostics)
+            if progress is not None:
+                progress.update(
+                    postfix=(
+                        f"episode {episode}/{args.episodes} "
+                        f"step {step}/{args.steps} "
+                        f"reward {reward_total:.1f}"
+                    )
+                )
             if args.write_attribution:
                 if attribution_writer is None:
                     raise RuntimeError("Attribution writer was not initialized.")
@@ -526,6 +541,8 @@ def run_static_eval(args: argparse.Namespace) -> dict[str, object]:
         if args.write_attribution:
             task_outcomes.extend(_serialize_task_outcomes(env, episode))
             dag_outcomes.extend(_serialize_dag_outcomes(env, episode))
+    if progress is not None:
+        progress.finish(postfix=f"episodes {args.episodes} complete")
 
     payload: dict[str, Any] = {
         "created_at": created_at,
@@ -569,6 +586,7 @@ def main() -> None:
     parser.add_argument("--runtime_finish_tolerance", type=float, default=0.1)
     parser.add_argument("--agreement_only", action="store_true")
     parser.add_argument("--strict_selective_hgnn_score", action="store_true")
+    parser.add_argument("--no_progress", action="store_true")
     parser.add_argument(
         "--ablation",
         type=str,
