@@ -1,0 +1,65 @@
+commit 0cb6dbaf394dd0ac05813ff39e1393018eab4a87
+Author: zrj2025 <zrj2025@example.com>
+Date:   Wed Apr 29 23:31:13 2026 +0800
+
+    initial checkpoint before opening new codex session
+
+ .codex                                           |   0
+ .gitignore                                       |  19 +
+ LICENSE                                          |  21 +
+ PROJECT_STATE.md                                 | 934 +++++++++++++++++++++++
+ README.md                                        | 146 ++++
+ analyze_score_disagreements.py                   | 160 ++++
+ compare_algorithms.py                            |  79 ++
+ config.py                                        | 376 +++++++++
+ docs/PLOTTING_MODULE.md                          | 121 +++
+ docs/doc_attention.md                            |  84 ++
+ docs/system_model.jpg                            | Bin 0 -> 205684 bytes
+ environment/comm_model.py                        |  58 ++
+ environment/dag_tasks.py                         | 296 +++++++
+ environment/env.py                               | 492 ++++++++++++
+ environment/graph_builder.py                     | 361 +++++++++
+ environment/task_execution.py                    | 454 +++++++++++
+ environment/uavs.py                              | 299 ++++++++
+ environment/user_equipments.py                   | 133 ++++
+ main.py                                          | 113 +++
+ marl_models/README.md                            |  95 +++
+ marl_models/attention.py                         | 242 ++++++
+ marl_models/attention_maddpg/agents.py           |  26 +
+ marl_models/attention_maddpg/attention_maddpg.py | 143 ++++
+ marl_models/attention_mappo/agents.py            |  49 ++
+ marl_models/attention_mappo/attention_mappo.py   | 124 +++
+ marl_models/attention_masac/agents.py            |  48 ++
+ marl_models/attention_masac/attention_masac.py   | 194 +++++
+ marl_models/attention_matd3/agents.py            |  26 +
+ marl_models/attention_matd3/attention_matd3.py   | 215 ++++++
+ marl_models/base_model.py                        |  62 ++
+ marl_models/buffer_and_helpers.py                | 225 ++++++
+ marl_models/hgnn/__init__.py                     |  11 +
+ marl_models/hgnn/encoder.py                      |  62 ++
+ marl_models/hgnn/layers.py                       |  69 ++
+ marl_models/hgnn/pretrain.py                     | 143 ++++
+ marl_models/hgnn/scheduler.py                    | 171 +++++
+ marl_models/hgnn/score_head.py                   |  24 +
+ marl_models/hgnn/supervision.py                  |  91 +++
+ marl_models/maddpg/agents.py                     |  36 +
+ marl_models/maddpg/maddpg.py                     | 161 ++++
+ marl_models/mappo/agents.py                      |  41 +
+ marl_models/mappo/mappo.py                       | 130 ++++
+ marl_models/masac/agents.py                      |  58 ++
+ marl_models/masac/masac.py                       | 206 +++++
+ marl_models/matd3/agents.py                      |  36 +
+ marl_models/matd3/matd3.py                       | 192 +++++
+ marl_models/random_baseline/random_model.py      |  23 +
+ marl_models/utils.py                             |  80 ++
+ pretrain_score.py                                |  58 ++
+ score_experiment.py                              | 480 ++++++++++++
+ test.py                                          |  50 ++
+ train.py                                         | 311 ++++++++
+ tune.py                                          | 286 +++++++
+ utils/comparative_plots.py                       | 316 ++++++++
+ utils/logger.py                                  | 222 ++++++
+ utils/plot_logs.py                               |  93 +++
+ utils/plot_snapshots.py                          | 106 +++
+ utils/progress.py                                |  60 ++
+ 58 files changed, 9111 insertions(+)

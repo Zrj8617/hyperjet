@@ -1,69 +1,42 @@
+# Python 缓存
 __pycache__/
+*.pyc
+.pytest_cache/
 .mypy_cache/
-.vscode/
 .venv/
-*.pth
-rough*
-simulation_frames/
-train_logs/
-test_logs/
-train_plots/
-test_plots/
-saved_models/
-tuning_logs/
-comparative_plots/
-*.png
-*.txt
-*.json
-.codex/
-*.pyc
-# ========================
-# Python 基本忽略项
-# ========================
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.swp
-*.DS_Store
 
-# ========================
-# 输出结果/日志文件夹
-# ========================
+# VS Code 配置
+.vscode/
+
+# 模型和训练输出
+saved_models/
+train_logs/
 analysis_outputs/
+checkpoints/
+*.pth
+
+# 临时文件
+*.tmp
 *.log
 *.out
-*.tmp
-stream_report/
-
-# ========================
-# 数据和模型
-# ========================
-data/
-dataset/
-checkpoints/
-*.pt
-*.pth
-*.h5
-
-# ========================
-# 项目生成的临时文件
-# ========================
-*.egg-info/
-*.egg
-dist/
-build/
-*.tar.gz
-
-# ========================
-# Jupyter Notebook checkpoint
-# ========================
-.ipynb_checkpoints/
-
-# ========================
-# 其他可能生成的大文件
-# ========================
 *.zip
+*.tar.gz
 *.tar
 *.rar
-*.gz
+
+# CodeX 文件
+.codex/
+
+# 其他非代码文件
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.csv
+*.h5
+*.npy
+*.npz
+*.pkl
+
+# 自动生成文件夹
+.agents/
