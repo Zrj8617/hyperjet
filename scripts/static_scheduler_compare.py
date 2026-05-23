@@ -215,6 +215,8 @@ def _is_selective_high_risk_task(env: Env, record: AssignmentDecisionRecord, cur
     critical_path_task = config.SELECTIVE_HGNN_USE_CRITICAL_PATH and env.task_manager.is_critical_path_task(task.task_id)
     successor_unlock_task = config.SELECTIVE_HGNN_USE_SUCCESSOR_UNLOCK and len(task.successors) > 0
     is_high_risk = task_slack <= config.SELECTIVE_HGNN_SLACK_THRESHOLD or dag_slack <= config.SELECTIVE_HGNN_SLACK_THRESHOLD
+    if config.USE_STRICT_SELECTIVE_HGNN_SCORING:
+        return bool(is_high_risk)
     if config.SELECTIVE_HGNN_USE_CANDIDATE_SCARCITY:
         is_high_risk = is_high_risk or candidate_count <= config.SELECTIVE_HGNN_CANDIDATE_THRESHOLD
     if critical_path_task:
@@ -300,6 +302,9 @@ def _serialize_assignment_record(
         "selected_uav": record.selected_uav,
         "heuristic_uav": record.heuristic_uav,
         "score_uav": record.score_uav,
+        "raw_score_uav": record.raw_score_uav,
+        "raw_disagrees_with_heuristic": bool(record.raw_disagrees_with_heuristic),
+        "guard_reason": record.guard_reason,
         "teacher_uav": teacher_uav,
         "disagrees_with_heuristic": bool(record.disagrees_with_heuristic),
         "teacher_disagrees_with_heuristic": bool(teacher_uav is not None and record.heuristic_uav is not None and teacher_uav != record.heuristic_uav),

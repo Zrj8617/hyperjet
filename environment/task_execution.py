@@ -32,6 +32,10 @@ class PhaseOneStepStats:
     score_selected_assignments: int = 0
     fallback_selected_assignments: int = 0
     score_heuristic_disagreements: int = 0
+    score_raw_disagreements: int = 0
+    score_guard_fallback_assignments: int = 0
+    agreement_guard_rejections: int = 0
+    bounded_guard_rejections: int = 0
     step_delay: float = 0.0
     step_energy: float = 0.0
     completed_tasks_by_uav: dict[int, int] = field(default_factory=dict)
@@ -80,6 +84,9 @@ class AssignmentDecisionRecord:
     selection_mode: str | None
     disagrees_with_heuristic: bool
     candidates: list[AssignmentCandidateRecord]
+    raw_score_uav: int | None = None
+    raw_disagrees_with_heuristic: bool = False
+    guard_reason: str | None = None
 
 
 class PhaseOneTaskExecutor:
@@ -173,9 +180,20 @@ class PhaseOneTaskExecutor:
             elif selection_mode == "fallback":
                 self._fallback_selected_assignments += 1
                 stats.fallback_selected_assignments += 1
+            elif selection_mode == "guard_fallback":
+                self._fallback_selected_assignments += 1
+                stats.fallback_selected_assignments += 1
+                stats.score_guard_fallback_assignments += 1
+                if decision_record is not None:
+                    if decision_record.guard_reason == "agreement_only":
+                        stats.agreement_guard_rejections += 1
+                    elif decision_record.guard_reason == "runtime_bounded_guard":
+                        stats.bounded_guard_rejections += 1
             if disagrees_with_heuristic:
                 self._score_heuristic_disagreements += 1
                 stats.score_heuristic_disagreements += 1
+            if decision_record is not None and decision_record.raw_disagrees_with_heuristic:
+                stats.score_raw_disagreements += 1
         self._latest_stats = stats
 
     def advance_one_slot(self, task_manager: DAGTaskManager, uavs: list, current_time_step: float) -> PhaseOneStepStats:
@@ -411,29 +429,42 @@ class PhaseOneTaskExecutor:
         heuristic_best_schedule = min(candidates, key=lambda item: item[0].planned_finish)[0]
         scored_candidates = [(schedule, score) for schedule, score in candidates if score is not None]
         if scored_candidates and edge_scores is not None:
-            score_best_schedule = max(scored_candidates, key=lambda item: (float(item[1]), -item[0].planned_finish))[0]
-            disagrees = score_best_schedule.uav_id != heuristic_best_schedule.uav_id
+            raw_score_best_schedule = max(scored_candidates, key=lambda item: (float(item[1]), -item[0].planned_finish))[0]
+            raw_disagrees = raw_score_best_schedule.uav_id != heuristic_best_schedule.uav_id
             fallback_reason = None
-            if config.USE_SCORE_AGREEMENT_ONLY and disagrees:
+            if config.USE_SCORE_AGREEMENT_ONLY and raw_disagrees:
                 fallback_reason = "agreement_only"
-            elif (
-                config.USE_SCORE_RUNTIME_BOUNDED_GUARD
-                and score_best_schedule.planned_finish
-                > heuristic_best_schedule.planned_finish + float(config.SCORE_RUNTIME_FINISH_TOLERANCE)
-            ):
-                fallback_reason = "runtime_bounded_guard"
+            score_best_schedule = raw_score_best_schedule
+            if fallback_reason is None and config.USE_SCORE_RUNTIME_BOUNDED_GUARD:
+                finish_limit = heuristic_best_schedule.planned_finish + float(config.SCORE_RUNTIME_FINISH_TOLERANCE)
+                safe_scored_candidates = [
+                    (schedule, score)
+                    for schedule, score in scored_candidates
+                    if schedule.planned_finish <= finish_limit
+                ]
+                if safe_scored_candidates:
+                    score_best_schedule = max(
+                        safe_scored_candidates,
+                        key=lambda item: (float(item[1]), -item[0].planned_finish),
+                    )[0]
+                else:
+                    fallback_reason = "runtime_bounded_guard"
             if fallback_reason is not None:
                 record = self._build_assignment_record(
                     task,
                     current_time_step,
                     candidates,
                     heuristic_best_schedule,
-                    score_best_schedule,
+                    raw_score_best_schedule,
                     heuristic_best_schedule,
-                    "fallback",
+                    "guard_fallback",
                     False,
+                    raw_score_best_schedule,
+                    raw_disagrees,
+                    fallback_reason,
                 )
-                return heuristic_best_schedule, "fallback", False, record
+                return heuristic_best_schedule, "guard_fallback", False, record
+            disagrees = score_best_schedule.uav_id != heuristic_best_schedule.uav_id
             record = self._build_assignment_record(
                 task,
                 current_time_step,
@@ -443,6 +474,9 @@ class PhaseOneTaskExecutor:
                 score_best_schedule,
                 "score",
                 disagrees,
+                raw_score_best_schedule,
+                raw_disagrees,
+                None,
             )
             return score_best_schedule, "score", disagrees, record
 
@@ -480,6 +514,9 @@ class PhaseOneTaskExecutor:
         selected_schedule: ScheduledTask | None,
         selection_mode: str | None,
         disagrees_with_heuristic: bool,
+        raw_score_schedule: ScheduledTask | None = None,
+        raw_disagrees_with_heuristic: bool = False,
+        guard_reason: str | None = None,
     ) -> AssignmentDecisionRecord:
         candidate_records = [
             AssignmentCandidateRecord(
@@ -513,6 +550,9 @@ class PhaseOneTaskExecutor:
             selection_mode=selection_mode,
             disagrees_with_heuristic=disagrees_with_heuristic,
             candidates=candidate_records,
+            raw_score_uav=None if raw_score_schedule is None else raw_score_schedule.uav_id,
+            raw_disagrees_with_heuristic=raw_disagrees_with_heuristic,
+            guard_reason=guard_reason,
         )
 
     def _estimate_schedule(

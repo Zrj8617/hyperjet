@@ -304,6 +304,29 @@ class Env:
         )
 
     def _build_per_task_score_provider(self):
+        initial_snapshot = self._latest_graph_snapshot
+        ready_count = len(self._task_manager.get_ready_tasks())
+        if config.USE_SELECTIVE_HGNN_SCORING and initial_snapshot is not None:
+            initial_high_risk_task_ids = self._selective_high_risk_task_ids(initial_snapshot)
+            high_risk_count = len(initial_high_risk_task_ids)
+            self._latest_selective_score_stats = {
+                "selective_scoring_enabled": 1.0,
+                "selective_ready_tasks": float(ready_count),
+                "selective_high_risk_tasks": float(high_risk_count),
+                "selective_normal_tasks": float(max(ready_count - high_risk_count, 0)),
+                "selective_high_risk_ratio": high_risk_count / float(max(ready_count, 1)),
+                "selective_score_edges": 0.0,
+            }
+        elif initial_snapshot is not None:
+            self._latest_selective_score_stats = {
+                "selective_scoring_enabled": 0.0,
+                "selective_ready_tasks": float(ready_count),
+                "selective_high_risk_tasks": 0.0,
+                "selective_normal_tasks": 0.0,
+                "selective_high_risk_ratio": 0.0,
+                "selective_score_edges": 0.0,
+            }
+
         def provide(task) -> tuple[set[tuple[str, int]] | None, dict[tuple[str, int], float] | None]:
             snapshot = self._graph_builder.build(
                 self._task_manager,
@@ -353,6 +376,10 @@ class Env:
                 )
 
             self._latest_graph_scheduling_output = self._graph_scheduler.score_graph(score_snapshot)
+            self._latest_selective_score_stats["selective_score_edges"] = (
+                self._latest_selective_score_stats.get("selective_score_edges", 0.0)
+                + float(len(score_snapshot.task_uav_edges))
+            )
             return allowed_edges, self._latest_graph_scheduling_output.edge_scores
 
         return provide
@@ -1176,12 +1203,20 @@ class Env:
             "ready_tasks": float(len(self._task_manager.get_ready_tasks())),
             "active_tasks": float(len(self._task_manager.get_active_tasks())),
             "feasible_edges": float(len(self._latest_graph_snapshot.task_uav_edges)) if self._latest_graph_snapshot is not None else 0.0,
-            "score_edge_count": float(len(self._latest_graph_scheduling_output.edge_scores))
-            if self._latest_graph_scheduling_output is not None
-            else 0.0,
+            "score_edge_count": (
+                float(self._latest_selective_score_stats.get("selective_score_edges", 0.0))
+                if config.USE_HGNN_PER_TASK_RESCORING
+                else float(len(self._latest_graph_scheduling_output.edge_scores))
+                if self._latest_graph_scheduling_output is not None
+                else 0.0
+            ),
             "score_selected_assignments": float(stats.score_selected_assignments),
             "fallback_selected_assignments": float(stats.fallback_selected_assignments),
             "score_heuristic_disagreements": float(stats.score_heuristic_disagreements),
+            "score_raw_disagreements": float(stats.score_raw_disagreements),
+            "score_guard_fallback_assignments": float(stats.score_guard_fallback_assignments),
+            "agreement_guard_rejections": float(stats.agreement_guard_rejections),
+            "bounded_guard_rejections": float(stats.bounded_guard_rejections),
             "invalid_assignments": float(stats.invalid_actions),
         }
         diagnostics.update(self._latest_selective_score_stats)
