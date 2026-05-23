@@ -65,6 +65,13 @@ def _override_num_uavs(num_uavs: int, seed: int) -> None:
     _refresh_dimension_config()
 
 
+def _override_num_ues(num_ues: int) -> None:
+    if num_ues <= 0:
+        raise ValueError("--num_ues must be greater than 0.")
+    config.NUM_UES = num_ues
+    _refresh_dimension_config()
+
+
 def _zero_actions() -> np.ndarray:
     return np.zeros((config.NUM_UAVS, config.ACTION_DIM), dtype=np.float32)
 
@@ -404,6 +411,8 @@ def _serialize_dag_outcomes(env: Env, episode: int) -> list[dict[str, Any]]:
 
 
 def _configure_run(args: argparse.Namespace) -> None:
+    if args.num_ues is not None:
+        _override_num_ues(args.num_ues)
     if args.num_uavs is not None:
         _override_num_uavs(args.num_uavs, args.seed)
     if args.dag_arrival_prob is not None:
@@ -418,6 +427,11 @@ def _configure_run(args: argparse.Namespace) -> None:
     config.USE_PHASE_ONE_DAG_REWARD_SHAPING = False
     config.USE_HGNN_SCORE_ASSIGNMENT = args.mode == "full"
     config.USE_SELECTIVE_HGNN_SCORING = args.mode == "full" and args.selective_hgnn_score
+    config.USE_HGNN_PER_TASK_RESCORING = args.mode == "full" and args.rescore_each_assignment
+    config.USE_SCORE_RUNTIME_BOUNDED_GUARD = args.mode == "full" and args.runtime_bounded_guard
+    config.SCORE_RUNTIME_FINISH_TOLERANCE = float(args.runtime_finish_tolerance)
+    config.USE_SCORE_AGREEMENT_ONLY = args.mode == "full" and args.agreement_only
+    config.USE_STRICT_SELECTIVE_HGNN_SCORING = args.mode == "full" and args.strict_selective_hgnn_score
     config.HGNN_SCORE_CHECKPOINT = args.checkpoint if args.mode == "full" else ""
     config.USE_PHASE_ONE_HYPEREDGES = args.ablation != "no_hyperedge"
     config.USE_COLLABORATIVE_HYPEREDGES = args.ablation != "no_hyperedge"
@@ -454,8 +468,14 @@ def run_static_eval(args: argparse.Namespace) -> dict[str, object]:
                 "seed": args.seed,
                 "episodes": args.episodes,
                 "steps": args.steps,
+                "num_ues": config.NUM_UES,
                 "num_uavs": config.NUM_UAVS,
                 "dag_arrival_prob": config.DAG_ARRIVAL_PROB,
+                "rescore_each_assignment": config.USE_HGNN_PER_TASK_RESCORING,
+                "runtime_bounded_guard": config.USE_SCORE_RUNTIME_BOUNDED_GUARD,
+                "runtime_finish_tolerance": config.SCORE_RUNTIME_FINISH_TOLERANCE,
+                "agreement_only": config.USE_SCORE_AGREEMENT_ONLY,
+                "strict_selective_hgnn_score": config.USE_STRICT_SELECTIVE_HGNN_SCORING,
             },
         )
     for episode in range(1, args.episodes + 1):
@@ -508,10 +528,16 @@ def run_static_eval(args: argparse.Namespace) -> dict[str, object]:
         "seed": args.seed,
         "episodes": args.episodes,
         "steps": args.steps,
+        "num_ues": config.NUM_UES,
         "num_uavs": config.NUM_UAVS,
         "dag_arrival_prob": config.DAG_ARRIVAL_PROB,
         "use_hgnn_score": config.USE_HGNN_SCORE_ASSIGNMENT,
         "use_selective_hgnn_score": config.USE_SELECTIVE_HGNN_SCORING,
+        "rescore_each_assignment": config.USE_HGNN_PER_TASK_RESCORING,
+        "runtime_bounded_guard": config.USE_SCORE_RUNTIME_BOUNDED_GUARD,
+        "runtime_finish_tolerance": config.SCORE_RUNTIME_FINISH_TOLERANCE,
+        "agreement_only": config.USE_SCORE_AGREEMENT_ONLY,
+        "strict_selective_hgnn_score": config.USE_STRICT_SELECTIVE_HGNN_SCORING,
         "ablation": args.ablation,
         "checkpoint": config.HGNN_SCORE_CHECKPOINT,
         "episodes_data": episode_rows,
@@ -528,10 +554,16 @@ def main() -> None:
     parser.add_argument("--episodes", type=int, default=100)
     parser.add_argument("--steps", type=int, default=200)
     parser.add_argument("--seed", type=int, default=config.SEED)
+    parser.add_argument("--num_ues", type=int, default=None)
     parser.add_argument("--num_uavs", type=int, default=None)
     parser.add_argument("--dag_arrival_prob", type=float, default=None)
     parser.add_argument("--checkpoint", type=str, default="")
     parser.add_argument("--selective_hgnn_score", action="store_true")
+    parser.add_argument("--rescore_each_assignment", action="store_true")
+    parser.add_argument("--runtime_bounded_guard", action="store_true")
+    parser.add_argument("--runtime_finish_tolerance", type=float, default=0.1)
+    parser.add_argument("--agreement_only", action="store_true")
+    parser.add_argument("--strict_selective_hgnn_score", action="store_true")
     parser.add_argument(
         "--ablation",
         type=str,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import heapq
+from typing import Callable
 import math
 import numpy as np
 
@@ -136,6 +137,7 @@ class PhaseOneTaskExecutor:
         current_time_step: float,
         allowed_edges: set[tuple[str, int]] | None = None,
         edge_scores: dict[tuple[str, int], float] | None = None,
+        score_provider: Callable[[TaskNode], tuple[set[tuple[str, int]] | None, dict[tuple[str, int], float] | None]] | None = None,
     ) -> None:
         stats = PhaseOneStepStats()
         self._latest_assignment_records = []
@@ -143,13 +145,17 @@ class PhaseOneTaskExecutor:
         for task in ready_tasks:
             if task.task_id in self._scheduled:
                 continue
+            task_allowed_edges = allowed_edges
+            task_edge_scores = edge_scores
+            if score_provider is not None:
+                task_allowed_edges, task_edge_scores = score_provider(task)
             best_schedule, selection_mode, disagrees_with_heuristic, decision_record = self._select_best_uav(
                 task,
                 task_manager,
                 uavs,
                 current_time_step,
-                allowed_edges,
-                edge_scores,
+                task_allowed_edges,
+                task_edge_scores,
             )
             if decision_record is not None:
                 self._latest_assignment_records.append(decision_record)
@@ -407,6 +413,27 @@ class PhaseOneTaskExecutor:
         if scored_candidates and edge_scores is not None:
             score_best_schedule = max(scored_candidates, key=lambda item: (float(item[1]), -item[0].planned_finish))[0]
             disagrees = score_best_schedule.uav_id != heuristic_best_schedule.uav_id
+            fallback_reason = None
+            if config.USE_SCORE_AGREEMENT_ONLY and disagrees:
+                fallback_reason = "agreement_only"
+            elif (
+                config.USE_SCORE_RUNTIME_BOUNDED_GUARD
+                and score_best_schedule.planned_finish
+                > heuristic_best_schedule.planned_finish + float(config.SCORE_RUNTIME_FINISH_TOLERANCE)
+            ):
+                fallback_reason = "runtime_bounded_guard"
+            if fallback_reason is not None:
+                record = self._build_assignment_record(
+                    task,
+                    current_time_step,
+                    candidates,
+                    heuristic_best_schedule,
+                    score_best_schedule,
+                    heuristic_best_schedule,
+                    "fallback",
+                    False,
+                )
+                return heuristic_best_schedule, "fallback", False, record
             record = self._build_assignment_record(
                 task,
                 current_time_step,

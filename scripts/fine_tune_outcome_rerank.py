@@ -35,6 +35,8 @@ class OutcomePair:
     weight: float
     label: str
     delta_planned_finish: float
+    original_score_uav: int
+    original_heuristic_uav: int
 
 
 @dataclass(slots=True)
@@ -75,6 +77,25 @@ def _load_scheduler_state_compatible(scheduler: PhaseOneGraphScheduler, checkpoi
         for key, value in state_dict.items()
         if key in model_state and tuple(model_state[key].shape) == tuple(value.shape)
     }
+    incompatible = sorted(
+        key
+        for key, value in state_dict.items()
+        if key in model_state and tuple(model_state[key].shape) != tuple(value.shape)
+    )
+    missing = sorted(set(model_state) - set(state_dict))
+    unexpected = sorted(set(state_dict) - set(model_state))
+    critical_prefixes = ("encoder.", "score_head.")
+    critical_skipped = [
+        key
+        for key in sorted(set(incompatible) | set(missing) | set(unexpected))
+        if key.startswith(critical_prefixes)
+    ]
+    if critical_skipped:
+        raise RuntimeError(
+            "HGNN checkpoint is incompatible for critical scheduler parameters: "
+            + ", ".join(critical_skipped[:12])
+            + (" ..." if len(critical_skipped) > 12 else "")
+        )
     scheduler.load_state_dict(compatible_state, strict=False)
 
 
@@ -213,6 +234,8 @@ def build_outcome_pair_index(
                 weight=weight,
                 label=label,
                 delta_planned_finish=_safe_float(row.get("delta_planned_finish")),
+                original_score_uav=int(score_uav),
+                original_heuristic_uav=int(heuristic_uav),
             )
             if max_pairs > 0 and len(index) >= max_pairs:
                 return index
@@ -251,6 +274,12 @@ def collect_replay_samples(
                     key = (seed, episode, step, record.task_id)
                     pair = pair_index.get(key)
                     if pair is None:
+                        continue
+                    if record.selection_mode != "score":
+                        continue
+                    if record.score_uav != pair.original_score_uav:
+                        continue
+                    if record.heuristic_uav != pair.original_heuristic_uav:
                         continue
                     if (record.task_id, pair.preferred_uav) not in edge_set:
                         continue

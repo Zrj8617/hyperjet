@@ -64,6 +64,13 @@ def _override_num_uavs(num_uavs: int, seed: int) -> None:
     _refresh_dimension_config()
 
 
+def _override_num_ues(num_ues: int) -> None:
+    if num_ues <= 0:
+        raise ValueError("--num_ues must be greater than 0.")
+    config.NUM_UES = num_ues
+    _refresh_dimension_config()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run a short phase-one MAPPO training job.")
     parser.add_argument("--episodes", type=int, default=20)
@@ -74,6 +81,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=config.SEED)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--checkpoint", type=str, default="")
+    parser.add_argument("--num_ues", type=int, default=None)
     parser.add_argument("--num_uavs", type=int, default=None)
     parser.add_argument("--dag_arrival_prob", type=float, default=None)
     parser.add_argument(
@@ -91,6 +99,11 @@ def main() -> None:
     )
     parser.add_argument("--disable_hgnn_score", action="store_true")
     parser.add_argument("--selective_hgnn_score", action="store_true")
+    parser.add_argument("--rescore_each_assignment", action="store_true")
+    parser.add_argument("--runtime_bounded_guard", action="store_true")
+    parser.add_argument("--runtime_finish_tolerance", type=float, default=0.1)
+    parser.add_argument("--agreement_only", action="store_true")
+    parser.add_argument("--strict_selective_hgnn_score", action="store_true")
     parser.add_argument("--disable_dag_reward_shaping", action="store_true")
     parser.add_argument("--dag_failure_penalty", type=float, default=None)
     parser.add_argument("--stage_b_movement_reward", action="store_true")
@@ -99,6 +112,8 @@ def main() -> None:
     parser.add_argument("--no_progress", action="store_true")
     args = parser.parse_args()
 
+    if args.num_ues is not None:
+        _override_num_ues(args.num_ues)
     if args.num_uavs is not None:
         _override_num_uavs(args.num_uavs, args.seed)
     if args.dag_arrival_prob is not None:
@@ -112,6 +127,11 @@ def main() -> None:
     config.PPO_EPOCHS = args.ppo_epochs
     config.USE_HGNN_SCORE_ASSIGNMENT = not args.disable_hgnn_score
     config.USE_SELECTIVE_HGNN_SCORING = args.selective_hgnn_score and not args.disable_hgnn_score
+    config.USE_HGNN_PER_TASK_RESCORING = args.rescore_each_assignment and not args.disable_hgnn_score
+    config.USE_SCORE_RUNTIME_BOUNDED_GUARD = args.runtime_bounded_guard and not args.disable_hgnn_score
+    config.SCORE_RUNTIME_FINISH_TOLERANCE = float(args.runtime_finish_tolerance)
+    config.USE_SCORE_AGREEMENT_ONLY = args.agreement_only and not args.disable_hgnn_score
+    config.USE_STRICT_SELECTIVE_HGNN_SCORING = args.strict_selective_hgnn_score and not args.disable_hgnn_score
     config.HGNN_SCORE_CHECKPOINT = "" if args.disable_hgnn_score else args.checkpoint
     config.USE_MAPPO_COMPACT_OBS = True
     config.USE_PHASE_ONE_DEDICATED_OBS = True
@@ -151,10 +171,15 @@ def main() -> None:
     logger.log_configs()
     print(f"tag={args.tag}")
     print(f"episodes={args.episodes} steps={config.STEPS_PER_EPISODE} rollout={config.PPO_ROLLOUT_LENGTH}")
-    print(f"num_uavs={config.NUM_UAVS} dag_arrival_prob={config.DAG_ARRIVAL_PROB}")
+    print(f"num_ues={config.NUM_UES} num_uavs={config.NUM_UAVS} dag_arrival_prob={config.DAG_ARRIVAL_PROB}")
     print(f"obs_dim={config.OBS_DIM_SINGLE} action_dim={config.ACTION_DIM}")
     print(f"use_hgnn_score={config.USE_HGNN_SCORE_ASSIGNMENT}")
     print(f"use_selective_hgnn_score={config.USE_SELECTIVE_HGNN_SCORING}")
+    print(f"rescore_each_assignment={config.USE_HGNN_PER_TASK_RESCORING}")
+    print(f"runtime_bounded_guard={config.USE_SCORE_RUNTIME_BOUNDED_GUARD}")
+    print(f"runtime_finish_tolerance={config.SCORE_RUNTIME_FINISH_TOLERANCE}")
+    print(f"agreement_only={config.USE_SCORE_AGREEMENT_ONLY}")
+    print(f"strict_selective_hgnn_score={config.USE_STRICT_SELECTIVE_HGNN_SCORING}")
     print(f"ablation={args.ablation}")
     print(
         "hyperedges="

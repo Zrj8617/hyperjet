@@ -179,6 +179,13 @@ HGNN_SCORE_CHECKPOINT: str = ""
 SCORE_FALLBACK_TO_HEURISTIC: bool = True
 # 是否只让HGNN score接管高风险ready task；普通ready task继续走fallback
 USE_SELECTIVE_HGNN_SCORING: bool = False
+# 诊断开关：是否在每个ready task分配前重新构图并重新HGNN打分，避免同一step内顺序分配使用过期score
+USE_HGNN_PER_TASK_RESCORING: bool = False
+# 运行时保护：score只能在不明显慢于heuristic的候选中重排序
+USE_SCORE_RUNTIME_BOUNDED_GUARD: bool = False
+SCORE_RUNTIME_FINISH_TOLERANCE: float = 0.1
+# 诊断开关：只允许score与heuristic一致的决策生效，分歧全部回退heuristic
+USE_SCORE_AGREEMENT_ONLY: bool = False
 # selective scoring高风险判据：DAG/task剩余slack阈值
 SELECTIVE_HGNN_SLACK_THRESHOLD: int = DAG_CRITICAL_SLACK_THRESHOLD
 # selective scoring上下文风险窗口：critical/successor信号只在DAG slack进入该窗口时触发
@@ -190,6 +197,7 @@ SELECTIVE_HGNN_CANDIDATE_THRESHOLD: int = 2
 # selective scoring高风险判据：所属DAG已接近闭环的完成比例阈值
 SELECTIVE_HGNN_COMPLETION_THRESHOLD: float = 0.6
 # selective scoring高风险判据开关
+USE_STRICT_SELECTIVE_HGNN_SCORING: bool = False
 SELECTIVE_HGNN_USE_CRITICAL_PATH: bool = True
 SELECTIVE_HGNN_USE_CANDIDATE_SCARCITY: bool = True
 SELECTIVE_HGNN_USE_SUCCESSOR_UNLOCK: bool = True

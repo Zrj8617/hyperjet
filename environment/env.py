@@ -23,7 +23,26 @@ def _load_scheduler_state_compatible(scheduler: PhaseOneGraphScheduler, state_di
         for key, value in state_dict.items()
         if key in model_state and tuple(value.shape) == tuple(model_state[key].shape)
     }
+    incompatible = sorted(
+        key
+        for key, value in state_dict.items()
+        if key in model_state and tuple(value.shape) != tuple(model_state[key].shape)
+    )
+    missing = sorted(set(model_state) - set(state_dict))
+    unexpected = sorted(set(state_dict) - set(model_state))
     skipped = sorted(set(state_dict) - set(compatible_state))
+    critical_prefixes = ("encoder.", "score_head.")
+    critical_skipped = [
+        key
+        for key in sorted(set(incompatible) | set(missing) | set(unexpected))
+        if key.startswith(critical_prefixes)
+    ]
+    if critical_skipped:
+        raise RuntimeError(
+            "HGNN checkpoint is incompatible for critical scheduler parameters: "
+            + ", ".join(critical_skipped[:12])
+            + (" ..." if len(critical_skipped) > 12 else "")
+        )
     scheduler.load_state_dict(compatible_state, strict=False)
     if skipped:
         print(
@@ -165,7 +184,14 @@ class Env:
             self._latest_graph_scheduling_output = None
             self._latest_selective_score_stats = {}
             edge_scores: dict[tuple[str, int], float] | None = None
-            if config.USE_HGNN_SCORE_ASSIGNMENT and self._graph_scheduler is not None and self._latest_graph_snapshot is not None:
+            score_provider = None
+            if (
+                config.USE_HGNN_SCORE_ASSIGNMENT
+                and config.USE_HGNN_PER_TASK_RESCORING
+                and self._graph_scheduler is not None
+            ):
+                score_provider = self._build_per_task_score_provider()
+            elif config.USE_HGNN_SCORE_ASSIGNMENT and self._graph_scheduler is not None and self._latest_graph_snapshot is not None:
                 score_snapshot = self._build_selective_score_snapshot(self._latest_graph_snapshot)
                 self._latest_graph_scheduling_output = self._graph_scheduler.score_graph(score_snapshot)
                 edge_scores = self._latest_graph_scheduling_output.edge_scores
@@ -178,6 +204,7 @@ class Env:
                 self._time_step,
                 allowed_edges,
                 edge_scores=edge_scores,
+                score_provider=score_provider,
             )
 
         # 3. 更新UE电池与服务覆盖状态
@@ -276,6 +303,60 @@ class Env:
             task_uav_edge_features=selected_edge_features,
         )
 
+    def _build_per_task_score_provider(self):
+        def provide(task) -> tuple[set[tuple[str, int]] | None, dict[tuple[str, int], float] | None]:
+            snapshot = self._graph_builder.build(
+                self._task_manager,
+                self._uavs,
+                self._time_step,
+                self._task_executor,
+            )
+            self._latest_assignment_graph_snapshot = snapshot
+            allowed_edges = set(snapshot.task_uav_edges)
+            if self._graph_scheduler is None:
+                return allowed_edges, None
+
+            if config.USE_SELECTIVE_HGNN_SCORING:
+                high_risk_task_ids = self._selective_high_risk_task_ids(snapshot)
+                if task.task_id not in high_risk_task_ids:
+                    return allowed_edges, None
+                selected_indices = [
+                    edge_idx
+                    for edge_idx, (task_id, _) in enumerate(snapshot.task_uav_edges)
+                    if task_id == task.task_id
+                ]
+                if selected_indices:
+                    selected_edge_features = snapshot.task_uav_edge_features[selected_indices]
+                else:
+                    feature_dim = snapshot.task_uav_edge_features.shape[1] if snapshot.task_uav_edge_features.ndim == 2 else 0
+                    selected_edge_features = np.zeros((0, feature_dim), dtype=np.float32)
+                score_snapshot = replace(
+                    snapshot,
+                    task_uav_edges=[snapshot.task_uav_edges[edge_idx] for edge_idx in selected_indices],
+                    task_uav_edge_features=selected_edge_features,
+                )
+            else:
+                selected_indices = [
+                    edge_idx
+                    for edge_idx, (task_id, _) in enumerate(snapshot.task_uav_edges)
+                    if task_id == task.task_id
+                ]
+                if selected_indices:
+                    selected_edge_features = snapshot.task_uav_edge_features[selected_indices]
+                else:
+                    feature_dim = snapshot.task_uav_edge_features.shape[1] if snapshot.task_uav_edge_features.ndim == 2 else 0
+                    selected_edge_features = np.zeros((0, feature_dim), dtype=np.float32)
+                score_snapshot = replace(
+                    snapshot,
+                    task_uav_edges=[snapshot.task_uav_edges[edge_idx] for edge_idx in selected_indices],
+                    task_uav_edge_features=selected_edge_features,
+                )
+
+            self._latest_graph_scheduling_output = self._graph_scheduler.score_graph(score_snapshot)
+            return allowed_edges, self._latest_graph_scheduling_output.edge_scores
+
+        return provide
+
     def _selective_high_risk_task_ids(self, snapshot: HeteroGraphSnapshot) -> set[str]:
         candidate_counts: dict[str, int] = {}
         for task_id, _ in snapshot.task_uav_edges:
@@ -305,6 +386,13 @@ class Env:
                 task_slack <= config.SELECTIVE_HGNN_SLACK_THRESHOLD
                 or dag_slack <= config.SELECTIVE_HGNN_SLACK_THRESHOLD
             )
+            if config.USE_STRICT_SELECTIVE_HGNN_SCORING:
+                if is_high_risk:
+                    risk_score = 0.0
+                    risk_score += max(0.0, config.SELECTIVE_HGNN_SLACK_THRESHOLD - task_slack) * 4.0
+                    risk_score += max(0.0, config.SELECTIVE_HGNN_SLACK_THRESHOLD - dag_slack) * 4.0
+                    high_risk_candidates.append((risk_score, task.task_id))
+                continue
             if config.SELECTIVE_HGNN_USE_CANDIDATE_SCARCITY:
                 is_high_risk = is_high_risk or candidate_count <= config.SELECTIVE_HGNN_CANDIDATE_THRESHOLD
             if critical_path_task:

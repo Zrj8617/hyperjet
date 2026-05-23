@@ -94,7 +94,16 @@ class HeteroGraphBuilder:
             if config.USE_PHASE_ONE_HYPEREDGES and config.USE_CRITICAL_HYPEREDGES
             else []
         )
-        critical_hyperedges: list[list[str]] = []
+        critical_hyperedges = (
+            self._build_critical_hyperedges(
+                active_tasks,
+                task_manager,
+                task_uav_edges,
+                current_time_step,
+            )
+            if config.USE_PHASE_ONE_HYPEREDGES and config.USE_CRITICAL_HYPEREDGES
+            else []
+        )
         ready_tasks = task_manager.get_ready_tasks()
         (
             compute_attribute_hyperedges,

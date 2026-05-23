@@ -90,6 +90,8 @@ def test_build_outcome_pair_index_bad_only(tmp_path):
     assert pair.other_uav == 2
     assert pair.label == "BAD_SCORE_DECISION_STRONG"
     assert pair.weight == 2.0
+    assert pair.original_score_uav == 2
+    assert pair.original_heuristic_uav == 3
 
 
 def test_fine_tune_one_synthetic_snapshot(tmp_path):
@@ -123,6 +125,8 @@ def test_fine_tune_one_synthetic_snapshot(tmp_path):
                     weight=1.0,
                     label="BAD_SCORE_DECISION",
                     delta_planned_finish=0.2,
+                    original_score_uav=1,
+                    original_heuristic_uav=0,
                 ),
             )
         ],
