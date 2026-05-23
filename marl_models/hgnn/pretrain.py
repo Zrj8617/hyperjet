@@ -27,6 +27,52 @@ def _build_soft_target(eft_values: list[float], device: torch.device) -> torch.T
     return torch.softmax(-normalized_gap / max(config.SCORE_SOFT_TARGET_TAU, config.EPSILON), dim=0)
 
 
+def _bounded_preferred_uav(
+    uav_a: int,
+    uav_b: int,
+    teacher_scores: dict[int, float],
+    planned_finishes: dict[int, float],
+    tolerance: float,
+) -> int:
+    finish_a = float(planned_finishes[uav_a])
+    finish_b = float(planned_finishes[uav_b])
+    finish_gap = abs(finish_a - finish_b)
+    if finish_gap > tolerance:
+        if abs(finish_a - finish_b) <= config.EPSILON:
+            return min(uav_a, uav_b)
+        return uav_a if finish_a < finish_b else uav_b
+
+    score_a = float(teacher_scores[uav_a])
+    score_b = float(teacher_scores[uav_b])
+    if abs(score_a - score_b) > config.EPSILON:
+        return uav_a if score_a < score_b else uav_b
+    if abs(finish_a - finish_b) > config.EPSILON:
+        return uav_a if finish_a < finish_b else uav_b
+    return min(uav_a, uav_b)
+
+
+def _bounded_best_uav(
+    uav_ids: list[int],
+    teacher_scores: dict[int, float],
+    planned_finishes: dict[int, float],
+    tolerance: float,
+) -> int:
+    best_finish = min(float(planned_finishes[uav_id]) for uav_id in uav_ids)
+    safe_uavs = [
+        uav_id
+        for uav_id in uav_ids
+        if float(planned_finishes[uav_id]) <= best_finish + tolerance + config.EPSILON
+    ]
+    return min(
+        safe_uavs,
+        key=lambda uav_id: (
+            float(teacher_scores[uav_id]),
+            float(planned_finishes[uav_id]),
+            int(uav_id),
+        ),
+    )
+
+
 def train_score_imitation(
     samples: list[GraphSupervisionSample],
     epochs: int,
@@ -72,11 +118,12 @@ def train_score_imitation(
                     continue
 
                 logits_tensor = torch.stack(logits, dim=0).unsqueeze(0)
-                labels = torch.tensor([label_index], dtype=torch.long, device=logits_tensor.device)
 
                 if mode == "top1":
+                    labels = torch.tensor([label_index], dtype=torch.long, device=logits_tensor.device)
                     task_loss = loss_fn(logits_tensor, labels)
                 elif mode == "ranking":
+                    labels = torch.tensor([label_index], dtype=torch.long, device=logits_tensor.device)
                     score_lookup = target.heuristic_score_by_uav
                     pair_losses: list[torch.Tensor] = []
                     for i, uav_pos in enumerate(valid_uav_ids):
@@ -100,6 +147,39 @@ def train_score_imitation(
                         ranking_term = torch.stack(pair_losses).mean()
                         top1_term = loss_fn(logits_tensor, labels)
                         task_loss = ranking_term + config.SCORE_RANKING_TOP1_WEIGHT * top1_term
+                elif mode == "bounded_ranking":
+                    score_lookup = target.heuristic_score_by_uav
+                    finish_lookup = target.heuristic_eft_by_uav
+                    bounded_best_uav = _bounded_best_uav(
+                        valid_uav_ids,
+                        score_lookup,
+                        finish_lookup,
+                        config.SCORE_BOUNDED_RANKING_FINISH_TOLERANCE,
+                    )
+                    bounded_label_index = valid_uav_ids.index(bounded_best_uav)
+                    bounded_labels = torch.tensor([bounded_label_index], dtype=torch.long, device=logits_tensor.device)
+                    pair_losses = []
+                    for i, uav_a in enumerate(valid_uav_ids):
+                        for uav_b in valid_uav_ids[i + 1 :]:
+                            preferred_uav = _bounded_preferred_uav(
+                                uav_a,
+                                uav_b,
+                                score_lookup,
+                                finish_lookup,
+                                config.SCORE_BOUNDED_RANKING_FINISH_TOLERANCE,
+                            )
+                            other_uav = uav_b if preferred_uav == uav_a else uav_a
+                            preferred_score = edge_score_lookup[(target.task_id, preferred_uav)].view(1)
+                            other_score = edge_score_lookup[(target.task_id, other_uav)].view(1)
+                            target_rank = torch.ones(1, device=preferred_score.device)
+                            pair_losses.append(ranking_loss_fn(preferred_score, other_score, target_rank).view(()))
+                    if not pair_losses:
+                        task_loss = loss_fn(logits_tensor, bounded_labels)
+                    else:
+                        ranking_term = torch.stack(pair_losses).mean()
+                        top1_term = loss_fn(logits_tensor, bounded_labels)
+                        task_loss = ranking_term + config.SCORE_RANKING_TOP1_WEIGHT * top1_term
+                    label_index = bounded_label_index
                 elif mode == "soft":
                     score_lookup = target.heuristic_score_by_uav
                     teacher_scores = [float(score_lookup[uav_id]) for uav_id in valid_uav_ids]

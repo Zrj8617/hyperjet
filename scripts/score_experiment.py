@@ -366,10 +366,12 @@ def main() -> None:
     parser.add_argument("--pretrain_epochs", type=int, default=8)
     parser.add_argument("--lr", type=float, default=config.SCORE_PRETRAIN_LR)
     parser.add_argument("--action_mode", type=str, default=config.SCORE_PRETRAIN_ACTION_MODE, choices=["zero", "random"])
+    parser.add_argument("--finish_tolerance", type=float, default=config.SCORE_BOUNDED_RANKING_FINISH_TOLERANCE)
     parser.add_argument("--eval_episodes", type=int, default=6)
     parser.add_argument("--eval_steps", type=int, default=120)
     parser.add_argument("--skip_top1", action="store_true")
     parser.add_argument("--skip_ranking", action="store_true")
+    parser.add_argument("--run_bounded_ranking", action="store_true")
     parser.add_argument("--skip_soft", action="store_true")
     parser.add_argument(
         "--ablation",
@@ -405,6 +407,7 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+    config.SCORE_BOUNDED_RANKING_FINISH_TOLERANCE = float(args.finish_tolerance)
     _apply_ablation_config(args.ablation)
 
     output_dir = Path(args.output_dir)
@@ -432,6 +435,7 @@ def main() -> None:
             "epochs": args.pretrain_epochs,
             "learning_rate": args.lr,
             "action_mode": args.action_mode,
+            "bounded_ranking_finish_tolerance": config.SCORE_BOUNDED_RANKING_FINISH_TOLERANCE,
         },
         "evaluation": {
             "episodes": args.eval_episodes,
@@ -503,6 +507,33 @@ def main() -> None:
             "delta_vs_off": _delta(ranking_eval, off_metrics),
         }
 
+    if args.run_bounded_ranking:
+        bounded_ckpt, bounded_pretrain_metrics = pretrain_mode(
+            mode="bounded_ranking",
+            output_dir=output_dir,
+            episodes=args.pretrain_episodes,
+            steps_per_episode=args.pretrain_steps,
+            epochs=args.pretrain_epochs,
+            learning_rate=args.lr,
+            device=args.device,
+            seed=args.seed,
+            action_mode=args.action_mode,
+        )
+        bounded_eval = evaluate_scheduler(
+            num_episodes=args.eval_episodes,
+            steps_per_episode=args.eval_steps,
+            seed=args.seed,
+            use_score=True,
+            checkpoint_path=bounded_ckpt,
+            fallback_to_heuristic=True,
+        )
+        payload["runs"]["bounded_ranking_on"] = {
+            "checkpoint": bounded_ckpt,
+            "pretrain_metrics": bounded_pretrain_metrics,
+            "metrics": bounded_eval,
+            "delta_vs_off": _delta(bounded_eval, off_metrics),
+        }
+
     if not args.skip_soft:
         soft_ckpt, soft_pretrain_metrics = pretrain_mode(
             mode="soft",
@@ -543,6 +574,11 @@ def main() -> None:
     if "ranking_on" in payload["runs"] and "soft_on" in payload["runs"]:
         payload["ranking_vs_soft"] = _delta(
             payload["runs"]["soft_on"]["metrics"],  # type: ignore[index]
+            payload["runs"]["ranking_on"]["metrics"],  # type: ignore[index]
+        )
+    if "ranking_on" in payload["runs"] and "bounded_ranking_on" in payload["runs"]:
+        payload["ranking_vs_bounded_ranking"] = _delta(
+            payload["runs"]["bounded_ranking_on"]["metrics"],  # type: ignore[index]
             payload["runs"]["ranking_on"]["metrics"],  # type: ignore[index]
         )
 

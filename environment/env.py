@@ -51,6 +51,7 @@ class Env:
         self._task_manager: DAGTaskManager = DAGTaskManager()
         self._graph_builder: HeteroGraphBuilder = HeteroGraphBuilder()
         self._latest_graph_snapshot: HeteroGraphSnapshot | None = None
+        self._latest_assignment_graph_snapshot: HeteroGraphSnapshot | None = None
         self._task_executor: PhaseOneTaskExecutor = PhaseOneTaskExecutor()
         self._graph_scheduler: PhaseOneGraphScheduler | None = None
         self._latest_graph_scheduling_output: GraphSchedulingOutput | None = None
@@ -91,6 +92,10 @@ class Env:
         return self._latest_graph_snapshot
 
     @property
+    def latest_assignment_graph_snapshot(self) -> HeteroGraphSnapshot | None:
+        return self._latest_assignment_graph_snapshot
+
+    @property
     def task_executor(self) -> PhaseOneTaskExecutor:
         return self._task_executor
 
@@ -115,6 +120,7 @@ class Env:
         self._time_step = 0
         self._task_manager.reset()
         self._latest_graph_snapshot = None
+        self._latest_assignment_graph_snapshot = None
         self._latest_graph_scheduling_output = None
         self._latest_selective_score_stats = {}
         self._latest_phase_one_diagnostics = {}
@@ -155,6 +161,7 @@ class Env:
                 self._time_step,
                 self._task_executor,
             )
+            self._latest_assignment_graph_snapshot = self._latest_graph_snapshot
             self._latest_graph_scheduling_output = None
             self._latest_selective_score_stats = {}
             edge_scores: dict[tuple[str, int], float] | None = None

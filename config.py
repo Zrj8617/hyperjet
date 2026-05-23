@@ -230,7 +230,7 @@ HGNN_NUM_LAYERS: int = 2
 TASK_EMB_DIM: int = 64
 UAV_EMB_DIM: int = 64
 # score 预训练参数
-SCORE_PRETRAIN_MODE: str = "top1"  # 可选: "top1", "ranking", "soft"
+SCORE_PRETRAIN_MODE: str = "top1"  # 可选: "top1", "ranking", "soft", "bounded_ranking"
 SCORE_PRETRAIN_LR: float = 1e-3
 SCORE_PRETRAIN_EPOCHS: int = 5
 SCORE_PRETRAIN_EPISODES: int = 3
@@ -239,6 +239,7 @@ SCORE_PRETRAIN_ACTION_MODE: str = "zero"  # 可选: "zero", "random"
 SCORE_RANKING_MARGIN: float = 0.05
 SCORE_RANKING_TOP1_WEIGHT: float = 0.2
 SCORE_SOFT_TARGET_TAU: float = 0.2
+SCORE_BOUNDED_RANKING_FINISH_TOLERANCE: float = 0.1
 # Stage A teacher目标：从纯planned_finish扩展到轻量DAG-aware utility。
 # 分数仍然越小越好；权重以TIME_SLOT_DURATION量级为基准，避免一次性偏离EFT teacher过大。
 USE_DAG_AWARE_TEACHER_SCORE: bool = True

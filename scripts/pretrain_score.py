@@ -25,20 +25,25 @@ def main() -> None:
     parser.add_argument("--steps_per_episode", type=int, default=config.SCORE_PRETRAIN_STEPS_PER_EPISODE)
     parser.add_argument("--epochs", type=int, default=config.SCORE_PRETRAIN_EPOCHS)
     parser.add_argument("--lr", type=float, default=config.SCORE_PRETRAIN_LR)
-    parser.add_argument("--mode", type=str, default=config.SCORE_PRETRAIN_MODE, choices=["top1", "ranking", "soft"])
+    parser.add_argument("--mode", type=str, default=config.SCORE_PRETRAIN_MODE, choices=["top1", "ranking", "soft", "bounded_ranking"])
     parser.add_argument("--action_mode", type=str, default=config.SCORE_PRETRAIN_ACTION_MODE, choices=["zero", "random"])
+    parser.add_argument("--finish_tolerance", type=float, default=config.SCORE_BOUNDED_RANKING_FINISH_TOLERANCE)
     parser.add_argument("--output_dir", type=str, default="pretrained_score")
     parser.add_argument("--save_dataset", action="store_true")
     parser.add_argument("--seed", type=int, default=config.SEED)
     args = parser.parse_args()
 
+    config.SCORE_BOUNDED_RANKING_FINISH_TOLERANCE = float(args.finish_tolerance)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     device = "cuda" if torch.cuda.is_available() else "cpu"
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
-    print(f"[score-pretrain] device={device} mode={args.mode} action_mode={args.action_mode} seed={args.seed}")
+    print(
+        f"[score-pretrain] device={device} mode={args.mode} action_mode={args.action_mode} "
+        f"seed={args.seed} finish_tolerance={config.SCORE_BOUNDED_RANKING_FINISH_TOLERANCE}"
+    )
     print("[score-pretrain] Stage 1/2: collect supervision samples")
     samples = collect_score_supervision_dataset(args.episodes, args.steps_per_episode, action_mode=args.action_mode, seed=args.seed)
     print(f"[score-pretrain] Collected {len(samples)} graph samples.")
