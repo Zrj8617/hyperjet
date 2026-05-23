@@ -36,6 +36,7 @@ class PhaseOneStepStats:
     score_guard_fallback_assignments: int = 0
     agreement_guard_rejections: int = 0
     bounded_guard_rejections: int = 0
+    bounded_guard_clamps: int = 0
     step_delay: float = 0.0
     step_energy: float = 0.0
     completed_tasks_by_uav: dict[int, int] = field(default_factory=dict)
@@ -189,6 +190,8 @@ class PhaseOneTaskExecutor:
                         stats.agreement_guard_rejections += 1
                     elif decision_record.guard_reason == "runtime_bounded_guard":
                         stats.bounded_guard_rejections += 1
+            if decision_record is not None and decision_record.guard_reason == "runtime_bounded_guard_clamp":
+                stats.bounded_guard_clamps += 1
             if disagrees_with_heuristic:
                 self._score_heuristic_disagreements += 1
                 stats.score_heuristic_disagreements += 1
@@ -465,6 +468,14 @@ class PhaseOneTaskExecutor:
                 )
                 return heuristic_best_schedule, "guard_fallback", False, record
             disagrees = score_best_schedule.uav_id != heuristic_best_schedule.uav_id
+            guard_reason = (
+                "runtime_bounded_guard_clamp"
+                if (
+                    config.USE_SCORE_RUNTIME_BOUNDED_GUARD
+                    and score_best_schedule.uav_id != raw_score_best_schedule.uav_id
+                )
+                else None
+            )
             record = self._build_assignment_record(
                 task,
                 current_time_step,
@@ -476,7 +487,7 @@ class PhaseOneTaskExecutor:
                 disagrees,
                 raw_score_best_schedule,
                 raw_disagrees,
-                None,
+                guard_reason,
             )
             return score_best_schedule, "score", disagrees, record
 

@@ -1217,6 +1217,7 @@ class Env:
             "score_guard_fallback_assignments": float(stats.score_guard_fallback_assignments),
             "agreement_guard_rejections": float(stats.agreement_guard_rejections),
             "bounded_guard_rejections": float(stats.bounded_guard_rejections),
+            "bounded_guard_clamps": float(stats.bounded_guard_clamps),
             "invalid_assignments": float(stats.invalid_actions),
         }
         diagnostics.update(self._latest_selective_score_stats)
