@@ -212,6 +212,8 @@ USE_SERVICE_DOMAIN_HYPEREDGES: bool = True
 USE_RESOURCE_COMPETITION_HYPEREDGES: bool = True
 # 消融实验开关：是否启用关键阶段超边
 USE_CRITICAL_HYPEREDGES: bool = True
+# 消融实验开关：是否启用关键任务 support mixed hyperedge
+USE_CRITICAL_SUPPORT_HYPEREDGES: bool = True
 # 消融实验开关：是否启用任务属性超边
 USE_ATTRIBUTE_HYPEREDGES: bool = False
 # 消融实验开关：是否启用计算密集属性风险超边
@@ -224,7 +226,7 @@ USE_CANDIDATE_SCARCE_ATTRIBUTE_HYPEREDGES: bool = False
 USE_TASK_UAV_PAIR_FEATURES: bool = True
 # task-UAV基础pair feature维度：上传/迁移/计算/排队/deadline/父节点迁移/队列/距离
 BASE_TASK_UAV_PAIR_FEATURE_DIM: int = 9
-# 是否把超边参与摘要直接拼入score head的pair feature
+# 是否把超边参与摘要直接拼入score head的pair feature；关闭时保留维度但置零
 USE_PAIR_HYPEREDGE_SCORE_FEATURES: bool = True
 # pair-level超边摘要维度：
 # service_pair, resource_pair, critical_pair, service_uav_ratio,

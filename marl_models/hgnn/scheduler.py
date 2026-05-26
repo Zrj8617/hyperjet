@@ -34,11 +34,7 @@ class PhaseOneGraphScheduler(nn.Module):
         super().__init__()
         self.device = torch.device(device)
         self.pair_feature_dim = config.BASE_TASK_UAV_PAIR_FEATURE_DIM
-        self.score_pair_feature_dim = self.pair_feature_dim + (
-            config.PAIR_HYPEREDGE_SCORE_FEATURE_DIM
-            if config.USE_PAIR_HYPEREDGE_SCORE_FEATURES
-            else 0
-        )
+        self.score_pair_feature_dim = self.pair_feature_dim + config.PAIR_HYPEREDGE_SCORE_FEATURE_DIM
         self.encoder = PhaseOneHGNNEncoder(
             task_input_dim=config.DAG_TASK_FEATURE_DIM,
             uav_input_dim=7,
@@ -320,21 +316,20 @@ class PhaseOneGraphScheduler(nn.Module):
                 task_emb.append(encoded.task_embeddings[task_index[task_id]])
                 uav_emb.append(encoded.uav_embeddings[uav_index[uav_id]])
                 pair_feature = edge_pair_features[edge_idx]
-                if config.USE_PAIR_HYPEREDGE_SCORE_FEATURES:
-                    pair_feature = torch.cat(
-                        [
-                            pair_feature,
-                            pair_hyperedge_feature_map.get(
-                                (task_id, uav_id),
-                                torch.zeros(
-                                    (config.PAIR_HYPEREDGE_SCORE_FEATURE_DIM,),
-                                    dtype=torch.float32,
-                                    device=self.device,
-                                ),
+                pair_feature = torch.cat(
+                    [
+                        pair_feature,
+                        pair_hyperedge_feature_map.get(
+                            (task_id, uav_id),
+                            torch.zeros(
+                                (config.PAIR_HYPEREDGE_SCORE_FEATURE_DIM,),
+                                dtype=torch.float32,
+                                device=self.device,
                             ),
-                        ],
-                        dim=0,
-                    )
+                        ),
+                    ],
+                    dim=0,
+                )
                 pair_emb.append(pair_feature)
                 edge_keys.append((task_id, uav_id))
             if edge_keys:

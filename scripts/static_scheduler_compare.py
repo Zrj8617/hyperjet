@@ -442,12 +442,25 @@ def _configure_run(args: argparse.Namespace) -> None:
     config.USE_PHASE_ONE_HYPEREDGES = args.ablation != "no_hyperedge"
     config.USE_COLLABORATIVE_HYPEREDGES = args.ablation != "no_hyperedge"
     config.USE_SERVICE_DOMAIN_HYPEREDGES = args.ablation not in {"no_hyperedge", "no_service_domain"}
-    config.USE_RESOURCE_COMPETITION_HYPEREDGES = args.ablation not in {"no_hyperedge", "no_resource_competition"}
+    config.USE_RESOURCE_COMPETITION_HYPEREDGES = args.ablation not in {
+        "no_hyperedge",
+        "no_resource_competition",
+        "safe_hyperedge_only",
+    }
     config.USE_CRITICAL_HYPEREDGES = args.ablation not in {"no_hyperedge", "no_critical"}
+    config.USE_CRITICAL_SUPPORT_HYPEREDGES = args.ablation not in {
+        "no_hyperedge",
+        "no_critical",
+        "safe_hyperedge_only",
+    }
     config.USE_ATTRIBUTE_HYPEREDGES = False
     config.USE_COMPUTE_ATTRIBUTE_HYPEREDGES = False
     config.USE_COMMUNICATION_ATTRIBUTE_HYPEREDGES = False
     config.USE_CANDIDATE_SCARCE_ATTRIBUTE_HYPEREDGES = False
+    config.USE_PAIR_HYPEREDGE_SCORE_FEATURES = args.ablation not in {
+        "no_pair_hyperedge_score_feature",
+        "safe_hyperedge_only",
+    }
 
     if config.USE_HGNN_SCORE_ASSIGNMENT and not config.HGNN_SCORE_CHECKPOINT:
         raise ValueError("--checkpoint is required for --mode full.")
@@ -591,7 +604,15 @@ def main() -> None:
         "--ablation",
         type=str,
         default="full",
-        choices=["full", "no_hyperedge", "no_service_domain", "no_resource_competition", "no_critical"],
+        choices=[
+            "full",
+            "no_hyperedge",
+            "no_service_domain",
+            "no_resource_competition",
+            "no_critical",
+            "no_pair_hyperedge_score_feature",
+            "safe_hyperedge_only",
+        ],
     )
     parser.add_argument("--output_dir", type=str, default="analysis_outputs/static_scheduler_compare")
     parser.add_argument("--tag", type=str, default="")

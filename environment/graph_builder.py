@@ -91,7 +91,9 @@ class HeteroGraphBuilder:
                 executor,
                 current_time_step,
             )
-            if config.USE_PHASE_ONE_HYPEREDGES and config.USE_CRITICAL_HYPEREDGES
+            if config.USE_PHASE_ONE_HYPEREDGES
+            and config.USE_CRITICAL_HYPEREDGES
+            and config.USE_CRITICAL_SUPPORT_HYPEREDGES
             else []
         )
         critical_hyperedges = (
