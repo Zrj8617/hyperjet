@@ -1,6 +1,0 @@
-group,count,dag_success_rate,dag_failure_rate,dag_on_time_success_rate,avg_dag_completion_time,avg_dag_tardiness
-no_disagreement_dag,18.0,0.05555555555555555,0.0,0.05555555555555555,3.7836120424812973,0.0
-any_disagreement_dag,17.0,0.0,0.0,0.0,,
-critical_disagreement_dag,17.0,0.0,0.0,0.0,,
-high_risk_disagreement_dag,17.0,0.0,0.0,0.0,,
-large_delta_disagreement_dag,5.0,0.0,0.0,0.0,,

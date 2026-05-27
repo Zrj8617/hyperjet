@@ -1,9 +1,0 @@
-group,bucket,count,task_finish_rate,task_drop_rate,task_on_time_rate,avg_task_completion_time
-score_selected_and_agree,all,48.0,0.8125,0.0,0.8125,1.621719234644257
-score_selected_and_disagree,all,38.0,0.7105263157894737,0.0,0.7105263157894737,1.3751642261256256
-fallback_selected_in_full,all,34.0,0.7352941176470589,0.0,0.7352941176470589,1.327276072917324
-fallback_baseline,all,165.0,0.5757575757575758,0.0,0.5757575757575758,1.4876378102592094
-score_selected_by_delta_finish,<=0,48.0,0.8125,0.0,0.8125,1.621719234644257
-score_selected_by_delta_finish,"(0,0.5]",27.0,0.8148148148148148,0.0,0.8148148148148148,1.1990785813815172
-score_selected_by_delta_finish,"(0.5,1.0]",6.0,0.5,0.0,0.5,1.7071373813134307
-score_selected_by_delta_finish,>1.0,5.0,0.4,0.0,0.4,2.8141465855291123
