@@ -224,6 +224,8 @@ USE_COMMUNICATION_ATTRIBUTE_HYPEREDGES: bool = False
 USE_CANDIDATE_SCARCE_ATTRIBUTE_HYPEREDGES: bool = False
 # 消融实验开关：是否启用 task-UAV pair feature；关闭时保留维度但置零
 USE_TASK_UAV_PAIR_FEATURES: bool = True
+# task-UAV pair feature模式：full保留全部9维；limited置零答案型EFT字段；none整段置零
+TASK_UAV_PAIR_FEATURE_MODE: str = "full"
 # task-UAV基础pair feature维度：上传/迁移/计算/排队/deadline/父节点迁移/队列/距离
 BASE_TASK_UAV_PAIR_FEATURE_DIM: int = 9
 # 是否把超边参与摘要直接拼入score head的pair feature；关闭时保留维度但置零

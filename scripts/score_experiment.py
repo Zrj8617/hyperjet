@@ -33,11 +33,14 @@ class ExperimentConfigState:
     use_service_domain_hyperedges: bool
     use_resource_competition_hyperedges: bool
     use_critical_hyperedges: bool
+    use_critical_support_hyperedges: bool
     use_attribute_hyperedges: bool
     use_compute_attribute_hyperedges: bool
     use_communication_attribute_hyperedges: bool
     use_candidate_scarce_attribute_hyperedges: bool
     use_task_uav_pair_features: bool
+    task_uav_pair_feature_mode: str
+    use_pair_hyperedge_score_features: bool
 
 
 @contextmanager
@@ -56,11 +59,14 @@ def temporary_score_config(
         use_service_domain_hyperedges=config.USE_SERVICE_DOMAIN_HYPEREDGES,
         use_resource_competition_hyperedges=config.USE_RESOURCE_COMPETITION_HYPEREDGES,
         use_critical_hyperedges=config.USE_CRITICAL_HYPEREDGES,
+        use_critical_support_hyperedges=config.USE_CRITICAL_SUPPORT_HYPEREDGES,
         use_attribute_hyperedges=config.USE_ATTRIBUTE_HYPEREDGES,
         use_compute_attribute_hyperedges=config.USE_COMPUTE_ATTRIBUTE_HYPEREDGES,
         use_communication_attribute_hyperedges=config.USE_COMMUNICATION_ATTRIBUTE_HYPEREDGES,
         use_candidate_scarce_attribute_hyperedges=config.USE_CANDIDATE_SCARCE_ATTRIBUTE_HYPEREDGES,
         use_task_uav_pair_features=config.USE_TASK_UAV_PAIR_FEATURES,
+        task_uav_pair_feature_mode=config.TASK_UAV_PAIR_FEATURE_MODE,
+        use_pair_hyperedge_score_features=config.USE_PAIR_HYPEREDGE_SCORE_FEATURES,
     )
     config.USE_HGNN_SCORE_ASSIGNMENT = use_score
     config.HGNN_SCORE_CHECKPOINT = checkpoint_path
@@ -76,11 +82,14 @@ def temporary_score_config(
         config.USE_SERVICE_DOMAIN_HYPEREDGES = old_state.use_service_domain_hyperedges
         config.USE_RESOURCE_COMPETITION_HYPEREDGES = old_state.use_resource_competition_hyperedges
         config.USE_CRITICAL_HYPEREDGES = old_state.use_critical_hyperedges
+        config.USE_CRITICAL_SUPPORT_HYPEREDGES = old_state.use_critical_support_hyperedges
         config.USE_ATTRIBUTE_HYPEREDGES = old_state.use_attribute_hyperedges
         config.USE_COMPUTE_ATTRIBUTE_HYPEREDGES = old_state.use_compute_attribute_hyperedges
         config.USE_COMMUNICATION_ATTRIBUTE_HYPEREDGES = old_state.use_communication_attribute_hyperedges
         config.USE_CANDIDATE_SCARCE_ATTRIBUTE_HYPEREDGES = old_state.use_candidate_scarce_attribute_hyperedges
         config.USE_TASK_UAV_PAIR_FEATURES = old_state.use_task_uav_pair_features
+        config.TASK_UAV_PAIR_FEATURE_MODE = old_state.task_uav_pair_feature_mode
+        config.USE_PAIR_HYPEREDGE_SCORE_FEATURES = old_state.use_pair_hyperedge_score_features
 
 
 def _zero_actions() -> np.ndarray:
@@ -213,18 +222,71 @@ def _episode_seed(seed: int, episode_idx: int) -> int:
     return int(seed + episode_idx)
 
 
+def _refresh_dimension_config() -> None:
+    phase_one_obs = (
+        config.ENABLE_DYNAMIC_DAG
+        and config.ENABLE_PHASE_ONE_EXECUTION
+        and not config.ENABLE_LEGACY_REQUEST_PIPELINE
+        and config.USE_PHASE_ONE_DEDICATED_OBS
+    )
+    compact_obs = phase_one_obs and config.USE_MAPPO_COMPACT_OBS
+    config.MAX_UAV_NEIGHBORS = max(config.NUM_UAVS - 1, 1)
+    config.MAX_ASSOCIATED_UES = min(30, config.NUM_UES // max(config.NUM_UAVS, 1) + 10)
+    config.SELF_OBS_DIM = config.PHASE_ONE_SELF_OBS_DIM if phase_one_obs else config.LEGACY_SELF_OBS_DIM
+    config.UE_OBS_DIM = (
+        config.MAPPO_COMPACT_LOCAL_OBS_DIM
+        if compact_obs
+        else config.PHASE_ONE_TASK_OBS_DIM
+        if phase_one_obs
+        else config.LEGACY_UE_OBS_DIM
+    )
+    config.NEIGHBOR_OBS_DIM = config.PHASE_ONE_NEIGHBOR_OBS_DIM if phase_one_obs else config.LEGACY_NEIGHBOR_OBS_DIM
+    config.OBS_DIM_SINGLE = (
+        config.SELF_OBS_DIM + (config.MAX_UAV_NEIGHBORS * config.NEIGHBOR_OBS_DIM) + config.UE_OBS_DIM
+        if compact_obs
+        else config.SELF_OBS_DIM
+        + (config.MAX_UAV_NEIGHBORS * config.NEIGHBOR_OBS_DIM)
+        + (config.MAX_ASSOCIATED_UES * config.UE_OBS_DIM)
+    )
+
+
+def _override_num_uavs(num_uavs: int, seed: int) -> None:
+    if num_uavs <= 1:
+        raise ValueError("--num_uavs must be greater than 1.")
+    config.NUM_UAVS = num_uavs
+    rng = np.random.default_rng(seed)
+    config.UAV_STORAGE_CAPACITY = rng.choice(
+        np.arange(40 * 10**6, 80 * 10**6, 10**6),
+        size=config.NUM_UAVS,
+    ).astype(np.int64)
+    config.UAV_COMPUTING_CAPACITY = rng.choice(
+        np.arange(5 * 10**9, 20 * 10**9, 10**9),
+        size=config.NUM_UAVS,
+    ).astype(np.int64)
+    _refresh_dimension_config()
+
+
+def _override_num_ues(num_ues: int) -> None:
+    if num_ues <= 0:
+        raise ValueError("--num_ues must be greater than 0.")
+    config.NUM_UES = num_ues
+    _refresh_dimension_config()
+
+
 def _apply_ablation_config(ablation: str) -> None:
     no_attribute_modes = {
         "no_attribute",
         "no_attribute_no_service_domain",
         "no_attribute_no_resource_competition",
         "no_attribute_no_collaborative",
+        "safe_hyperedge_only",
     }
     no_service_domain_modes = {"no_service_domain", "no_attribute_no_service_domain", "no_attribute_no_collaborative"}
     no_resource_competition_modes = {
         "no_resource_competition",
         "no_attribute_no_resource_competition",
         "no_attribute_no_collaborative",
+        "safe_hyperedge_only",
     }
     config.USE_PHASE_ONE_HYPEREDGES = ablation != "no_hyperedge"
     config.USE_COLLABORATIVE_HYPEREDGES = ablation not in {"no_hyperedge", "no_collaborative"}
@@ -235,6 +297,7 @@ def _apply_ablation_config(ablation: str) -> None:
         ablation not in {"no_hyperedge", "no_collaborative"} and ablation not in no_resource_competition_modes
     )
     config.USE_CRITICAL_HYPEREDGES = ablation not in {"no_hyperedge", "no_critical"}
+    config.USE_CRITICAL_SUPPORT_HYPEREDGES = ablation not in {"no_hyperedge", "no_critical", "safe_hyperedge_only"}
     config.USE_ATTRIBUTE_HYPEREDGES = ablation not in {"no_hyperedge"} and ablation not in no_attribute_modes
     config.USE_COMPUTE_ATTRIBUTE_HYPEREDGES = config.USE_ATTRIBUTE_HYPEREDGES
     config.USE_COMMUNICATION_ATTRIBUTE_HYPEREDGES = config.USE_ATTRIBUTE_HYPEREDGES
@@ -249,6 +312,12 @@ def _apply_ablation_config(ablation: str) -> None:
         config.USE_COMMUNICATION_ATTRIBUTE_HYPEREDGES = ablation == "only_communication_attribute"
         config.USE_CANDIDATE_SCARCE_ATTRIBUTE_HYPEREDGES = ablation == "only_candidate_scarce_attribute"
     config.USE_TASK_UAV_PAIR_FEATURES = ablation != "no_pair_feature"
+    if not config.USE_TASK_UAV_PAIR_FEATURES:
+        config.TASK_UAV_PAIR_FEATURE_MODE = "none"
+    config.USE_PAIR_HYPEREDGE_SCORE_FEATURES = ablation not in {
+        "no_pair_hyperedge_score_feature",
+        "safe_hyperedge_only",
+    }
 
 
 def evaluate_scheduler(
@@ -360,6 +429,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_dir", type=str, default="score_experiments")
     parser.add_argument("--seed", type=int, default=config.SEED)
+    parser.add_argument("--num_ues", type=int, default=None)
+    parser.add_argument("--num_uavs", type=int, default=None)
+    parser.add_argument("--dag_arrival_prob", type=float, default=None)
     parser.add_argument("--device", type=str, default=("cuda" if torch.cuda.is_available() else "cpu"))
     parser.add_argument("--pretrain_episodes", type=int, default=8)
     parser.add_argument("--pretrain_steps", type=int, default=80)
@@ -373,6 +445,7 @@ def main() -> None:
     parser.add_argument("--skip_ranking", action="store_true")
     parser.add_argument("--run_bounded_ranking", action="store_true")
     parser.add_argument("--skip_soft", action="store_true")
+    parser.add_argument("--pair_feature_mode", choices=["full", "limited", "none"], default="full")
     parser.add_argument(
         "--ablation",
         type=str,
@@ -385,6 +458,8 @@ def main() -> None:
             "no_service_domain",
             "no_resource_competition",
             "no_critical",
+            "no_pair_hyperedge_score_feature",
+            "safe_hyperedge_only",
             "no_attribute",
             "no_attribute_no_service_domain",
             "no_attribute_no_resource_competition",
@@ -407,8 +482,24 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+    if args.num_ues is not None:
+        _override_num_ues(args.num_ues)
+    if args.num_uavs is not None:
+        _override_num_uavs(args.num_uavs, args.seed)
+    if args.dag_arrival_prob is not None:
+        if not 0.0 <= args.dag_arrival_prob <= 1.0:
+            raise ValueError("--dag_arrival_prob must be in [0, 1].")
+        config.DAG_ARRIVAL_PROB = args.dag_arrival_prob
+    config.TASK_UAV_PAIR_FEATURE_MODE = args.pair_feature_mode
+    config.USE_TASK_UAV_PAIR_FEATURES = args.pair_feature_mode != "none"
     config.SCORE_BOUNDED_RANKING_FINISH_TOLERANCE = float(args.finish_tolerance)
     _apply_ablation_config(args.ablation)
+    if args.ablation == "no_pair_feature" or args.pair_feature_mode == "none":
+        config.TASK_UAV_PAIR_FEATURE_MODE = "none"
+        config.USE_TASK_UAV_PAIR_FEATURES = False
+    else:
+        config.TASK_UAV_PAIR_FEATURE_MODE = args.pair_feature_mode
+        config.USE_TASK_UAV_PAIR_FEATURES = True
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -416,18 +507,25 @@ def main() -> None:
     payload: dict[str, object] = {
         "seed": args.seed,
         "device": args.device,
+        "num_ues": config.NUM_UES,
+        "num_uavs": config.NUM_UAVS,
+        "dag_arrival_prob": config.DAG_ARRIVAL_PROB,
         "ablation": args.ablation,
+        "pair_feature_mode": config.TASK_UAV_PAIR_FEATURE_MODE,
         "feature_switches": {
             "use_phase_one_hyperedges": config.USE_PHASE_ONE_HYPEREDGES,
             "use_collaborative_hyperedges": config.USE_COLLABORATIVE_HYPEREDGES,
             "use_service_domain_hyperedges": config.USE_SERVICE_DOMAIN_HYPEREDGES,
             "use_resource_competition_hyperedges": config.USE_RESOURCE_COMPETITION_HYPEREDGES,
             "use_critical_hyperedges": config.USE_CRITICAL_HYPEREDGES,
+            "use_critical_support_hyperedges": config.USE_CRITICAL_SUPPORT_HYPEREDGES,
             "use_attribute_hyperedges": config.USE_ATTRIBUTE_HYPEREDGES,
             "use_compute_attribute_hyperedges": config.USE_COMPUTE_ATTRIBUTE_HYPEREDGES,
             "use_communication_attribute_hyperedges": config.USE_COMMUNICATION_ATTRIBUTE_HYPEREDGES,
             "use_candidate_scarce_attribute_hyperedges": config.USE_CANDIDATE_SCARCE_ATTRIBUTE_HYPEREDGES,
             "use_task_uav_pair_features": config.USE_TASK_UAV_PAIR_FEATURES,
+            "task_uav_pair_feature_mode": config.TASK_UAV_PAIR_FEATURE_MODE,
+            "use_pair_hyperedge_score_features": config.USE_PAIR_HYPEREDGE_SCORE_FEATURES,
         },
         "pretrain": {
             "episodes": args.pretrain_episodes,

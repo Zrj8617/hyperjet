@@ -438,6 +438,8 @@ def _configure_run(args: argparse.Namespace) -> None:
     config.SCORE_RUNTIME_FINISH_TOLERANCE = float(args.runtime_finish_tolerance)
     config.USE_SCORE_AGREEMENT_ONLY = args.mode == "full" and args.agreement_only
     config.USE_STRICT_SELECTIVE_HGNN_SCORING = args.mode == "full" and args.strict_selective_hgnn_score
+    config.TASK_UAV_PAIR_FEATURE_MODE = args.pair_feature_mode
+    config.USE_TASK_UAV_PAIR_FEATURES = args.pair_feature_mode != "none"
     config.HGNN_SCORE_CHECKPOINT = args.checkpoint if args.mode == "full" else ""
     config.USE_PHASE_ONE_HYPEREDGES = args.ablation != "no_hyperedge"
     config.USE_COLLABORATIVE_HYPEREDGES = args.ablation != "no_hyperedge"
@@ -573,6 +575,8 @@ def run_static_eval(args: argparse.Namespace) -> dict[str, object]:
         "runtime_finish_tolerance": config.SCORE_RUNTIME_FINISH_TOLERANCE,
         "agreement_only": config.USE_SCORE_AGREEMENT_ONLY,
         "strict_selective_hgnn_score": config.USE_STRICT_SELECTIVE_HGNN_SCORING,
+        "pair_feature_mode": config.TASK_UAV_PAIR_FEATURE_MODE,
+        "use_task_uav_pair_features": config.USE_TASK_UAV_PAIR_FEATURES,
         "ablation": args.ablation,
         "checkpoint": config.HGNN_SCORE_CHECKPOINT,
         "episodes_data": episode_rows,
@@ -599,6 +603,7 @@ def main() -> None:
     parser.add_argument("--runtime_finish_tolerance", type=float, default=0.1)
     parser.add_argument("--agreement_only", action="store_true")
     parser.add_argument("--strict_selective_hgnn_score", action="store_true")
+    parser.add_argument("--pair_feature_mode", choices=["full", "limited", "none"], default="full")
     parser.add_argument("--no_progress", action="store_true")
     parser.add_argument(
         "--ablation",

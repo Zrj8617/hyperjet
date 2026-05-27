@@ -243,7 +243,8 @@ class HeteroGraphBuilder:
     ) -> np.ndarray:
         if not task_uav_edges:
             return np.zeros((0, config.BASE_TASK_UAV_PAIR_FEATURE_DIM), dtype=np.float32)
-        if not config.USE_TASK_UAV_PAIR_FEATURES:
+        pair_feature_mode = getattr(config, "TASK_UAV_PAIR_FEATURE_MODE", "full")
+        if not config.USE_TASK_UAV_PAIR_FEATURES or pair_feature_mode == "none":
             return np.zeros((len(task_uav_edges), config.BASE_TASK_UAV_PAIR_FEATURE_DIM), dtype=np.float32)
 
         uav_map = {uav.id: uav for uav in uavs}
@@ -298,6 +299,9 @@ class HeteroGraphBuilder:
                 ],
                 dtype=np.float32,
             )
+            if pair_feature_mode == "limited":
+                # Keep low-leakage descriptors; remove direct EFT/deadline-answer features.
+                feature_vec[[1, 3, 4, 5]] = 0.0
             features.append(feature_vec)
         return np.stack(features, axis=0).astype(np.float32)
 
