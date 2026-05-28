@@ -329,7 +329,45 @@ class _AttributionWriter:
         self._closed = True
 
 
-def _candidate_to_dict(candidate: AssignmentCandidateRecord) -> dict[str, float | int | None]:
+class _AssignmentJsonlWriter:
+    def __init__(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._file: TextIO = path.open("w", encoding="utf-8")
+        self._closed = False
+
+    def write(self, event: dict[str, Any]) -> None:
+        if self._closed:
+            raise RuntimeError("Cannot write to a closed assignment JSONL writer.")
+        json.dump(_to_jsonable(event), self._file, ensure_ascii=False)
+        self._file.write("\n")
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._file.flush()
+        self._file.close()
+        self._closed = True
+
+
+def _to_jsonable(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _to_jsonable(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_to_jsonable(item) for item in value]
+    if isinstance(value, tuple):
+        return [_to_jsonable(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.floating,)):
+        return float(value)
+    if isinstance(value, (np.bool_,)):
+        return bool(value)
+    return value
+
+
+def _candidate_to_dict(candidate: AssignmentCandidateRecord) -> dict[str, Any]:
     return {
         "uav_id": int(candidate.uav_id),
         "planned_start": float(candidate.planned_start),
@@ -340,6 +378,15 @@ def _candidate_to_dict(candidate: AssignmentCandidateRecord) -> dict[str, float 
         "score": None if candidate.score is None else float(candidate.score),
         "queue_length": int(candidate.queue_length),
         "available_time": float(candidate.available_time),
+        "distance_to_source": None if candidate.distance_to_source is None else float(candidate.distance_to_source),
+        "upload_rate": None if candidate.upload_rate is None else float(candidate.upload_rate),
+        "predecessor_transfer_time": (
+            None if candidate.predecessor_transfer_time is None else float(candidate.predecessor_transfer_time)
+        ),
+        "deadline_margin": None if candidate.deadline_margin is None else float(candidate.deadline_margin),
+        "deadline_violation_estimated": bool(candidate.deadline_violation_estimated),
+        "soft_constraint_violations": list(candidate.soft_constraint_violations),
+        "hard_reject_reason": candidate.hard_reject_reason,
     }
 
 
@@ -465,6 +512,10 @@ def _serialize_assignment_record(
         "task_type": int(record.task_type),
         "task_level": int(record.task_level),
         "task_state_at_assignment": record.task_state,
+        "task_input_size": float(record.task_input_size),
+        "task_output_size": None if task is None else float(task.output_size),
+        "task_cpu_cycles": float(record.task_cpu_cycles),
+        "task_data_size": None if task is None else float(task.input_size + task.output_size),
         "task_arrival_time": float(record.task_arrival_time),
         "task_deadline": float(record.task_deadline),
         "task_slack": float(record.task_slack),
@@ -485,6 +536,10 @@ def _serialize_assignment_record(
         "guard_reason": record.guard_reason,
         "teacher_uav": teacher_uav,
         "disagrees_with_heuristic": bool(record.disagrees_with_heuristic),
+        "fallback_used": bool(record.selection_mode in {"fallback", "guard_fallback"}),
+        "score_selected": bool(record.selection_mode == "score"),
+        "guard_clamped": bool(record.guard_reason == "runtime_bounded_guard_clamp"),
+        "guard_rejected": bool(record.selection_mode == "guard_fallback"),
         "teacher_disagrees_with_heuristic": bool(teacher_uav is not None and record.heuristic_uav is not None and teacher_uav != record.heuristic_uav),
         "student_disagrees_with_teacher": bool(teacher_uav is not None and record.score_uav is not None and record.score_uav != teacher_uav),
         "num_candidates": int(len(record.candidates)),
@@ -498,7 +553,17 @@ def _serialize_assignment_record(
         "candidates": [_candidate_to_dict(candidate) for candidate in record.candidates],
     }
     for candidate_payload in payload["candidates"]:
-        candidate_payload["teacher_score"] = teacher_scores.get(candidate_payload["uav_id"])
+        uav_id = candidate_payload["uav_id"]
+        candidate_payload["teacher_score"] = teacher_scores.get(uav_id)
+        if isinstance(uav_id, int) and 0 <= uav_id < len(env.uavs):
+            uav = env.uavs[uav_id]
+            candidate_payload["compute_capacity"] = float(config.UAV_COMPUTING_CAPACITY[uav_id])
+            candidate_payload["residual_energy"] = float(getattr(uav, "remaining_energy_ratio", 1.0))
+            if task is not None:
+                candidate_payload["distance"] = float(np.linalg.norm(task.source_pos - uav.pos[:2]))
+        planned_finish = candidate_payload.get("planned_finish")
+        if task is not None and isinstance(planned_finish, (int, float)):
+            candidate_payload["deadline_margin"] = float(task.deadline) - float(planned_finish)
 
     for prefix, candidate in {
         "selected": selected_candidate,
@@ -536,6 +601,32 @@ def _serialize_assignment_record(
     )
     payload["student_delta_planned_finish_vs_teacher"] = _delta(score_candidate, teacher_candidate, "planned_finish")
     return payload
+
+
+def _serialize_candidate_rejection_summary(args: argparse.Namespace, env: Env) -> dict[str, Any]:
+    summary = env.task_executor.candidate_rejection_summary
+    summary.update(
+        {
+            "mode": str(getattr(config, "CANDIDATE_POLICY_MODE", "strict")),
+            "enable_candidate_rejection_logging": bool(getattr(config, "ENABLE_CANDIDATE_REJECTION_LOGGING", False)),
+            "candidate_policy_config": {
+                "strict_distance_limit": float(config.DAG_TASK_UAV_MAX_DISTANCE),
+                "expanded_candidate_max_distance": float(getattr(config, "EXPANDED_CANDIDATE_MAX_DISTANCE", config.DAG_TASK_UAV_MAX_DISTANCE)),
+                "strict_max_queue": int(config.DAG_MAX_QUEUE_PER_UAV),
+                "expanded_candidate_max_queue": int(getattr(config, "EXPANDED_CANDIDATE_MAX_QUEUE", config.DAG_MAX_QUEUE_PER_UAV)),
+                "strict_deadline_tolerance": float(config.DAG_MAX_DEADLINE_TOLERANCE),
+                "expanded_candidate_deadline_tolerance": float(
+                    getattr(config, "EXPANDED_CANDIDATE_DEADLINE_TOLERANCE", config.DAG_MAX_DEADLINE_TOLERANCE)
+                ),
+                "keep_deadline_violators": bool(getattr(config, "EXPANDED_CANDIDATE_KEEP_DEADLINE_VIOLATORS", True)),
+                "keep_queue_over_limit": bool(getattr(config, "EXPANDED_CANDIDATE_KEEP_QUEUE_OVER_LIMIT", True)),
+                "keep_distance_over_strict_limit": bool(
+                    getattr(config, "EXPANDED_CANDIDATE_KEEP_DISTANCE_OVER_STRICT_LIMIT", True)
+                ),
+            },
+        }
+    )
+    return summary
 
 
 def _serialize_task_outcomes(env: Env, episode: int) -> list[dict[str, Any]]:
@@ -617,6 +708,12 @@ def _configure_run(args: argparse.Namespace) -> None:
     config.USE_STRICT_SELECTIVE_HGNN_SCORING = args.mode == "full" and args.strict_selective_hgnn_score
     config.TASK_UAV_PAIR_FEATURE_MODE = args.pair_feature_mode
     config.USE_TASK_UAV_PAIR_FEATURES = args.pair_feature_mode != "none"
+    config.CANDIDATE_POLICY_MODE = args.candidate_policy_mode
+    config.ENABLE_CANDIDATE_REJECTION_LOGGING = bool(args.enable_candidate_rejection_logging)
+    config.EXPANDED_CANDIDATE_MAX_DISTANCE = float(args.expanded_candidate_max_distance)
+    config.EXPANDED_CANDIDATE_MAX_QUEUE = int(args.expanded_candidate_max_queue)
+    config.EXPANDED_CANDIDATE_DEADLINE_TOLERANCE = float(args.expanded_candidate_deadline_tolerance)
+    config.WRITE_ASSIGNMENT_JSONL = bool(args.write_assignment_jsonl)
     config.HGNN_SCORE_CHECKPOINT = args.checkpoint if args.mode == "full" else ""
     _apply_ablation_config(args.ablation)
 
@@ -634,7 +731,9 @@ def run_static_eval(args: argparse.Namespace) -> dict[str, object]:
     episode_rows: list[dict[str, float]] = []
     task_outcomes: list[dict[str, Any]] = []
     dag_outcomes: list[dict[str, Any]] = []
+    candidate_rejection_snapshots: list[dict[str, Any]] = []
     attribution_writer: _AttributionWriter | None = None
+    assignment_jsonl_writer: _AssignmentJsonlWriter | None = None
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     progress = None
     if not args.no_progress:
@@ -666,6 +765,8 @@ def run_static_eval(args: argparse.Namespace) -> dict[str, object]:
                 "use_task_type_attribute_hyperedges": config.USE_TASK_TYPE_ATTRIBUTE_HYPEREDGES,
             },
         )
+    if args.write_assignment_jsonl:
+        assignment_jsonl_writer = _AssignmentJsonlWriter(args.assignment_jsonl_path)
     for episode in range(1, args.episodes + 1):
         episode_seed = args.seed + episode - 1
         np.random.seed(episode_seed)
@@ -703,6 +804,33 @@ def run_static_eval(args: argparse.Namespace) -> dict[str, object]:
                     raise RuntimeError("Attribution writer was not initialized.")
                 for record in env.task_executor.latest_assignment_records:
                     attribution_writer.write_assignment(_serialize_assignment_record(env, record, episode, step))
+            if assignment_jsonl_writer is not None:
+                for record in env.task_executor.latest_assignment_records:
+                    event = _serialize_assignment_record(env, record, episode, step)
+                    event.update(
+                        {
+                            "ablation": args.ablation,
+                            "mode": args.mode,
+                            "seed": int(args.seed),
+                            "num_ues": int(config.NUM_UES),
+                            "num_uavs": int(config.NUM_UAVS),
+                            "pair_feature_mode": config.TASK_UAV_PAIR_FEATURE_MODE,
+                            "candidate_policy_mode": str(config.CANDIDATE_POLICY_MODE),
+                            "runtime_bounded_guard": bool(config.USE_SCORE_RUNTIME_BOUNDED_GUARD),
+                            "runtime_finish_tolerance": float(config.SCORE_RUNTIME_FINISH_TOLERANCE),
+                            "checkpoint": config.HGNN_SCORE_CHECKPOINT or None,
+                            "output_dir": str(args.output_dir),
+                            "run_id": args.tag,
+                            "observed_outcome_joined": False,
+                            "observed_outcome_note": "Observed task/DAG outcomes are stored separately in attribution output when enabled; JSONL v1 records assignment-time counterfactual estimates only.",
+                        }
+                    )
+                    assignment_jsonl_writer.write(event)
+            if config.ENABLE_CANDIDATE_REJECTION_LOGGING or args.write_assignment_jsonl:
+                snapshot = _serialize_candidate_rejection_summary(args, env)
+                snapshot["episode"] = int(episode)
+                snapshot["step"] = int(step)
+                candidate_rejection_snapshots.append(snapshot)
 
         row: dict[str, float] = {
             "episode": float(episode),
@@ -732,6 +860,11 @@ def run_static_eval(args: argparse.Namespace) -> dict[str, object]:
         "num_ues": config.NUM_UES,
         "num_uavs": config.NUM_UAVS,
         "dag_arrival_prob": config.DAG_ARRIVAL_PROB,
+        "candidate_policy_mode": config.CANDIDATE_POLICY_MODE,
+        "enable_candidate_rejection_logging": bool(config.ENABLE_CANDIDATE_REJECTION_LOGGING),
+        "expanded_candidate_max_distance": float(config.EXPANDED_CANDIDATE_MAX_DISTANCE),
+        "expanded_candidate_max_queue": int(config.EXPANDED_CANDIDATE_MAX_QUEUE),
+        "expanded_candidate_deadline_tolerance": float(config.EXPANDED_CANDIDATE_DEADLINE_TOLERANCE),
         "use_hgnn_score": config.USE_HGNN_SCORE_ASSIGNMENT,
         "use_selective_hgnn_score": config.USE_SELECTIVE_HGNN_SCORING,
         "rescore_each_assignment": config.USE_HGNN_PER_TASK_RESCORING,
@@ -760,6 +893,12 @@ def run_static_eval(args: argparse.Namespace) -> dict[str, object]:
     }
     if attribution_writer is not None:
         attribution_writer.close(task_outcomes, dag_outcomes)
+    if assignment_jsonl_writer is not None:
+        assignment_jsonl_writer.close()
+    if config.ENABLE_CANDIDATE_REJECTION_LOGGING or args.write_assignment_jsonl:
+        final_rejection_summary = _serialize_candidate_rejection_summary(args, env)
+        final_rejection_summary["episode_summaries_captured"] = len(candidate_rejection_snapshots)
+        payload["candidate_rejection_summary"] = final_rejection_summary
     return payload
 
 
@@ -803,12 +942,29 @@ def main() -> None:
     parser.add_argument("--tag", type=str, default="")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--no_attribution", action="store_true")
+    parser.add_argument("--write_assignment_jsonl", action="store_true")
+    parser.add_argument("--candidate_policy_mode", choices=["strict", "expanded"], default="strict")
+    parser.add_argument("--enable_candidate_rejection_logging", action="store_true")
+    parser.add_argument("--expanded_candidate_max_distance", type=float, default=config.EXPANDED_CANDIDATE_MAX_DISTANCE)
+    parser.add_argument("--expanded_candidate_max_queue", type=int, default=config.EXPANDED_CANDIDATE_MAX_QUEUE)
+    parser.add_argument(
+        "--expanded_candidate_deadline_tolerance",
+        type=float,
+        default=config.EXPANDED_CANDIDATE_DEADLINE_TOLERANCE,
+    )
+    parser.add_argument(
+        "--assignment_jsonl_path",
+        type=str,
+        default="",
+        help="Optional JSONL path for one assignment event per line. Defaults to <output_dir>/<tag>_assignment_events.jsonl.",
+    )
     args = parser.parse_args()
     args.write_attribution = not args.no_attribution
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     tag = args.tag or f"static_{args.mode}_seed{args.seed}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    args.tag = tag
     output_path = output_dir / f"{tag}.json"
     if output_path.exists() and not args.overwrite:
         raise FileExistsError(f"Output already exists: {output_path}. Use --overwrite or change --tag.")
@@ -817,6 +973,16 @@ def main() -> None:
         if args.attribution_path.exists() and not args.overwrite:
             raise FileExistsError(
                 f"Attribution output already exists: {args.attribution_path}. Use --overwrite or change --tag."
+            )
+    if args.write_assignment_jsonl:
+        args.assignment_jsonl_path = (
+            Path(args.assignment_jsonl_path)
+            if args.assignment_jsonl_path
+            else output_dir / f"{tag}_assignment_events.jsonl"
+        )
+        if args.assignment_jsonl_path.exists() and not args.overwrite:
+            raise FileExistsError(
+                f"Assignment JSONL output already exists: {args.assignment_jsonl_path}. Use --overwrite or change --tag."
             )
 
     payload = run_static_eval(args)
@@ -827,6 +993,13 @@ def main() -> None:
     print(f"saved={output_path}")
     if args.write_attribution:
         print(f"attribution={args.attribution_path}")
+    if args.write_assignment_jsonl:
+        print(f"assignment_jsonl={args.assignment_jsonl_path}")
+    if config.ENABLE_CANDIDATE_REJECTION_LOGGING or args.write_assignment_jsonl:
+        rejection_summary_path = output_dir / f"{tag}_candidate_rejection_summary.json"
+        rejection_payload = payload.get("candidate_rejection_summary", {})
+        rejection_summary_path.write_text(json.dumps(rejection_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"candidate_rejection_summary={rejection_summary_path}")
     for key in [
         "dag_on_time_success_rate",
         "dag_high_risk_on_time_success_rate",

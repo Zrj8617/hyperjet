@@ -193,39 +193,36 @@ class HeteroGraphBuilder:
         current_time_step: float,
         executor: PhaseOneTaskExecutor | None,
     ) -> bool:
-        distance = float(np.linalg.norm(task.source_pos - uav.pos[:2]))
-        if distance > config.DAG_TASK_UAV_MAX_DISTANCE:
-            return False
         if not task.is_ready:
             return False
-        upload_rate = self._estimate_ue_uav_rate(task.source_pos, uav.pos)
-        if upload_rate <= 0.0:
-            return False
-        if executor is not None and executor.get_queue_length(uav.id) >= config.DAG_MAX_QUEUE_PER_UAV:
-            return False
-
-        predecessor_ready_time = float(current_time_step)
-        predecessor_transfer_time = 0.0
-        for parent_id in task.predecessors:
-            parent_task = task_manager.tasks[parent_id]
-            if parent_task.finish_time is None or parent_task.assigned_uav is None:
+        if executor is None:
+            distance = float(np.linalg.norm(task.source_pos - uav.pos[:2]))
+            if distance > config.DAG_TASK_UAV_MAX_DISTANCE:
                 return False
-            predecessor_ready_time = max(predecessor_ready_time, float(parent_task.finish_time))
-            if parent_task.assigned_uav != uav.id:
-                parent_uav = uavs[parent_task.assigned_uav]
-                transfer_time = self._estimate_uav_uav_transfer_time(parent_task.output_size, parent_uav.pos, uav.pos)
-                if not np.isfinite(transfer_time):
+            upload_rate = self._estimate_ue_uav_rate(task.source_pos, uav.pos)
+            if upload_rate <= 0.0:
+                return False
+            predecessor_ready_time = float(current_time_step)
+            predecessor_transfer_time = 0.0
+            for parent_id in task.predecessors:
+                parent_task = task_manager.tasks[parent_id]
+                if parent_task.finish_time is None or parent_task.assigned_uav is None:
                     return False
-                predecessor_transfer_time = max(predecessor_transfer_time, transfer_time)
-
-        upload_time = task.input_size / upload_rate
-        compute_time = task.cpu_cycles / float(config.UAV_COMPUTING_CAPACITY[uav.id])
-        available_time = executor.get_available_time(uav.id) if executor is not None else float(current_time_step)
-        earliest_start = max(float(current_time_step), available_time, predecessor_ready_time + predecessor_transfer_time, float(current_time_step) + upload_time)
-        planned_finish = earliest_start + compute_time
-        if planned_finish > task.deadline + config.DAG_MAX_DEADLINE_TOLERANCE:
-            return False
-        return True
+                predecessor_ready_time = max(predecessor_ready_time, float(parent_task.finish_time))
+                if parent_task.assigned_uav != uav.id:
+                    parent_uav = uavs[parent_task.assigned_uav]
+                    transfer_time = self._estimate_uav_uav_transfer_time(parent_task.output_size, parent_uav.pos, uav.pos)
+                    if not np.isfinite(transfer_time):
+                        return False
+                    predecessor_transfer_time = max(predecessor_transfer_time, transfer_time)
+            upload_time = task.input_size / upload_rate
+            compute_time = task.cpu_cycles / float(config.UAV_COMPUTING_CAPACITY[uav.id])
+            available_time = float(current_time_step)
+            earliest_start = max(float(current_time_step), available_time, predecessor_ready_time + predecessor_transfer_time, float(current_time_step) + upload_time)
+            planned_finish = earliest_start + compute_time
+            return planned_finish <= task.deadline + config.DAG_MAX_DEADLINE_TOLERANCE
+        estimate = executor._estimate_schedule_result(task, task_manager, uav, uavs, current_time_step)  # noqa: SLF001
+        return estimate.schedule is not None
 
     def _build_uav_uav_edges(self, uavs: list) -> list[tuple[int, int]]:
         edges: list[tuple[int, int]] = []
