@@ -37,6 +37,7 @@ class GraphSupervisionSample:
                 "compute_attribute_hyperedges": self.snapshot.compute_attribute_hyperedges,
                 "communication_attribute_hyperedges": self.snapshot.communication_attribute_hyperedges,
                 "candidate_scarce_attribute_hyperedges": self.snapshot.candidate_scarce_attribute_hyperedges,
+                "task_type_attribute_hyperedges": self.snapshot.task_type_attribute_hyperedges,
                 "attribute_hyperedges": self.snapshot.attribute_hyperedges,
             },
             "targets": [

@@ -38,6 +38,7 @@ class ExperimentConfigState:
     use_compute_attribute_hyperedges: bool
     use_communication_attribute_hyperedges: bool
     use_candidate_scarce_attribute_hyperedges: bool
+    use_task_type_attribute_hyperedges: bool
     use_task_uav_pair_features: bool
     task_uav_pair_feature_mode: str
     use_pair_hyperedge_score_features: bool
@@ -64,6 +65,7 @@ def temporary_score_config(
         use_compute_attribute_hyperedges=config.USE_COMPUTE_ATTRIBUTE_HYPEREDGES,
         use_communication_attribute_hyperedges=config.USE_COMMUNICATION_ATTRIBUTE_HYPEREDGES,
         use_candidate_scarce_attribute_hyperedges=config.USE_CANDIDATE_SCARCE_ATTRIBUTE_HYPEREDGES,
+        use_task_type_attribute_hyperedges=config.USE_TASK_TYPE_ATTRIBUTE_HYPEREDGES,
         use_task_uav_pair_features=config.USE_TASK_UAV_PAIR_FEATURES,
         task_uav_pair_feature_mode=config.TASK_UAV_PAIR_FEATURE_MODE,
         use_pair_hyperedge_score_features=config.USE_PAIR_HYPEREDGE_SCORE_FEATURES,
@@ -87,6 +89,7 @@ def temporary_score_config(
         config.USE_COMPUTE_ATTRIBUTE_HYPEREDGES = old_state.use_compute_attribute_hyperedges
         config.USE_COMMUNICATION_ATTRIBUTE_HYPEREDGES = old_state.use_communication_attribute_hyperedges
         config.USE_CANDIDATE_SCARCE_ATTRIBUTE_HYPEREDGES = old_state.use_candidate_scarce_attribute_hyperedges
+        config.USE_TASK_TYPE_ATTRIBUTE_HYPEREDGES = old_state.use_task_type_attribute_hyperedges
         config.USE_TASK_UAV_PAIR_FEATURES = old_state.use_task_uav_pair_features
         config.TASK_UAV_PAIR_FEATURE_MODE = old_state.task_uav_pair_feature_mode
         config.USE_PAIR_HYPEREDGE_SCORE_FEATURES = old_state.use_pair_hyperedge_score_features
@@ -274,6 +277,32 @@ def _override_num_ues(num_ues: int) -> None:
 
 
 def _apply_ablation_config(ablation: str) -> None:
+    mainline_modes = {
+        "attribute_blind",
+        "critical_only",
+        "attribute_only",
+        "critical_plus_attribute",
+    }
+    if ablation in mainline_modes:
+        config.USE_PHASE_ONE_HYPEREDGES = ablation != "attribute_blind"
+        config.USE_COLLABORATIVE_HYPEREDGES = False
+        config.USE_SERVICE_DOMAIN_HYPEREDGES = False
+        config.USE_RESOURCE_COMPETITION_HYPEREDGES = False
+        config.USE_CRITICAL_SUPPORT_HYPEREDGES = False
+        config.USE_CRITICAL_HYPEREDGES = ablation in {"critical_only", "critical_plus_attribute"}
+        use_attribute = ablation in {
+            "attribute_only",
+            "critical_plus_attribute",
+        }
+        config.USE_ATTRIBUTE_HYPEREDGES = use_attribute
+        config.USE_COMPUTE_ATTRIBUTE_HYPEREDGES = use_attribute
+        config.USE_COMMUNICATION_ATTRIBUTE_HYPEREDGES = use_attribute
+        config.USE_CANDIDATE_SCARCE_ATTRIBUTE_HYPEREDGES = use_attribute
+        config.USE_TASK_TYPE_ATTRIBUTE_HYPEREDGES = False
+        config.USE_TASK_UAV_PAIR_FEATURES = ablation != "no_pair_feature"
+        config.USE_PAIR_HYPEREDGE_SCORE_FEATURES = False
+        return
+
     no_attribute_modes = {
         "no_attribute",
         "no_attribute_no_service_domain",
@@ -302,6 +331,7 @@ def _apply_ablation_config(ablation: str) -> None:
     config.USE_COMPUTE_ATTRIBUTE_HYPEREDGES = config.USE_ATTRIBUTE_HYPEREDGES
     config.USE_COMMUNICATION_ATTRIBUTE_HYPEREDGES = config.USE_ATTRIBUTE_HYPEREDGES
     config.USE_CANDIDATE_SCARCE_ATTRIBUTE_HYPEREDGES = config.USE_ATTRIBUTE_HYPEREDGES
+    config.USE_TASK_TYPE_ATTRIBUTE_HYPEREDGES = False
     if ablation in {"no_compute_attribute", "no_communication_attribute", "no_candidate_scarce_attribute"}:
         config.USE_COMPUTE_ATTRIBUTE_HYPEREDGES = ablation != "no_compute_attribute"
         config.USE_COMMUNICATION_ATTRIBUTE_HYPEREDGES = ablation != "no_communication_attribute"
@@ -460,6 +490,10 @@ def main() -> None:
             "no_critical",
             "no_pair_hyperedge_score_feature",
             "safe_hyperedge_only",
+            "attribute_blind",
+            "critical_only",
+            "attribute_only",
+            "critical_plus_attribute",
             "no_attribute",
             "no_attribute_no_service_domain",
             "no_attribute_no_resource_competition",
@@ -523,6 +557,7 @@ def main() -> None:
             "use_compute_attribute_hyperedges": config.USE_COMPUTE_ATTRIBUTE_HYPEREDGES,
             "use_communication_attribute_hyperedges": config.USE_COMMUNICATION_ATTRIBUTE_HYPEREDGES,
             "use_candidate_scarce_attribute_hyperedges": config.USE_CANDIDATE_SCARCE_ATTRIBUTE_HYPEREDGES,
+            "use_task_type_attribute_hyperedges": config.USE_TASK_TYPE_ATTRIBUTE_HYPEREDGES,
             "use_task_uav_pair_features": config.USE_TASK_UAV_PAIR_FEATURES,
             "task_uav_pair_feature_mode": config.TASK_UAV_PAIR_FEATURE_MODE,
             "use_pair_hyperedge_score_features": config.USE_PAIR_HYPEREDGE_SCORE_FEATURES,

@@ -112,6 +112,7 @@ def test_fine_tune_one_synthetic_snapshot(tmp_path):
         compute_attribute_hyperedges=[],
         communication_attribute_hyperedges=[],
         candidate_scarce_attribute_hyperedges=[],
+        task_type_attribute_hyperedges=[],
         attribute_hyperedges=[],
     )
     sample = SnapshotOutcomeSample(

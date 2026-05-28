@@ -70,11 +70,11 @@ ENABLE_PHASE_ONE_EXECUTION: bool = True
 ENABLE_LEGACY_REQUEST_PIPELINE: bool = False
 # 每个UE每个时隙生成一个新DAG的概率
 DAG_ARRIVAL_PROB: float = 0.05
-# 单个DAG任务节点数量范围
+# 单个DAG任务节点数量范围；当前主线收口到中等规模DAG，降低噪声但保留依赖结构
 DAG_MIN_TASKS: int = 5
-DAG_MAX_TASKS: int = 10
+DAG_MAX_TASKS: int = 8
 # DAG最大拓扑层数
-DAG_MAX_TASK_LEVELS: int = 5
+DAG_MAX_TASK_LEVELS: int = 4
 # 每个任务的最大父节点数量
 DAG_MAX_PARENTS: int = 2
 # 任务输入/输出大小范围
@@ -222,6 +222,8 @@ USE_COMPUTE_ATTRIBUTE_HYPEREDGES: bool = False
 USE_COMMUNICATION_ATTRIBUTE_HYPEREDGES: bool = False
 # 消融实验开关：是否启用候选资源稀缺属性风险超边
 USE_CANDIDATE_SCARCE_ATTRIBUTE_HYPEREDGES: bool = False
+# 消融实验开关：task_type属性超边仅作为后续可选接口，默认关闭
+USE_TASK_TYPE_ATTRIBUTE_HYPEREDGES: bool = False
 # 消融实验开关：是否启用 task-UAV pair feature；关闭时保留维度但置零
 USE_TASK_UAV_PAIR_FEATURES: bool = True
 # task-UAV pair feature模式：full保留全部9维；limited置零答案型EFT字段；none整段置零
