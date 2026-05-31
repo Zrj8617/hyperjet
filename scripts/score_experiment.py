@@ -476,6 +476,14 @@ def main() -> None:
     parser.add_argument("--run_bounded_ranking", action="store_true")
     parser.add_argument("--skip_soft", action="store_true")
     parser.add_argument("--pair_feature_mode", choices=["full", "limited", "none"], default="full")
+    parser.add_argument("--candidate_policy_mode", choices=["strict", "expanded"], default=config.CANDIDATE_POLICY_MODE)
+    parser.add_argument("--expanded_candidate_max_distance", type=float, default=config.EXPANDED_CANDIDATE_MAX_DISTANCE)
+    parser.add_argument("--expanded_candidate_max_queue", type=int, default=config.EXPANDED_CANDIDATE_MAX_QUEUE)
+    parser.add_argument(
+        "--expanded_candidate_deadline_tolerance",
+        type=float,
+        default=config.EXPANDED_CANDIDATE_DEADLINE_TOLERANCE,
+    )
     parser.add_argument(
         "--ablation",
         type=str,
@@ -526,6 +534,10 @@ def main() -> None:
         config.DAG_ARRIVAL_PROB = args.dag_arrival_prob
     config.TASK_UAV_PAIR_FEATURE_MODE = args.pair_feature_mode
     config.USE_TASK_UAV_PAIR_FEATURES = args.pair_feature_mode != "none"
+    config.CANDIDATE_POLICY_MODE = args.candidate_policy_mode
+    config.EXPANDED_CANDIDATE_MAX_DISTANCE = float(args.expanded_candidate_max_distance)
+    config.EXPANDED_CANDIDATE_MAX_QUEUE = int(args.expanded_candidate_max_queue)
+    config.EXPANDED_CANDIDATE_DEADLINE_TOLERANCE = float(args.expanded_candidate_deadline_tolerance)
     config.SCORE_BOUNDED_RANKING_FINISH_TOLERANCE = float(args.finish_tolerance)
     _apply_ablation_config(args.ablation)
     if args.ablation == "no_pair_feature" or args.pair_feature_mode == "none":
@@ -546,6 +558,10 @@ def main() -> None:
         "dag_arrival_prob": config.DAG_ARRIVAL_PROB,
         "ablation": args.ablation,
         "pair_feature_mode": config.TASK_UAV_PAIR_FEATURE_MODE,
+        "candidate_policy_mode": config.CANDIDATE_POLICY_MODE,
+        "expanded_candidate_max_distance": float(config.EXPANDED_CANDIDATE_MAX_DISTANCE),
+        "expanded_candidate_max_queue": int(config.EXPANDED_CANDIDATE_MAX_QUEUE),
+        "expanded_candidate_deadline_tolerance": float(config.EXPANDED_CANDIDATE_DEADLINE_TOLERANCE),
         "feature_switches": {
             "use_phase_one_hyperedges": config.USE_PHASE_ONE_HYPEREDGES,
             "use_collaborative_hyperedges": config.USE_COLLABORATIVE_HYPEREDGES,

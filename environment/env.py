@@ -1,5 +1,6 @@
 # 导入用户设备(UE)类，用于表示终端用户设备
 from dataclasses import replace
+from typing import Any
 
 from environment.user_equipments import UE
 # 导入无人机(UAV)类，用于表示无人机执行节点
@@ -82,6 +83,8 @@ class Env:
             "dag_failed_jobs": 0.0,
         }
         self._latest_phase_one_reward_terms: dict[str, float] = {}
+        self._assignment_policy: Any | None = None
+        self._latest_assignment_rl_records: list[dict[str, Any]] = []
         if config.USE_HGNN_SCORE_ASSIGNMENT:
             device = "cuda" if torch.cuda.is_available() else "cpu"
             self._graph_scheduler = PhaseOneGraphScheduler(device=device)
@@ -126,6 +129,13 @@ class Env:
     def latest_phase_one_diagnostics(self) -> dict[str, float]:
         return self._latest_phase_one_diagnostics
 
+    @property
+    def latest_assignment_rl_records(self) -> list[dict[str, Any]]:
+        return self._latest_assignment_rl_records
+
+    def set_assignment_policy(self, policy: Any | None) -> None:
+        self._assignment_policy = policy
+
     def reset(self) -> list[np.ndarray]:
         """
         重置环境到初始状态
@@ -149,6 +159,7 @@ class Env:
             "dag_failed_jobs": 0.0,
         }
         self._latest_phase_one_reward_terms = {}
+        self._latest_assignment_rl_records = []
         self._task_executor.reset(self._uavs)
         # 返回重置后的初始观测
         return self._get_obs()
@@ -185,7 +196,14 @@ class Env:
             self._latest_selective_score_stats = {}
             edge_scores: dict[tuple[str, int], float] | None = None
             score_provider = None
-            if (
+            self._latest_assignment_rl_records = []
+            if config.USE_RL_ASSIGNMENT and self._assignment_policy is not None:
+                assignment_snapshot = self._build_selective_score_snapshot(self._latest_graph_snapshot)
+                edge_scores, self._latest_assignment_rl_records = self._assignment_policy.act(
+                    assignment_snapshot,
+                    exploration=True,
+                )
+            elif (
                 config.USE_HGNN_SCORE_ASSIGNMENT
                 and config.USE_HGNN_PER_TASK_RESCORING
                 and self._graph_scheduler is not None
@@ -206,6 +224,8 @@ class Env:
                 edge_scores=edge_scores,
                 score_provider=score_provider,
             )
+            if config.USE_RL_ASSIGNMENT and self._latest_assignment_rl_records:
+                self._align_assignment_rl_records()
 
         # 3. 更新UE电池与服务覆盖状态
         for ue in self._ues:
@@ -261,6 +281,76 @@ class Env:
         next_obs: list[np.ndarray] = self._get_obs()
         # 返回：下一观测、奖励、系统指标
         return next_obs, rewards, metrics
+
+    def _align_assignment_rl_records(self) -> None:
+        executor_records = {
+            record.task_id: record
+            for record in self._task_executor.latest_assignment_records
+        }
+        for rl_record in self._latest_assignment_rl_records:
+            task_id = str(rl_record["task_id"])
+            executor_record = executor_records.get(task_id)
+            task = self._task_manager.tasks.get(task_id)
+            actor_selected_uav_raw = rl_record.get("actor_selected_uav")
+            actor_selected_uav = None if actor_selected_uav_raw is None else int(actor_selected_uav_raw)
+            executor_selected_uav = None if executor_record is None else executor_record.selected_uav
+            action_executed = actor_selected_uav is not None and executor_selected_uav == actor_selected_uav
+            executor_candidate_uav_ids = (
+                []
+                if executor_record is None
+                else [int(candidate.uav_id) for candidate in executor_record.candidates]
+            )
+            fallback_used = (
+                executor_record is not None
+                and executor_record.selection_mode in {"fallback", "guard_fallback"}
+            )
+            selected_uav_failure_reason = (
+                None
+                if executor_record is None or actor_selected_uav is None
+                else executor_record.rejected_uav_reasons.get(actor_selected_uav)
+            )
+            failure_reason = (
+                "executor_record_missing"
+                if executor_record is None
+                else selected_uav_failure_reason
+                if selected_uav_failure_reason is not None
+                else "executor_no_feasible_candidate"
+                if executor_selected_uav is None
+                else "executor_selected_different_uav"
+                if executor_selected_uav != actor_selected_uav
+                else None
+            )
+            non_executed_reason = (
+                None
+                if action_executed
+                else "no_actor_selected_uav"
+                if actor_selected_uav is None
+                else "no_executor_assignment"
+                if executor_selected_uav is None
+                else "fallback_after_actor"
+                if fallback_used
+                else "executor_override"
+                if executor_selected_uav != actor_selected_uav
+                else "selected_uav_later_infeasible"
+                if selected_uav_failure_reason is not None
+                else "unknown_non_executed"
+            )
+            rl_record["env_step_id"] = int(self._time_step)
+            rl_record["executor_selected_uav"] = executor_selected_uav
+            rl_record["action_executed"] = bool(action_executed)
+            rl_record["task_type"] = None if task is None else int(task.task_type)
+            rl_record["candidate_count"] = len(rl_record.get("candidate_uav_ids", []))
+            rl_record["executor_candidate_count"] = len(executor_candidate_uav_ids)
+            rl_record["executor_candidate_uav_ids"] = executor_candidate_uav_ids
+            rl_record["executor_selection_mode"] = None if executor_record is None else executor_record.selection_mode
+            rl_record["fallback_used"] = bool(fallback_used)
+            rl_record["failure_reason"] = failure_reason
+            rl_record["selected_uav_failure_reason"] = selected_uav_failure_reason
+            rl_record["non_executed_reason"] = non_executed_reason
+            if executor_record is not None:
+                executor_record.actor_selected_uav = actor_selected_uav
+                executor_record.executor_selected_uav = executor_selected_uav
+                executor_record.action_executed = bool(action_executed)
 
     def _build_selective_score_snapshot(self, snapshot: HeteroGraphSnapshot) -> HeteroGraphSnapshot:
         if not config.USE_SELECTIVE_HGNN_SCORING:
@@ -483,7 +573,12 @@ class Env:
             )
             self._latest_graph_scheduling_output = None
             self._latest_selective_score_stats = {}
-            if config.USE_HGNN_SCORE_ASSIGNMENT and self._graph_scheduler is not None and self._latest_graph_snapshot is not None:
+            if (
+                not config.USE_RL_ASSIGNMENT
+                and config.USE_HGNN_SCORE_ASSIGNMENT
+                and self._graph_scheduler is not None
+                and self._latest_graph_snapshot is not None
+            ):
                 score_snapshot = self._build_selective_score_snapshot(self._latest_graph_snapshot)
                 self._latest_graph_scheduling_output = self._graph_scheduler.score_graph(score_snapshot)
 
@@ -1222,4 +1317,19 @@ class Env:
         }
         diagnostics.update(self._latest_selective_score_stats)
         diagnostics.update(self._latest_phase_one_reward_terms)
+        if config.USE_RL_ASSIGNMENT:
+            decision_count = len(self._latest_assignment_rl_records)
+            executed_count = sum(
+                1
+                for record in self._latest_assignment_rl_records
+                if record.get("action_executed", False)
+            )
+            diagnostics.update(
+                {
+                    "rl_assignment_decisions": float(decision_count),
+                    "rl_assignment_executed_decisions": float(executed_count),
+                    "rl_assignment_non_executed_decisions": float(decision_count - executed_count),
+                    "rl_assignment_action_executed_rate": executed_count / float(max(decision_count, 1)),
+                }
+            )
         return diagnostics

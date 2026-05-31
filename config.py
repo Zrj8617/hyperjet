@@ -272,6 +272,23 @@ DAG_TEACHER_PARENT_LOCALITY_BONUS: float = 1.0
 DAG_TEACHER_URGENCY_WEIGHT: float = 0.3
 DAG_TEACHER_COMPLETION_WEIGHT: float = 0.2
 
+# ===================== Assignment-only RL 参数 =====================
+# 最小化任务卸载RL分支：默认关闭，不影响原supervised score-head主路径
+USE_RL_ASSIGNMENT: bool = False
+RL_ASSIGNMENT_USE_HGNN_ENCODER: bool = True
+RL_ASSIGNMENT_TRAIN_ENCODER: bool = False
+RL_ASSIGNMENT_LOAD_ENCODER_CHECKPOINT: bool = True
+RL_ASSIGNMENT_USE_RUNTIME_GUARD: bool = False
+RL_ASSIGNMENT_GAMMA: float = 0.99
+RL_ASSIGNMENT_GAE_LAMBDA: float = 0.95
+RL_ASSIGNMENT_CLIP_EPS: float = 0.2
+RL_ASSIGNMENT_ENTROPY_COEF: float = 0.01
+RL_ASSIGNMENT_VALUE_COEF: float = 0.5
+RL_ASSIGNMENT_LR: float = 3e-4
+RL_ASSIGNMENT_MAX_GRAD_NORM: float = 0.5
+RL_ASSIGNMENT_UPDATE_EPOCHS: int = 4
+RL_ASSIGNMENT_MINIBATCH_SIZE: int = 64
+
 # ===================== 无人机参数 =====================
 # 无人机飞行高度，单位：米
 UAV_ALTITUDE: int = 100

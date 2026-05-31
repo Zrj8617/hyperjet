@@ -27,6 +27,15 @@ class GraphSchedulingTorchOutput:
     edge_scores: torch.Tensor
 
 
+@dataclass(slots=True)
+class GraphEncodingTorchOutput:
+    task_embeddings: torch.Tensor
+    uav_embeddings: torch.Tensor
+    task_index: dict[str, int]
+    uav_index: dict[int, int]
+    edge_pair_features: torch.Tensor
+
+
 class PhaseOneGraphScheduler(nn.Module):
     """Encodes the current graph snapshot and scores feasible task-UAV edges."""
 
@@ -344,6 +353,51 @@ class PhaseOneGraphScheduler(nn.Module):
             uav_embeddings=encoded.uav_embeddings,
             edge_keys=edge_keys,
             edge_scores=edge_scores_tensor,
+        )
+
+    def encode_graph(self, snapshot: HeteroGraphSnapshot) -> GraphEncodingTorchOutput:
+        """Encode a snapshot without invoking the supervised score head."""
+        (
+            task_features,
+            uav_features,
+            edge_pair_features,
+            task_index,
+            uav_index,
+            dependency_edges,
+            task_to_uav_edges,
+            uav_to_task_edges,
+            uav_uav_edges,
+            service_domain_hyperedges,
+            resource_competition_hyperedges,
+            critical_support_hyperedges,
+            critical_hyperedges,
+            compute_attribute_hyperedges,
+            communication_attribute_hyperedges,
+            candidate_scarce_attribute_hyperedges,
+            uav_hyperedges,
+        ) = self._prepare_graph_inputs(snapshot)
+        encoded = self.encoder(
+            task_features=task_features,
+            uav_features=uav_features,
+            dependency_edges=dependency_edges,
+            task_to_uav_edges=task_to_uav_edges,
+            uav_to_task_edges=uav_to_task_edges,
+            uav_uav_edges=uav_uav_edges,
+            service_domain_hyperedges=service_domain_hyperedges,
+            resource_competition_hyperedges=resource_competition_hyperedges,
+            critical_support_hyperedges=critical_support_hyperedges,
+            critical_hyperedges=critical_hyperedges,
+            compute_attribute_hyperedges=compute_attribute_hyperedges,
+            communication_attribute_hyperedges=communication_attribute_hyperedges,
+            candidate_scarce_attribute_hyperedges=candidate_scarce_attribute_hyperedges,
+            uav_hyperedges=uav_hyperedges,
+        )
+        return GraphEncodingTorchOutput(
+            task_embeddings=encoded.task_embeddings,
+            uav_embeddings=encoded.uav_embeddings,
+            task_index=task_index,
+            uav_index=uav_index,
+            edge_pair_features=edge_pair_features,
         )
 
     @torch.no_grad()

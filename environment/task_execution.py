@@ -111,6 +111,10 @@ class AssignmentDecisionRecord:
     raw_score_uav: int | None = None
     raw_disagrees_with_heuristic: bool = False
     guard_reason: str | None = None
+    actor_selected_uav: int | None = None
+    executor_selected_uav: int | None = None
+    action_executed: bool | None = None
+    rejected_uav_reasons: dict[int, str] = field(default_factory=dict)
 
 
 class PhaseOneTaskExecutor:
@@ -588,6 +592,7 @@ class PhaseOneTaskExecutor:
         edge_scores: dict[tuple[str, int], float] | None = None,
     ) -> tuple[ScheduledTask | None, str | None, bool, AssignmentDecisionRecord | None]:
         candidates: list[tuple[ScheduledTask, float | None, CandidateEstimateResult]] = []
+        rejected_uav_reasons: dict[int, str] = {}
         diagnostics_enabled = self.is_candidate_diagnostics_enabled()
         if diagnostics_enabled:
             self._candidate_rejection_summary["total_task_uav_pairs_checked"] = int(
@@ -595,11 +600,13 @@ class PhaseOneTaskExecutor:
             ) + len(uavs)
         for uav in uavs:
             if allowed_edges is not None and (task.task_id, uav.id) not in allowed_edges:
+                rejected_uav_reasons[int(uav.id)] = "allowed_edge_missing"
                 if diagnostics_enabled:
                     self._increment_reason_count("rejection_reason_counts", "not_in_allowed_edges")
                 continue
             estimate = self._estimate_schedule_result(task, task_manager, uav, uavs, current_time_step)
             if estimate.schedule is None:
+                rejected_uav_reasons[int(uav.id)] = estimate.hard_reject_reason or "schedule_none"
                 if diagnostics_enabled and estimate.hard_reject_reason is not None:
                     self._increment_reason_count("rejection_reason_counts", estimate.hard_reject_reason)
                 continue
@@ -616,7 +623,9 @@ class PhaseOneTaskExecutor:
             self._record_candidate_count(len(candidates))
 
         if not candidates:
-            record = self._build_assignment_record(task, current_time_step, [], None, None, None, None, False)
+            record = self._build_assignment_record(
+                task, current_time_step, [], None, None, None, None, False, rejected_uav_reasons=rejected_uav_reasons
+            )
             return None, None, False, record
 
         heuristic_best_schedule = min(candidates, key=lambda item: item[0].planned_finish)[0]
@@ -655,6 +664,7 @@ class PhaseOneTaskExecutor:
                     raw_score_best_schedule,
                     raw_disagrees,
                     fallback_reason,
+                    rejected_uav_reasons,
                 )
                 return heuristic_best_schedule, "guard_fallback", False, record
             disagrees = score_best_schedule.uav_id != heuristic_best_schedule.uav_id
@@ -678,6 +688,7 @@ class PhaseOneTaskExecutor:
                 raw_score_best_schedule,
                 raw_disagrees,
                 guard_reason,
+                rejected_uav_reasons,
             )
             return score_best_schedule, "score", disagrees, record
 
@@ -691,6 +702,7 @@ class PhaseOneTaskExecutor:
                 None,
                 None,
                 False,
+                rejected_uav_reasons=rejected_uav_reasons,
             )
             return None, None, False, record
         record = self._build_assignment_record(
@@ -702,6 +714,7 @@ class PhaseOneTaskExecutor:
             heuristic_best_schedule,
             "fallback",
             False,
+            rejected_uav_reasons=rejected_uav_reasons,
         )
         return heuristic_best_schedule, "fallback", False, record
 
@@ -718,6 +731,7 @@ class PhaseOneTaskExecutor:
         raw_score_schedule: ScheduledTask | None = None,
         raw_disagrees_with_heuristic: bool = False,
         guard_reason: str | None = None,
+        rejected_uav_reasons: dict[int, str] | None = None,
     ) -> AssignmentDecisionRecord:
         candidate_records = [
             AssignmentCandidateRecord(
@@ -763,6 +777,8 @@ class PhaseOneTaskExecutor:
             raw_score_uav=None if raw_score_schedule is None else raw_score_schedule.uav_id,
             raw_disagrees_with_heuristic=raw_disagrees_with_heuristic,
             guard_reason=guard_reason,
+            executor_selected_uav=None if selected_schedule is None else selected_schedule.uav_id,
+            rejected_uav_reasons=dict(rejected_uav_reasons or {}),
         )
 
     def _estimate_schedule(
