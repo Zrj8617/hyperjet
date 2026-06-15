@@ -8,8 +8,75 @@ MODEL: str = "mappo"  # 可选模型: 'maddpg', 'matd3', 'mappo', 'masac', 'atte
 SEED: int = 42
 # 设置numpy库的随机种子
 np.random.seed(SEED)
-# 每个回合的总时间步长
-STEPS_PER_EPISODE: int = 1000
+
+# ===================== zrj_3 clean mainline: ENV =====================
+# Clean mainline canonical environment parameters. Deprecated aliases may remain
+# below only to keep old imports from crashing.
+AREA_WIDTH: int = 700
+AREA_HEIGHT: int = 700
+NUM_UAVS: int = 8
+NUM_UES: int = 100
+EPISODE_LENGTH: int = 500
+TIME_SLOT_DURATION: float = 1.0
+# Deprecated alias used by old training loops; clean mainline uses EPISODE_LENGTH.
+STEPS_PER_EPISODE: int = EPISODE_LENGTH
+
+# ===================== zrj_3 clean mainline: HOTSPOT =====================
+HOTSPOT_RADIUS: float = 200.0
+DAG_BASE_ARRIVAL_PROB: float = 0.05
+DAG_HOTSPOT_ARRIVAL_MULTIPLIER: float = 2.0
+
+# ===================== zrj_3 clean mainline: UE_MOBILITY =====================
+UE_WALK_SPEED_MEAN: float = 1.2
+UE_SERVICE_WAITING_SPEED_SCALE: float = 0.2
+
+# ===================== zrj_3 clean mainline: DAG =====================
+DAG_MIN_TASKS: int = 5
+DAG_MAX_TASKS: int = 8
+DAG_MAX_LEVELS: int = 4
+DAG_MAX_PARENTS: int = 3
+BASE_UNIT_BYTES: int = 10 * 1024
+
+# ===================== zrj_3 clean mainline: TASK_ATTRIBUTES =====================
+INPUT_DATA_SIZE_MB_RANGE: tuple[float, float] = (1.0, 30.0)
+OUTPUT_DATA_SIZE_MB_RANGE: tuple[float, float] = (0.5, 20.0)
+TASK_CONSTANT_RANGE: tuple[int, int] = (1, 10)
+TASK_COMPLEXITY_PROBS: dict[str, float] = {
+    "n": 0.2,
+    "nlogn": 0.7,
+    "nlog2n": 0.1,
+}
+
+# ===================== zrj_3 clean mainline: COMM =====================
+BASE_UPLOAD_BANDWIDTH_MBPS: list[float] = [20.0, 50.0, 100.0]
+BASE_DOWNLOAD_BANDWIDTH_MBPS: list[float] = [50.0, 100.0, 200.0]
+BANDWIDTH_LEVEL_PROBS: list[float] = [0.3, 0.5, 0.2]
+
+# ===================== zrj_3 clean mainline: ENERGY =====================
+# Initial defaults reuse nearby legacy transmit assumptions where possible.
+# These are first-version configurable power knobs and should be calibrated later.
+P_UAV_COMPUTE: float = 50.0
+P_UE_TX: float = 0.5
+P_UAV_TX: float = 0.5
+
+# ===================== zrj_3 clean mainline: GRAPH =====================
+ENABLE_DAG_DEPENDENCY_EDGES: bool = True
+ENABLE_KHOP_DEPENDENCY_HYPEREDGES: bool = True
+ENABLE_ATTRIBUTE_HYPEREDGES: bool = True
+ATTRIBUTE_HYPEREDGE_UPDATE_INTERVAL: int = 5
+ATTRIBUTE_HYPEREDGE_CLUSTER_NUM: int = 4
+KHOP_K: int = 2
+
+# ===================== zrj_3 clean mainline: REWARD =====================
+REWARD_TIME_WEIGHT: float = 1.0
+REWARD_ENERGY_WEIGHT: float = 0.001
+REWARD_COMPLETED_DAG_WEIGHT: float = 10.0
+CRITICAL_TASK_WEIGHT: float = 1.0
+NONCRITICAL_TASK_WEIGHT: float = 0.5
+
+# ===================== zrj_3 clean mainline: QOS =====================
+ENABLE_DEADLINE_QOS_EVAL: bool = False
+
 # 日志记录频率（单位：回合）
 LOG_FREQ: int = 1
 # 图像保存频率（单位：步长）
@@ -22,24 +89,14 @@ TEST_IMG_FREQ: int = 100
 # ===================== 仿真环境参数 =====================
 # 宏基站坐标位置（X, Y, Z），单位：米
 MBS_POS: np.ndarray = np.array([350.0, 350.0, 30.0], dtype=np.float32)
-# 无人机数量
-NUM_UAVS: int = 5
-# 用户设备数量
-NUM_UES: int = 100
-# 仿真区域宽度（X轴最大值），单位：米
-AREA_WIDTH: int = 700
-# 仿真区域高度（Y轴最大值），单位：米
-AREA_HEIGHT: int = 700
-# 时间片长度，单位：秒
-TIME_SLOT_DURATION: float = 1.0
 # 用户设备每时间片最大移动距离，单位：米
-UE_MAX_DIST: float = 15.0
+UE_MAX_DIST: float = 3.0
 # 用户高斯-马尔可夫移动模型记忆因子
 UE_GM_ALPHA: float = 0.85
 # 用户高斯-马尔可夫移动模型平均速度，单位：米/秒
-UE_GM_MEAN_SPEED: float = 6.0
+UE_GM_MEAN_SPEED: float = UE_WALK_SPEED_MEAN
 # 用户高斯-马尔可夫移动模型速度扰动标准差，单位：米/秒
-UE_GM_SPEED_SIGMA: float = 1.5
+UE_GM_SPEED_SIGMA: float = 0.3
 # 用户高斯-马尔可夫移动模型方向扰动标准差，单位：弧度
 UE_GM_THETA_SIGMA: float = 0.30
 # 用户高斯-马尔可夫移动模型最小速度，单位：米/秒
@@ -51,15 +108,15 @@ UE_BOUNDARY_MODE: str = "reflect"
 
 # ===================== 高密度热点/任务聚集场景参数 =====================
 # 是否启用UE热点初始化与热点任务到达增强
-ENABLE_UE_HOTSPOTS: bool = True
+ENABLE_UE_HOTSPOTS: bool = False  # Deprecated: clean mainline uses one map hotspot region, not hotspot UE identity.
 # 热点数量
-NUM_HOTSPOTS: int = 2
+NUM_HOTSPOTS: int = 0  # Deprecated: clean mainline samples one episode hotspot outside UE class.
 # 初始分布在热点内的UE比例
-HOTSPOT_UE_RATIO: float = 0.6
+HOTSPOT_UE_RATIO: float = 0.0  # Deprecated: fixed-ratio hotspot UE model is forbidden in clean mainline.
 # UE围绕热点中心采样的标准差，单位：米
-HOTSPOT_STD: float = 60.0
+HOTSPOT_STD: float = 60.0  # Deprecated.
 # 热点UE的DAG到达概率倍率
-HOTSPOT_DAG_ARRIVAL_MULTIPLIER: float = 2.0
+HOTSPOT_DAG_ARRIVAL_MULTIPLIER: float = DAG_HOTSPOT_ARRIVAL_MULTIPLIER  # Deprecated alias.
 
 # ===================== 阶段一 DAG 任务参数 =====================
 # 是否启用阶段一动态DAG底层模块
@@ -69,14 +126,12 @@ ENABLE_PHASE_ONE_EXECUTION: bool = True
 # 是否保留旧版基于MBS的请求处理路径
 ENABLE_LEGACY_REQUEST_PIPELINE: bool = False
 # 每个UE每个时隙生成一个新DAG的概率
-DAG_ARRIVAL_PROB: float = 0.05
+DAG_ARRIVAL_PROB: float = DAG_BASE_ARRIVAL_PROB  # Deprecated alias.
 # 单个DAG任务节点数量范围；当前主线收口到中等规模DAG，降低噪声但保留依赖结构
-DAG_MIN_TASKS: int = 5
-DAG_MAX_TASKS: int = 8
 # DAG最大拓扑层数
-DAG_MAX_TASK_LEVELS: int = 4
-# 每个任务的最大父节点数量
-DAG_MAX_PARENTS: int = 2
+DAG_MAX_TASK_LEVELS: int = DAG_MAX_LEVELS  # Deprecated alias.
+# DAG_MAX_PARENTS is defined in the clean DAG group above and kept under the
+# same name for old imports.
 # 任务输入/输出大小范围
 DAG_MIN_INPUT_SIZE: int = 1 * 10**5
 DAG_MAX_INPUT_SIZE: int = 2 * 10**6
@@ -88,7 +143,7 @@ DAG_MAX_CPU_CYCLES: int = 6 * 10**9
 # 任务截止期相对当前时隙的偏移范围
 DAG_MIN_DEADLINE_OFFSET: int = 5
 DAG_MAX_DEADLINE_OFFSET: int = 40
-# DAG任务类型
+# DAG任务类型。Deprecated: clean mainline no longer uses preprocess/compute/aggregation semantics.
 TASK_TYPE_PREPROCESS: int = 0
 TASK_TYPE_COMPUTE: int = 1
 TASK_TYPE_AGGREGATION: int = 2
