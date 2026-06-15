@@ -83,6 +83,17 @@ def _sanitize_name(value: str) -> str:
     return cleaned.strip("_.-") or "assignment_rl"
 
 
+def _parse_seed_log(value: str) -> tuple[int, Path]:
+    seed_text, separator, path_text = value.partition("=")
+    if not separator or not seed_text.strip() or not path_text.strip():
+        raise argparse.ArgumentTypeError("--log must use SEED=PATH format")
+    try:
+        seed = int(seed_text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid seed in --log: {seed_text}") from exc
+    return seed, Path(path_text)
+
+
 def _series(rows: list[dict[str, Any]], metric: str, seed: int) -> tuple[list[float], list[float]]:
     episodes: list[float] = []
     values: list[float] = []
@@ -363,6 +374,14 @@ def _write_report(
         "",
         *[f"- seed{seed}: `{logs[seed]}`" for seed in sorted(logs)],
         "",
+        "## Completeness",
+        "",
+        *[
+            f"- seed{seed}: {len(rows_by_seed[seed])} complete episode records; "
+            f"last episode={rows_by_seed[seed][-1].get('episode', 'unknown')}."
+            for seed in sorted(rows_by_seed)
+        ],
+        "",
         "## Output Figures",
         "",
         *[f"- seed{seed}: `{plots[seed]}`" for seed in sorted(plots)],
@@ -387,9 +406,10 @@ def _write_report(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Plot assignment-only PPO training trends for three seeds.")
-    parser.add_argument("--seed42_log", required=True)
-    parser.add_argument("--seed43_log", required=True)
-    parser.add_argument("--seed44_log", required=True)
+    parser.add_argument("--log", action="append", type=_parse_seed_log, help="Training log in SEED=PATH format.")
+    parser.add_argument("--seed42_log")
+    parser.add_argument("--seed43_log")
+    parser.add_argument("--seed44_log")
     parser.add_argument("--output_root", required=True)
     parser.add_argument("--smooth_window", type=int, default=20)
     parser.add_argument("--task_type", default="")
@@ -398,14 +418,24 @@ def main() -> None:
     if args.smooth_window <= 0:
         raise ValueError("--smooth_window must be greater than 0.")
 
-    logs = {
-        42: Path(args.seed42_log),
-        43: Path(args.seed43_log),
-        44: Path(args.seed44_log),
-    }
+    if args.log:
+        logs = dict(args.log)
+        if len(logs) != len(args.log):
+            parser.error("--log contains duplicate seeds")
+    elif args.seed42_log and args.seed43_log and args.seed44_log:
+        logs = {
+            42: Path(args.seed42_log),
+            43: Path(args.seed43_log),
+            44: Path(args.seed44_log),
+        }
+    else:
+        parser.error("provide repeated --log SEED=PATH values or all legacy --seed42_log/--seed43_log/--seed44_log arguments")
+    if len(logs) != 3:
+        parser.error(f"expected exactly three seed logs, got {len(logs)}")
     task_type = _sanitize_name(args.task_type or _infer_task_type(list(logs.values())))
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    output_dir = Path(args.output_root) / f"{timestamp}-seed42_43_44-{task_type}"
+    seed_tag = "_".join(str(seed) for seed in sorted(logs))
+    output_dir = Path(args.output_root) / f"{timestamp}-seed{seed_tag}-{task_type}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     rows_by_seed = {seed: _load_jsonl(path) for seed, path in logs.items()}

@@ -125,6 +125,7 @@ class AssignmentMAPPO:
             records.append(
                 {
                     "task_id": task_id,
+                    "actor_called": True,
                     "candidate_uav_ids": list(candidate_uav_ids),
                     "selected_action_index": selected_index_int,
                     "actor_selected_uav": selected_uav,
@@ -141,6 +142,75 @@ class AssignmentMAPPO:
             )
         return edge_scores, records
 
+    @torch.no_grad()
+    def act_for_task(
+        self,
+        assignment_snapshot: HeteroGraphSnapshot,
+        task_id: str,
+        candidate_uav_ids: list[int],
+        exploration: bool = True,
+    ) -> dict[str, Any]:
+        """Samples one UAV for one task from the executor-provided candidate set."""
+        encoded = self.scheduler.encode_graph(assignment_snapshot)
+        global_input = self._global_critic_input(encoded.task_embeddings, encoded.uav_embeddings)
+        shared_value = float(self.critic(global_input.unsqueeze(0)).item())
+        self._latest_critic_input = global_input.detach().cpu()
+        self._latest_shared_value = shared_value
+
+        allowed_uav_ids = {int(uav_id) for uav_id in candidate_uav_ids}
+        edge_rows = [
+            (edge_idx, int(uav_id))
+            for edge_idx, (edge_task_id, uav_id) in enumerate(assignment_snapshot.task_uav_edges)
+            if edge_task_id == task_id
+            and int(uav_id) in allowed_uav_ids
+            and task_id in encoded.task_index
+            and uav_id in encoded.uav_index
+        ]
+        edge_uav_ids = {uav_id for _, uav_id in edge_rows}
+        if edge_uav_ids != allowed_uav_ids:
+            raise RuntimeError(
+                f"Executor candidates and graph edges disagree for task {task_id}: "
+                f"executor={sorted(allowed_uav_ids)} graph={sorted(edge_uav_ids)}"
+            )
+
+        task_embedding = encoded.task_embeddings[encoded.task_index[task_id]]
+        actor_inputs = [
+            torch.cat(
+                [
+                    task_embedding,
+                    encoded.uav_embeddings[encoded.uav_index[uav_id]],
+                    encoded.edge_pair_features[edge_idx],
+                ],
+                dim=0,
+            )
+            for edge_idx, uav_id in edge_rows
+        ]
+        if not actor_inputs:
+            raise RuntimeError(f"Actor called without feasible candidates for task {task_id}.")
+        candidate_inputs = torch.stack(actor_inputs, dim=0)
+        ordered_candidate_uav_ids = [uav_id for _, uav_id in edge_rows]
+        logits = self.actor(candidate_inputs)
+        dist = Categorical(logits=logits)
+        selected_index = dist.sample() if exploration else torch.argmax(logits)
+        selected_index_int = int(selected_index.item())
+        selected_uav = int(ordered_candidate_uav_ids[selected_index_int])
+        return {
+            "task_id": task_id,
+            "actor_called": True,
+            "candidate_uav_ids": ordered_candidate_uav_ids,
+            "selected_action_index": selected_index_int,
+            "actor_selected_uav": selected_uav,
+            "executor_selected_uav": None,
+            "action_executed": False,
+            "fallback_used": False,
+            "failure_reason": None,
+            "old_log_prob": float(dist.log_prob(selected_index).item()),
+            "entropy": float(dist.entropy().item()),
+            "shared_value": shared_value,
+            "candidate_actor_inputs": candidate_inputs.detach().cpu(),
+            "critic_input": global_input.detach().cpu(),
+        }
+
     def store_step(
         self,
         *,
@@ -149,7 +219,8 @@ class AssignmentMAPPO:
         shared_reward: float,
         done: bool,
     ) -> None:
-        decision_count = len(rl_records)
+        actor_records = [record for record in rl_records if record.get("actor_called", True)]
+        decision_count = len(actor_records)
         records: list[dict[str, Any]] = []
         for record in rl_records:
             copied = dict(record)
@@ -158,8 +229,9 @@ class AssignmentMAPPO:
             copied["shared_reward"] = float(shared_reward)
             copied["done"] = bool(done)
             records.append(copied)
-        critic_input = records[0]["critic_input"] if records else self._latest_critic_input
-        shared_value = float(records[0]["shared_value"]) if records else self._latest_shared_value
+        critic_record = next((record for record in records if "critic_input" in record), None)
+        critic_input = critic_record["critic_input"] if critic_record is not None else self._latest_critic_input
+        shared_value = float(critic_record["shared_value"]) if critic_record is not None else self._latest_shared_value
         self._rollout_steps.append(
             {
                 "env_step_id": int(env_step_id),
@@ -288,7 +360,12 @@ class AssignmentMAPPO:
             approx_kl=float(np.mean(approx_kls)) if approx_kls else 0.0,
             clip_fraction=float(np.mean(clip_fractions)) if clip_fractions else 0.0,
             rollout_steps=len(self._rollout_steps),
-            assignment_decisions=sum(len(step["decisions"]) for step in self._rollout_steps),
+            assignment_decisions=sum(
+                1
+                for step in self._rollout_steps
+                for decision in step["decisions"]
+                if decision.get("actor_called", True)
+            ),
             executed_decisions=executed_decisions,
         )
         self._rollout_steps.clear()

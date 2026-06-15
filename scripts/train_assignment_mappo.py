@@ -39,20 +39,26 @@ def _candidate_count_bucket(candidate_count: int) -> str:
 def _new_execution_bucket() -> dict[str, int]:
     return {
         "total": 0,
+        "actor_called": 0,
         "executed": 0,
         "non_executed": 0,
+        "no_feasible_candidate_count": 0,
         "executor_override_count": 0,
         "fallback_after_actor_count": 0,
     }
 
 
-def _finalize_execution_buckets(buckets: dict[str, dict[str, int]]) -> dict[str, dict[str, float | int]]:
-    finalized: dict[str, dict[str, float | int]] = {}
+def _finalize_execution_buckets(buckets: dict[str, dict[str, int]]) -> dict[str, dict[str, float | int | None]]:
+    finalized: dict[str, dict[str, float | int | None]] = {}
     for key, bucket in sorted(buckets.items()):
-        total = int(bucket["total"])
+        actor_called = int(bucket["actor_called"])
         finalized[str(key)] = {
             **bucket,
-            "action_executed_rate": float(bucket["executed"]) / float(max(total, 1)),
+            "action_executed_rate": (
+                float(bucket["executed"]) / float(actor_called)
+                if actor_called > 0
+                else None
+            ),
         }
     return finalized
 
@@ -65,26 +71,34 @@ def summarize_assignment_execution(records: list[dict]) -> dict:
     by_step: dict[str, dict[str, int]] = defaultdict(_new_execution_bucket)
     executor_override_count = 0
     fallback_after_actor_count = 0
+    invalid_actor_action_count = 0
+    no_feasible_candidate_count = 0
     for record in records:
+        actor_called = bool(record.get("actor_called", True))
         action_executed = bool(record.get("action_executed", False))
         executor_selected_uav = record.get("executor_selected_uav")
         actor_selected_uav = record.get("actor_selected_uav")
         fallback_used = bool(record.get("fallback_used", False))
         overridden = (
-            not action_executed
+            actor_called
+            and not action_executed
             and executor_selected_uav is not None
             and executor_selected_uav != actor_selected_uav
         )
-        if not action_executed:
+        if actor_called and not action_executed:
             reason = str(record.get("non_executed_reason") or "unknown_non_executed")
             non_executed_reason_counts[reason] += 1
             failure_reason = str(record.get("failure_reason") or "unknown_failure_reason")
             non_executed_failure_reason_counts[failure_reason] += 1
         if overridden:
             executor_override_count += 1
-        fallback_after_actor = not action_executed and fallback_used
+        fallback_after_actor = actor_called and not action_executed and fallback_used
         if fallback_after_actor:
             fallback_after_actor_count += 1
+        if actor_called and not action_executed and record.get("non_executed_reason") == "invalid_actor_action":
+            invalid_actor_action_count += 1
+        if not actor_called and record.get("non_executed_reason") == "no_feasible_candidate":
+            no_feasible_candidate_count += 1
 
         task_type = str(record.get("task_type") if record.get("task_type") is not None else "unknown")
         candidate_count = int(record.get("candidate_count", len(record.get("candidate_uav_ids", []))))
@@ -92,8 +106,10 @@ def summarize_assignment_execution(records: list[dict]) -> dict:
         env_step_id = str(record.get("env_step_id", "unknown"))
         for bucket in (by_task_type[task_type], by_candidate_count[candidate_bucket], by_step[env_step_id]):
             bucket["total"] += 1
+            bucket["actor_called"] += int(actor_called)
             bucket["executed"] += int(action_executed)
-            bucket["non_executed"] += int(not action_executed)
+            bucket["non_executed"] += int(actor_called and not action_executed)
+            bucket["no_feasible_candidate_count"] += int(not actor_called)
             bucket["executor_override_count"] += int(overridden)
             bucket["fallback_after_actor_count"] += int(fallback_after_actor)
 
@@ -103,20 +119,25 @@ def summarize_assignment_execution(records: list[dict]) -> dict:
             {
                 "env_step_id": int(step_id) if step_id.isdigit() else step_id,
                 "executed": int(bucket["executed"]),
-                "total": int(bucket["total"]),
+                "total": int(bucket["actor_called"]),
                 "rate": float(bucket["action_executed_rate"]),
             }
             for step_id, bucket in finalized_by_step.items()
+            if int(bucket["actor_called"]) > 0
         ),
         key=lambda item: (item["rate"], str(item["env_step_id"])),
     )[:10]
-    total = len(records)
-    executed = sum(1 for record in records if record.get("action_executed", False))
+    actor_called_decisions = sum(1 for record in records if record.get("actor_called", True))
+    executed_actor_actions = sum(1 for record in records if record.get("action_executed", False))
     return {
-        "action_executed_rate": executed / float(max(total, 1)),
-        "num_assignment_decisions": total,
-        "num_executed_decisions": executed,
-        "num_non_executed_decisions": total - executed,
+        "action_executed_rate": executed_actor_actions / float(max(actor_called_decisions, 1)),
+        "actor_called_decisions": actor_called_decisions,
+        "executed_actor_actions": executed_actor_actions,
+        "invalid_actor_action_count": invalid_actor_action_count,
+        "no_feasible_candidate_count": no_feasible_candidate_count,
+        "num_assignment_decisions": actor_called_decisions,
+        "num_executed_decisions": executed_actor_actions,
+        "num_non_executed_decisions": actor_called_decisions - executed_actor_actions,
         "non_executed_reason_counts": dict(sorted(non_executed_reason_counts.items())),
         "non_executed_failure_reason_counts": dict(sorted(non_executed_failure_reason_counts.items())),
         "action_executed_rate_by_task_type": _finalize_execution_buckets(by_task_type),
@@ -238,7 +259,7 @@ def main() -> None:
                     shared_reward=global_reward,
                     done=done,
                 )
-                assignment_decisions += len(rl_records)
+                assignment_decisions += sum(1 for record in rl_records if record.get("actor_called", True))
                 executed_decisions += sum(1 for record in rl_records if record.get("action_executed", False))
                 fallback_selected_count += sum(1 for record in rl_records if record.get("fallback_used", False))
                 episode_rl_records.extend(rl_records)
@@ -278,6 +299,10 @@ def main() -> None:
                     "total_decisions": execution_summary["num_assignment_decisions"],
                     "executed_decisions": execution_summary["num_executed_decisions"],
                     "non_executed_decisions": execution_summary["num_non_executed_decisions"],
+                    "actor_called_decisions": execution_summary["actor_called_decisions"],
+                    "executed_actor_actions": execution_summary["executed_actor_actions"],
+                    "invalid_actor_action_count": execution_summary["invalid_actor_action_count"],
+                    "no_feasible_candidate_count": execution_summary["no_feasible_candidate_count"],
                     "action_executed_rate": execution_summary["action_executed_rate"],
                     "non_executed_reason_counts": execution_summary["non_executed_reason_counts"],
                     "non_executed_failure_reason_counts": execution_summary["non_executed_failure_reason_counts"],

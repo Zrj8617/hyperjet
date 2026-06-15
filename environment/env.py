@@ -197,35 +197,36 @@ class Env:
             edge_scores: dict[tuple[str, int], float] | None = None
             score_provider = None
             self._latest_assignment_rl_records = []
-            if config.USE_RL_ASSIGNMENT and self._assignment_policy is not None:
-                assignment_snapshot = self._build_selective_score_snapshot(self._latest_graph_snapshot)
-                edge_scores, self._latest_assignment_rl_records = self._assignment_policy.act(
-                    assignment_snapshot,
-                    exploration=True,
+            if config.USE_RL_ASSIGNMENT:
+                if self._assignment_policy is None:
+                    raise RuntimeError("USE_RL_ASSIGNMENT=True requires an assignment policy.")
+                self._assign_ready_tasks_sequential_rl()
+            else:
+                if (
+                    config.USE_HGNN_SCORE_ASSIGNMENT
+                    and config.USE_HGNN_PER_TASK_RESCORING
+                    and self._graph_scheduler is not None
+                ):
+                    score_provider = self._build_per_task_score_provider()
+                elif (
+                    config.USE_HGNN_SCORE_ASSIGNMENT
+                    and self._graph_scheduler is not None
+                    and self._latest_graph_snapshot is not None
+                ):
+                    score_snapshot = self._build_selective_score_snapshot(self._latest_graph_snapshot)
+                    self._latest_graph_scheduling_output = self._graph_scheduler.score_graph(score_snapshot)
+                    edge_scores = self._latest_graph_scheduling_output.edge_scores
+                allowed_edges = (
+                    set(self._latest_graph_snapshot.task_uav_edges) if self._latest_graph_snapshot is not None else None
                 )
-            elif (
-                config.USE_HGNN_SCORE_ASSIGNMENT
-                and config.USE_HGNN_PER_TASK_RESCORING
-                and self._graph_scheduler is not None
-            ):
-                score_provider = self._build_per_task_score_provider()
-            elif config.USE_HGNN_SCORE_ASSIGNMENT and self._graph_scheduler is not None and self._latest_graph_snapshot is not None:
-                score_snapshot = self._build_selective_score_snapshot(self._latest_graph_snapshot)
-                self._latest_graph_scheduling_output = self._graph_scheduler.score_graph(score_snapshot)
-                edge_scores = self._latest_graph_scheduling_output.edge_scores
-            allowed_edges = (
-                set(self._latest_graph_snapshot.task_uav_edges) if self._latest_graph_snapshot is not None else None
-            )
-            self._task_executor.assign_ready_tasks(
-                self._task_manager,
-                self._uavs,
-                self._time_step,
-                allowed_edges,
-                edge_scores=edge_scores,
-                score_provider=score_provider,
-            )
-            if config.USE_RL_ASSIGNMENT and self._latest_assignment_rl_records:
-                self._align_assignment_rl_records()
+                self._task_executor.assign_ready_tasks(
+                    self._task_manager,
+                    self._uavs,
+                    self._time_step,
+                    allowed_edges,
+                    edge_scores=edge_scores,
+                    score_provider=score_provider,
+                )
 
         # 3. 更新UE电池与服务覆盖状态
         for ue in self._ues:
@@ -281,6 +282,92 @@ class Env:
         next_obs: list[np.ndarray] = self._get_obs()
         # 返回：下一观测、奖励、系统指标
         return next_obs, rewards, metrics
+
+    def _assign_ready_tasks_sequential_rl(self) -> None:
+        """Runs RL assignment against fresh executor state one task at a time."""
+        self._task_executor.begin_sequential_rl_step()
+        ready_tasks = sorted(
+            list(self._task_manager.get_ready_tasks()),
+            key=lambda task: (task.deadline, task.level, task.task_id),
+        )
+        for task in ready_tasks:
+            candidate_uav_ids, rejected_uav_reasons = self._task_executor.get_sequential_rl_feasible_uav_ids(
+                task,
+                self._task_manager,
+                self._uavs,
+                self._time_step,
+            )
+            if not candidate_uav_ids:
+                self._task_executor.record_sequential_rl_no_feasible_candidate(
+                    task,
+                    self._time_step,
+                    rejected_uav_reasons,
+                )
+                self._latest_assignment_rl_records.append(
+                    {
+                        "task_id": task.task_id,
+                        "task_type": int(task.task_type),
+                        "env_step_id": int(self._time_step),
+                        "actor_called": False,
+                        "candidate_uav_ids": [],
+                        "candidate_count": 0,
+                        "executor_candidate_uav_ids": [],
+                        "executor_candidate_count": 0,
+                        "actor_selected_uav": None,
+                        "executor_selected_uav": None,
+                        "action_executed": False,
+                        "fallback_used": False,
+                        "failure_reason": "no_feasible_candidate",
+                        "selected_uav_failure_reason": None,
+                        "non_executed_reason": "no_feasible_candidate",
+                    }
+                )
+                continue
+
+            assignment_snapshot = self._graph_builder.build(
+                self._task_manager,
+                self._uavs,
+                self._time_step,
+                self._task_executor,
+            )
+            self._latest_assignment_graph_snapshot = assignment_snapshot
+            rl_record = self._assignment_policy.act_for_task(
+                assignment_snapshot,
+                task.task_id,
+                candidate_uav_ids,
+                exploration=True,
+            )
+            action_executed, executor_record, failure_reason = (
+                self._task_executor.commit_sequential_rl_assignment(
+                    task,
+                    self._task_manager,
+                    self._uavs,
+                    self._time_step,
+                    int(rl_record["actor_selected_uav"]),
+                    candidate_uav_ids,
+                )
+            )
+            actor_selected_uav = int(rl_record["actor_selected_uav"])
+            executor_selected_uav = executor_record.executor_selected_uav
+            rl_record.update(
+                {
+                    "task_type": int(task.task_type),
+                    "env_step_id": int(self._time_step),
+                    "candidate_count": len(candidate_uav_ids),
+                    "executor_candidate_uav_ids": [int(candidate.uav_id) for candidate in executor_record.candidates],
+                    "executor_candidate_count": len(executor_record.candidates),
+                    "executor_selected_uav": executor_selected_uav,
+                    "executor_selection_mode": executor_record.selection_mode,
+                    "action_executed": bool(action_executed),
+                    "fallback_used": False,
+                    "failure_reason": failure_reason,
+                    "selected_uav_failure_reason": failure_reason,
+                    "non_executed_reason": None if action_executed else "invalid_actor_action",
+                }
+            )
+            executor_record.actor_selected_uav = actor_selected_uav
+            executor_record.action_executed = bool(action_executed)
+            self._latest_assignment_rl_records.append(rl_record)
 
     def _align_assignment_rl_records(self) -> None:
         executor_records = {
@@ -1318,7 +1405,11 @@ class Env:
         diagnostics.update(self._latest_selective_score_stats)
         diagnostics.update(self._latest_phase_one_reward_terms)
         if config.USE_RL_ASSIGNMENT:
-            decision_count = len(self._latest_assignment_rl_records)
+            decision_count = sum(
+                1
+                for record in self._latest_assignment_rl_records
+                if record.get("actor_called", True)
+            )
             executed_count = sum(
                 1
                 for record in self._latest_assignment_rl_records
@@ -1330,6 +1421,8 @@ class Env:
                     "rl_assignment_executed_decisions": float(executed_count),
                     "rl_assignment_non_executed_decisions": float(decision_count - executed_count),
                     "rl_assignment_action_executed_rate": executed_count / float(max(decision_count, 1)),
+                    "rl_assignment_invalid_actor_actions": float(stats.invalid_actor_actions),
+                    "rl_assignment_no_feasible_candidates": float(stats.no_feasible_candidates),
                 }
             )
         return diagnostics

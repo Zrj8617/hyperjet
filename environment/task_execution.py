@@ -28,6 +28,8 @@ class PhaseOneStepStats:
     on_time_completed_tasks: int = 0
     deadline_violations: int = 0
     invalid_actions: int = 0
+    invalid_actor_actions: int = 0
+    no_feasible_candidates: int = 0
     newly_assigned_tasks: int = 0
     score_selected_assignments: int = 0
     fallback_selected_assignments: int = 0
@@ -281,6 +283,142 @@ class PhaseOneTaskExecutor:
             if decision_record is not None and decision_record.raw_disagrees_with_heuristic:
                 stats.score_raw_disagreements += 1
         self._latest_stats = stats
+
+    def begin_sequential_rl_step(self) -> None:
+        """Starts an RL-only assignment pass without changing baseline semantics."""
+        self._latest_assignment_records = []
+        self._latest_stats = PhaseOneStepStats()
+
+    def get_sequential_rl_feasible_uav_ids(
+        self,
+        task: TaskNode,
+        task_manager: DAGTaskManager,
+        uavs: list,
+        current_time_step: float,
+    ) -> tuple[list[int], dict[int, str]]:
+        candidates, rejected_uav_reasons = self._collect_feasible_candidates(
+            task,
+            task_manager,
+            uavs,
+            current_time_step,
+            record_diagnostics=True,
+        )
+        return [int(schedule.uav_id) for schedule, _, _ in candidates], rejected_uav_reasons
+
+    def record_sequential_rl_no_feasible_candidate(
+        self,
+        task: TaskNode,
+        current_time_step: float,
+        rejected_uav_reasons: dict[int, str],
+    ) -> AssignmentDecisionRecord:
+        stats = self._latest_stats
+        stats.invalid_actions += 1
+        stats.no_feasible_candidates += 1
+        record = self._build_assignment_record(
+            task,
+            current_time_step,
+            [],
+            None,
+            None,
+            None,
+            "rl_no_feasible_candidate",
+            False,
+            rejected_uav_reasons=rejected_uav_reasons,
+        )
+        record.action_executed = False
+        self._latest_assignment_records.append(record)
+        return record
+
+    def commit_sequential_rl_assignment(
+        self,
+        task: TaskNode,
+        task_manager: DAGTaskManager,
+        uavs: list,
+        current_time_step: float,
+        actor_selected_uav: int,
+        candidate_uav_ids: list[int],
+    ) -> tuple[bool, AssignmentDecisionRecord, str | None]:
+        """Validates and immediately commits the actor choice without override or fallback."""
+        candidates, rejected_uav_reasons = self._collect_feasible_candidates(
+            task,
+            task_manager,
+            uavs,
+            current_time_step,
+            record_diagnostics=False,
+        )
+        candidates_by_uav = {int(schedule.uav_id): schedule for schedule, _, _ in candidates}
+        actor_selected_uav = int(actor_selected_uav)
+        selected_schedule = candidates_by_uav.get(actor_selected_uav)
+        failure_reason = None
+        if actor_selected_uav not in {int(uav_id) for uav_id in candidate_uav_ids}:
+            failure_reason = "actor_selected_uav_outside_candidates"
+        elif selected_schedule is None:
+            failure_reason = rejected_uav_reasons.get(actor_selected_uav, "selected_uav_later_infeasible")
+
+        heuristic_best_schedule = (
+            None if not candidates else min(candidates, key=lambda item: item[0].planned_finish)[0]
+        )
+        record = self._build_assignment_record(
+            task,
+            current_time_step,
+            candidates,
+            heuristic_best_schedule,
+            None,
+            selected_schedule if failure_reason is None else None,
+            "rl_actor" if failure_reason is None else "rl_invalid_actor_action",
+            False,
+            rejected_uav_reasons=rejected_uav_reasons,
+        )
+        record.actor_selected_uav = actor_selected_uav
+        record.executor_selected_uav = None if failure_reason is not None else actor_selected_uav
+        record.action_executed = failure_reason is None
+        self._latest_assignment_records.append(record)
+
+        if failure_reason is not None or selected_schedule is None:
+            self._latest_stats.invalid_actions += 1
+            self._latest_stats.invalid_actor_actions += 1
+            return False, record, failure_reason or "selected_uav_later_infeasible"
+
+        self._scheduled[task.task_id] = selected_schedule
+        task_manager.mark_task_queued(task.task_id, selected_schedule.uav_id, current_time_step)
+        heapq.heappush(self._queued[selected_schedule.uav_id], (selected_schedule.planned_start, task.task_id))
+        self._uav_available_time[selected_schedule.uav_id] = selected_schedule.planned_finish
+        self._latest_stats.newly_assigned_tasks += 1
+        return True, record, None
+
+    def _collect_feasible_candidates(
+        self,
+        task: TaskNode,
+        task_manager: DAGTaskManager,
+        uavs: list,
+        current_time_step: float,
+        *,
+        record_diagnostics: bool,
+    ) -> tuple[list[tuple[ScheduledTask, float | None, CandidateEstimateResult]], dict[int, str]]:
+        candidates: list[tuple[ScheduledTask, float | None, CandidateEstimateResult]] = []
+        rejected_uav_reasons: dict[int, str] = {}
+        diagnostics_enabled = record_diagnostics and self.is_candidate_diagnostics_enabled()
+        if diagnostics_enabled:
+            self._candidate_rejection_summary["total_task_uav_pairs_checked"] = int(
+                self._candidate_rejection_summary.get("total_task_uav_pairs_checked", 0)
+            ) + len(uavs)
+        for uav in uavs:
+            estimate = self._estimate_schedule_result(task, task_manager, uav, uavs, current_time_step)
+            if estimate.schedule is None:
+                rejected_uav_reasons[int(uav.id)] = estimate.hard_reject_reason or "schedule_none"
+                if diagnostics_enabled and estimate.hard_reject_reason is not None:
+                    self._increment_reason_count("rejection_reason_counts", estimate.hard_reject_reason)
+                continue
+            if diagnostics_enabled:
+                self._candidate_rejection_summary["total_feasible_candidates"] = int(
+                    self._candidate_rejection_summary.get("total_feasible_candidates", 0)
+                ) + 1
+                for violation in estimate.soft_constraint_violations:
+                    self._increment_reason_count("soft_violation_counts", violation)
+            candidates.append((estimate.schedule, None, estimate))
+        if diagnostics_enabled:
+            self._record_candidate_count(len(candidates))
+        return candidates, rejected_uav_reasons
 
     def advance_one_slot(self, task_manager: DAGTaskManager, uavs: list, current_time_step: float) -> PhaseOneStepStats:
         stats = self._latest_stats
