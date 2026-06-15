@@ -74,6 +74,14 @@ class TaskNode:
     def is_terminal(self) -> bool:
         return self.state in {TASK_STATE_FINISHED, TASK_STATE_RETURNED, TASK_STATE_DROPPED}
 
+    @property
+    def is_computation_finished(self) -> bool:
+        return self.state in {TASK_STATE_FINISHED, TASK_STATE_RETURNED}
+
+    @property
+    def is_fully_completed(self) -> bool:
+        return self.state in {TASK_STATE_FINISHED, TASK_STATE_RETURNED}
+
     def remaining_slack(self, current_time_step: float) -> float:
         """Deprecated compatibility helper. Clean mainline does not use slack."""
         if self.deadline is None:
@@ -211,6 +219,14 @@ class DAGTaskManager:
         self._refresh_ready_states()
 
     def get_active_tasks(self) -> list[TaskNode]:
+        return [
+            task
+            for task in self._tasks.values()
+            if task.state not in {TASK_STATE_FINISHED, TASK_STATE_RETURNED, TASK_STATE_DROPPED}
+        ]
+
+    def get_all_non_returned_tasks(self) -> list[TaskNode]:
+        """Compatibility view for old callers that still expect finished tasks before return."""
         return [task for task in self._tasks.values() if task.state not in {TASK_STATE_RETURNED, TASK_STATE_DROPPED}]
 
     def get_ready_tasks(self) -> list[TaskNode]:

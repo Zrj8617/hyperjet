@@ -34,8 +34,28 @@ def _assert_acyclic(manager: DAGTaskManager, dag_id: str) -> None:
         visit(task_id)
 
 
+def _assert_finished_task_is_not_active() -> None:
+    manager = DAGTaskManager()
+    job = manager.create_dag_for_ue(
+        ue_id=0,
+        source_pos=np.array([10.0, 20.0], dtype=np.float32),
+        arrival_time=0,
+    )
+    ready_task = manager.get_ready_tasks()[0]
+    manager.mark_task_finished(ready_task.task_id, current_time_step=1.0)
+
+    active_task_ids = {task.task_id for task in manager.get_active_tasks()}
+    assert ready_task.task_id not in active_task_ids
+    assert manager.tasks[ready_task.task_id] is ready_task
+    if hasattr(manager, "get_all_non_returned_tasks"):
+        non_returned_ids = {task.task_id for task in manager.get_all_non_returned_tasks()}
+        assert ready_task.task_id in non_returned_ids
+
+
 def main() -> None:
     np.random.seed(config.SEED)
+    _assert_finished_task_is_not_active()
+
     manager = DAGTaskManager()
     for idx in range(100):
         source_pos = np.array([float(idx % 10) * 10.0, float(idx // 10) * 10.0], dtype=np.float32)
