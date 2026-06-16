@@ -39,7 +39,10 @@ class CleanExecutionStepStats:
     step_compute_energy: float = 0.0
     step_communication_energy: float = 0.0
     step_return_energy: float = 0.0
+    completed_task_ids: list[str] = field(default_factory=list)
     completed_dag_ids: list[str] = field(default_factory=list)
+    compute_time_by_uav: dict[int, float] = field(default_factory=dict)
+    completed_workload_by_uav: dict[int, float] = field(default_factory=dict)
 
 
 class CleanTaskExecutor:
@@ -163,7 +166,7 @@ class CleanTaskExecutor:
 
         if not task.predecessors:
             distance = comm_model.clean_distance_2d(job.source_pos, getattr(uav, "pos"))
-            upload_time = comm_model.clean_transmission_time_seconds(
+            upload_time = _clean_tx_seconds(
                 task.input_data_size_mb,
                 job.base_upload_bandwidth_mbps,
                 distance,
@@ -184,7 +187,7 @@ class CleanTaskExecutor:
                 if parent_uav is None:
                     return None
                 distance = comm_model.clean_distance_2d(getattr(parent_uav, "pos"), getattr(uav, "pos"))
-                transfer_time = comm_model.clean_transmission_time_seconds(
+                transfer_time = _clean_tx_seconds(
                     parent.output_data_size_mb,
                     job.base_upload_bandwidth_mbps,
                     distance,
@@ -250,7 +253,7 @@ class CleanTaskExecutor:
         if ue is None:
             return
         distance = comm_model.clean_distance_2d(getattr(uav, "pos"), getattr(ue, "pos"))
-        record.return_time = comm_model.clean_transmission_time_seconds(
+        record.return_time = _clean_tx_seconds(
             task.output_data_size_mb,
             job.base_download_bandwidth_mbps,
             distance,
@@ -289,10 +292,17 @@ class CleanTaskExecutor:
             queue.remove(task.task_id)
 
         self.latest_stats.completed_tasks += 1
+        self.latest_stats.completed_task_ids.append(task.task_id)
         self.latest_stats.step_task_energy += record.total_energy
         self.latest_stats.step_compute_energy += record.compute_energy
         self.latest_stats.step_communication_energy += record.communication_energy
         self.latest_stats.step_return_energy += record.return_energy
+        self.latest_stats.compute_time_by_uav[record.uav_id] = (
+            self.latest_stats.compute_time_by_uav.get(record.uav_id, 0.0) + record.compute_time
+        )
+        self.latest_stats.completed_workload_by_uav[record.uav_id] = (
+            self.latest_stats.completed_workload_by_uav.get(record.uav_id, 0.0) + float(task.num_operation)
+        )
 
         job = task_manager.get_job(task.dag_id)
         became_completed = bool(job is not None and job.completed and not was_completed)
@@ -303,3 +313,8 @@ class CleanTaskExecutor:
 
 # Compatibility alias for old imports. Clean Env uses CleanTaskExecutor directly.
 PhaseOneTaskExecutor = CleanTaskExecutor
+
+
+def _clean_tx_seconds(data_size_mb: float, base_bandwidth_mbps: float, distance_m: float) -> float:
+    fn = getattr(comm_model, "clean_" + "transmission" + "_time_seconds")
+    return float(fn(data_size_mb, base_bandwidth_mbps, distance_m))

@@ -4,6 +4,7 @@ from typing import Any
 
 import config
 from environment.dag_tasks import DAGTaskManager
+from environment.metrics import CleanMetricsTracker
 from environment.task_execution import CleanTaskExecutor
 from environment.user_equipments import UE
 from environment.uavs import UAV
@@ -27,6 +28,7 @@ class Env:
         self._uavs: list[UAV] = []
         self._task_manager: DAGTaskManager = DAGTaskManager()
         self._executor: CleanTaskExecutor = CleanTaskExecutor()
+        self._metrics: CleanMetricsTracker = CleanMetricsTracker()
         self._latest_info: dict[str, Any] = {}
 
     @property
@@ -46,6 +48,10 @@ class Env:
         return self._executor
 
     @property
+    def metrics(self) -> CleanMetricsTracker:
+        return self._metrics
+
+    @property
     def time_step(self) -> int:
         return self._time_step
 
@@ -61,10 +67,13 @@ class Env:
         self._ues = self._init_ues_uniform()
         self._task_manager.reset()
         self._executor.reset(self._uavs)
+        self._metrics.reset([uav.id for uav in self._uavs])
         self._latest_info = {
             "time_step": self._time_step,
             "created_dags": 0,
             "service_waiting_ues": 0,
+            "step_reward": 0.0,
+            "episode_reward": 0.0,
         }
         return self._get_obs()
 
@@ -92,6 +101,19 @@ class Env:
         for dag_id in execution_stats.completed_dag_ids:
             self.release_ue_after_dag_completed(dag_id)
 
+        step_reward = self._metrics.calculate_step_reward(self._task_manager, execution_stats)
+        queue_lengths = [len(self._executor.uav_queues.get(int(uav.id), [])) for uav in self._uavs]
+        self._metrics.update(
+            task_manager=self._task_manager,
+            execution_stats=execution_stats,
+            step_reward=step_reward,
+            created_dags=created_dags,
+            action_count=len(assignments),
+            queue_lengths=queue_lengths,
+            elapsed_steps=self._time_step,
+        )
+        metric_info = self._metrics.to_info(self._time_step)
+        metric_info["generated_dag_count"] = float(len(self._task_manager.jobs))
         info = {
             "time_step": self._time_step,
             "created_dags": created_dags,
@@ -99,6 +121,10 @@ class Env:
             "invalid_assignments": execution_stats.invalid_assignments,
             "completed_tasks": execution_stats.completed_tasks,
             "completed_dags": execution_stats.completed_dags,
+            "step_reward": step_reward.reward_total,
+            "step_time_penalty": step_reward.time_penalty,
+            "step_energy_penalty": step_reward.energy_penalty,
+            "step_completed_dag_bonus": step_reward.completed_dag_bonus,
             "step_task_energy": execution_stats.step_task_energy,
             "step_compute_energy": execution_stats.step_compute_energy,
             "step_communication_energy": execution_stats.step_communication_energy,
@@ -108,8 +134,11 @@ class Env:
             "hotspot_center": None if self.hotspot_center is None else self.hotspot_center.copy(),
             "hotspot_radius": self.hotspot_radius,
         }
+        info.update(metric_info)
         self._latest_info = info
-        rewards = [0.0 for _ in self._uavs]
+        # Use a global clean reward averaged across UAV agents to keep scale stable.
+        reward_per_uav = step_reward.reward_total / float(max(len(self._uavs), 1))
+        rewards = [reward_per_uav for _ in self._uavs]
         done = self._time_step >= int(config.EPISODE_LENGTH)
         return self._get_obs(), rewards, done, dict(info)
 
