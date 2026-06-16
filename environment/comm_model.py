@@ -56,3 +56,36 @@ def calculate_a2a_transfer_time(data_size: float, pos_a: np.ndarray, pos_b: np.n
     if rate <= 0.0:
         return float("inf")
     return float(data_size / rate + config.A2A_CTRL_OVERHEAD)
+
+
+def clean_distance_2d(pos_a, pos_b) -> float:
+    """Return 2D Euclidean distance in meters for clean mainline links."""
+    a = np.asarray(pos_a, dtype=np.float32).reshape(-1)[:2]
+    b = np.asarray(pos_b, dtype=np.float32).reshape(-1)[:2]
+    return float(np.linalg.norm(a - b))
+
+
+def clean_distance_factor(distance_m: float) -> float:
+    """Clean mainline distance attenuation: 1 / (1 + (d / 100)^2)."""
+    distance = max(float(distance_m), 0.0)
+    return float(1.0 / (1.0 + (distance / 100.0) ** 2))
+
+
+def clean_effective_rate_mbps(base_bandwidth_mbps: float, distance_m: float) -> float:
+    """Return clean effective rate in Mbps."""
+    rate = float(base_bandwidth_mbps) * clean_distance_factor(distance_m)
+    if rate <= 0.0:
+        raise ValueError(
+            f"Clean effective rate must be positive: base={base_bandwidth_mbps}, distance={distance_m}"
+        )
+    return float(rate)
+
+
+def clean_transmission_time_seconds(
+    data_size_mb: float,
+    base_bandwidth_mbps: float,
+    distance_m: float,
+) -> float:
+    """Return clean transmission time in seconds: data_MB * 8 / effective_rate_Mbps."""
+    effective_rate = clean_effective_rate_mbps(base_bandwidth_mbps, distance_m)
+    return float(float(data_size_mb) * 8.0 / effective_rate)

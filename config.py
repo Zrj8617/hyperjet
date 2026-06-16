@@ -58,6 +58,8 @@ BANDWIDTH_LEVEL_PROBS: list[float] = [0.3, 0.5, 0.2]
 P_UAV_COMPUTE: float = 50.0
 P_UE_TX: float = 0.5
 P_UAV_TX: float = 0.5
+UAV_COMPUTE_RATE_OPS_PER_SEC: float = 1_000_000.0
+CLEAN_MAX_QUEUE_PER_UAV: int = 16
 
 # ===================== zrj_3 clean mainline: GRAPH =====================
 ENABLE_DAG_DEPENDENCY_EDGES: bool = True

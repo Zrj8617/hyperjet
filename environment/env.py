@@ -4,6 +4,7 @@ from typing import Any
 
 import config
 from environment.dag_tasks import DAGTaskManager
+from environment.task_execution import CleanTaskExecutor
 from environment.user_equipments import UE
 from environment.uavs import UAV
 import numpy as np
@@ -25,6 +26,7 @@ class Env:
         self._ues: list[UE] = []
         self._uavs: list[UAV] = []
         self._task_manager: DAGTaskManager = DAGTaskManager()
+        self._executor: CleanTaskExecutor = CleanTaskExecutor()
         self._latest_info: dict[str, Any] = {}
 
     @property
@@ -38,6 +40,10 @@ class Env:
     @property
     def task_manager(self) -> DAGTaskManager:
         return self._task_manager
+
+    @property
+    def executor(self) -> CleanTaskExecutor:
+        return self._executor
 
     @property
     def time_step(self) -> int:
@@ -54,6 +60,7 @@ class Env:
         self._uavs = self._init_uavs_uniform()
         self._ues = self._init_ues_uniform()
         self._task_manager.reset()
+        self._executor.reset(self._uavs)
         self._latest_info = {
             "time_step": self._time_step,
             "created_dags": 0,
@@ -61,16 +68,41 @@ class Env:
         }
         return self._get_obs()
 
-    def step(self, actions: np.ndarray | None = None) -> tuple[list[np.ndarray], list[float], bool, dict[str, Any]]:
+    def step(self, actions: dict[str, int] | None = None) -> tuple[list[np.ndarray], list[float], bool, dict[str, Any]]:
         self._time_step += 1
         for ue in self._ues:
             ue.update_position()
 
         created_dags = self._process_clean_dag_arrivals()
         self._task_manager.refresh_ready_states()
+        assignments = actions if isinstance(actions, dict) else {}
+        self._executor.assign_tasks(
+            assignments=assignments,
+            task_manager=self._task_manager,
+            uavs=self._uavs,
+            ues=self._ues,
+            current_time_step=self._time_step,
+        )
+        execution_stats = self._executor.advance_one_slot(
+            task_manager=self._task_manager,
+            uavs=self._uavs,
+            ues=self._ues,
+            current_time_step=self._time_step,
+        )
+        for dag_id in execution_stats.completed_dag_ids:
+            self.release_ue_after_dag_completed(dag_id)
+
         info = {
             "time_step": self._time_step,
             "created_dags": created_dags,
+            "newly_assigned_tasks": execution_stats.newly_assigned_tasks,
+            "invalid_assignments": execution_stats.invalid_assignments,
+            "completed_tasks": execution_stats.completed_tasks,
+            "completed_dags": execution_stats.completed_dags,
+            "step_task_energy": execution_stats.step_task_energy,
+            "step_compute_energy": execution_stats.step_compute_energy,
+            "step_communication_energy": execution_stats.step_communication_energy,
+            "step_return_energy": execution_stats.step_return_energy,
             "active_dags": sum(1 for job in self._task_manager.jobs.values() if not job.completed),
             "service_waiting_ues": sum(1 for ue in self._ues if ue.service_waiting),
             "hotspot_center": None if self.hotspot_center is None else self.hotspot_center.copy(),

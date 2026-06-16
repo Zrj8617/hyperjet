@@ -242,6 +242,9 @@ class DAGTaskManager:
     def get_job(self, dag_id: str) -> DAGJob | None:
         return self._jobs.get(dag_id)
 
+    def get_task(self, task_id: str) -> TaskNode | None:
+        return self._tasks.get(task_id)
+
     def get_active_job_for_ue(self, ue_id: int) -> DAGJob | None:
         for job in self._jobs.values():
             if job.ue_id == ue_id and not job.completed:
