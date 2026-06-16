@@ -65,6 +65,8 @@ class Env:
         self._ues: list[UE] = [UE(i) for i in range(config.NUM_UES)]
         # 创建所有UAV对象列表，数量由配置文件指定
         self._uavs: list[UAV] = [UAV(i) for i in range(config.NUM_UAVS)]
+        self.hotspot_center: np.ndarray | None = None
+        self.hotspot_radius: float = float(config.HOTSPOT_RADIUS)
         # 初始化环境时间步为0
         self._time_step: int = 0
         # 阶段一动态DAG任务系统
@@ -141,10 +143,10 @@ class Env:
         重置环境到初始状态
         返回：每个UAV的初始观测值列表
         """
-        # 重新生成所有UE
-        self._ues = [UE(i) for i in range(config.NUM_UES)]
-        # 重新生成所有UAV
-        self._uavs = [UAV(i) for i in range(config.NUM_UAVS)]
+        self.hotspot_center = self._sample_episode_hotspot()
+        self.hotspot_radius = float(config.HOTSPOT_RADIUS)
+        self._ues = self._init_ues_uniform()
+        self._uavs = self._init_uavs_uniform()
         # 时间步归零
         self._time_step = 0
         self._task_manager.reset()
@@ -161,8 +163,64 @@ class Env:
         self._latest_phase_one_reward_terms = {}
         self._latest_assignment_rl_records = []
         self._task_executor.reset(self._uavs)
-        # 返回重置后的初始观测
-        return self._get_obs()
+        return self._get_clean_phase2_obs()
+
+    def _sample_episode_hotspot(self) -> np.ndarray:
+        radius = float(config.HOTSPOT_RADIUS)
+        if radius * 2.0 > float(config.AREA_WIDTH) or radius * 2.0 > float(config.AREA_HEIGHT):
+            raise ValueError("HOTSPOT_RADIUS is too large for the configured map.")
+        return np.array(
+            [
+                np.random.uniform(radius, float(config.AREA_WIDTH) - radius),
+                np.random.uniform(radius, float(config.AREA_HEIGHT) - radius),
+            ],
+            dtype=np.float32,
+        )
+
+    def _init_ues_uniform(self) -> list[UE]:
+        UE.initialize_ue_class()
+        ues = [UE(i) for i in range(config.NUM_UES)]
+        for ue in ues:
+            ue.reset_episode_state(uniform_position=True)
+        return ues
+
+    def _init_uavs_uniform(self) -> list[UAV]:
+        return [UAV(i) for i in range(config.NUM_UAVS)]
+
+    def _process_clean_dag_arrivals(self) -> int:
+        created_count = 0
+        for ue in self._ues:
+            if ue.active_dag_id is not None:
+                continue
+            if self._task_manager.get_active_job_for_ue(ue.id) is not None:
+                continue
+            arrival_prob = ue.get_arrival_probability(self.hotspot_center, self.hotspot_radius)
+            if np.random.random() >= arrival_prob:
+                continue
+            job = self._task_manager.create_dag_for_ue(
+                ue_id=ue.id,
+                source_pos=ue.pos[:2].copy(),
+                current_time_step=self._time_step,
+            )
+            ue.enter_service_waiting(job.dag_id)
+            created_count += 1
+        return created_count
+
+    def release_ue_after_dag_completed(self, dag_id: str) -> None:
+        for ue in self._ues:
+            if ue.active_dag_id == dag_id:
+                ue.release_service_waiting(dag_id)
+                return
+
+    def _get_clean_phase2_obs(self) -> list[np.ndarray]:
+        return [
+            np.clip(
+                uav.pos[:2] / np.array([config.AREA_WIDTH, config.AREA_HEIGHT], dtype=np.float32),
+                0.0,
+                1.0,
+            ).astype(np.float32, copy=False)
+            for uav in self._uavs
+        ]
 
     def step(self, actions: np.ndarray) -> tuple[list[np.ndarray], list[float], tuple[float, float, float, float]]:
         """
@@ -172,6 +230,24 @@ class Env:
         """
         # 时间步 +1
         self._time_step += 1
+
+        phase_two_clean_mode = (
+            config.ENABLE_DYNAMIC_DAG
+            and config.ENABLE_PHASE_ONE_EXECUTION
+            and not config.ENABLE_LEGACY_REQUEST_PIPELINE
+        )
+        if phase_two_clean_mode:
+            for ue in self._ues:
+                ue.update_position()
+            created_count = self._process_clean_dag_arrivals()
+            self._task_manager._refresh_ready_states()  # noqa: SLF001 - Phase 2 keeps graph/executor out of the path.
+            self._latest_phase_one_diagnostics = {
+                "clean_phase2_created_dags": float(created_count),
+                "clean_phase2_service_waiting_ues": float(sum(1 for ue in self._ues if ue.service_waiting)),
+            }
+            rewards = [0.0 for _ in self._uavs]
+            metrics = (0.0, 0.0, 0.0, 0.0)
+            return self._get_clean_phase2_obs(), rewards, metrics
 
         if config.ENABLE_LEGACY_REQUEST_PIPELINE:
             # 1. 每架无人机计算初始负载状态
