@@ -232,6 +232,9 @@ class DAGTaskManager:
     def get_ready_tasks(self) -> list[TaskNode]:
         return [task for task in self._tasks.values() if task.state == TASK_STATE_READY]
 
+    def refresh_ready_states(self) -> None:
+        self._refresh_ready_states()
+
     def get_tasks_for_ue(self, ue_id: int) -> list[TaskNode]:
         task_ids = self._tasks_by_ue.get(ue_id, [])
         return [self._tasks[task_id] for task_id in task_ids]
