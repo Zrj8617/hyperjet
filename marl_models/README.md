@@ -1,95 +1,52 @@
-# MARL Algorithms - Multi-Agent Reinforcement Learning Models
+# Clean Model Boundary
 
-This folder contains 8 different MARL algorithm implementations for multi-agent coordination along with a random baseline which selects random actions.
+The HyperUAV clean mainline uses a small, explicit model surface. The model
+modules in this folder should be interpreted through the clean design document:
 
-## 📁 Folder Structure
+- `docs/hyperuav_clean_mainline_design.md`
 
-```
-marl_models/
-├── base_model.py          # Base class for all models
-├── buffer_and_helpers.py  # Experience replay buffer
-├── utils.py               # Model factory & utilities
-├── README.md              # README for the folder
-│
-├── maddpg/                # MADDPG implementation
-│   ├── agents.py          # Agent class
-│   └── maddpg.py          # Algorithm update logic
-│
-├── matd3/                 # MATD3 implementation
-├── mappo/                 # MAPPO implementation
-├── masac/                 # MASAC implementation
-│
-├── attention.py           # Attention base classes
-|
-├── attention_maddpg/      # MADDPG + Attention
-│   ├── agents.py
-│   └── attention_maddpg.py
-│
-├── attention_matd3/       # MATD3 + Attention
-├── attention_mappo/       # MAPPO + Attention
-├── attention_masac/       # MASAC + Attention
-│
-└── random_baseline/       # Random baseline
-    └── random_model.py
-```
+## Clean Model Modules
 
-## 🔧 How to Use
+### Clean HGNN
 
-### Switch Between Algorithms
+- `marl_models/hgnn/clean_incidence.py`
 
-Simply change `MODEL` in [config.py](../config.py):
+This module contains the clean incidence-matrix-based HGNN forward path. It
+consumes task features and incidence/hyperedge structure derived from the
+task-only `GraphSnapshot`. It must not consume UAV features, candidate masks,
+reward fields, metrics, or profiling data.
 
-```python
-# Choose one:
-MODEL = "maddpg"              # Off-policy baseline
-MODEL = "matd3"               # Twin delayed DDPG
-MODEL = "mappo"               # On-policy PPO
-MODEL = "masac"               # Soft Actor-Critic
-MODEL = "attention_maddpg"    # MADDPG + attention
-MODEL = "attention_matd3"     # MATD3 + attention
-MODEL = "attention_mappo"     # MAPPO + attention
-MODEL = "attention_masac"     # MASAC + attention
-MODEL = "random"              # Random baseline
-```
+### Movement Actor
 
-## 🎯 Tuning Hyperparameters
+- `marl_models/mappo/clean_movement_actor.py`
 
-### Stage 1: Reward Optimization
-No algorithm-specific tuning, just reward weights:
-```bash
-python tune.py --stage 1 --episodes 500 --trials 50
-```
+This module builds the clean movement observation and shared movement actor
+structure. Boundary action masks are applied to logits, not concatenated into
+network input. Movement observations and masks are not part of `GraphSnapshot`.
 
-### Stage 2: Algorithm Hyperparameters
-Tunes learning rates, network size, batch size, discount factor etc:
-```bash
-python tune.py --stage 2 --episodes 1000 --trials 50
-```
+### Offloading Actor
 
-### Stage 3: Attention Architecture (Attention Models Only)
-Optimize attention dimension and heads:
-```bash
-python tune.py --stage 3 --episodes 500 --trials 30
-```
+- `marl_models/mappo/clean_offloading_actor.py`
 
-## 🔍 Comparing Algorithms
+This module contains the shared candidate scorer and action-record structure for
+clean offloading. Candidate features and masks are rollout/action data, not task
+graph snapshot data.
 
-```bash
-# Train using multiple algorithms by changing model in configs.py
+### PPO And Critic
 
-# Compare results
-python utils/comparative_plots.py \
-  --logs train_logs/maddpg train_logs/masac/ \
-  --names MADDPG MASAC \
-  --smoothing 10
-```
+- `marl_models/mappo/clean_ppo.py`
 
-Generates comparison plots showing:
-- Reward curves (learning progress)
-- Latency (task completion time)
-- Energy consumption
-- Fairness (equal service)
-- Offline rate (battery health)
-- Loss curves (training stability)
+This module defines clean rollout records, centralized critic input helpers, GAE
+helpers, and PPO loss aggregation rules. Movement and offloading ratios are
+computed per action. Offloading slots with `M_t = 0` are excluded from the
+offloading loss denominator.
 
-Refer [Plotting Module](/docs/PLOTTING_MODULE.md) for detailed plotting plan.
+## Legacy Model Paths
+
+The legacy MADDPG, MATD3, MAPPO, MASAC, attention variants, old HGNN scheduler,
+and older assignment MAPPO files are retained only as legacy paths. They are not
+clean mainline model entrypoints.
+
+Do not connect legacy model modules to the clean mainline unless they are
+explicitly migrated to the clean `GraphSnapshot`, clean actor observations,
+clean candidate records, and clean PPO/critic contracts.
