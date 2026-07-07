@@ -83,9 +83,10 @@ def main() -> None:
             boundary_action_mask=torch.as_tensor(observation.boundary_action_mask, dtype=torch.bool),
         )
         _assert(logits.shape == (config.NUM_UAVS, config.CLEAN_MOVEMENT_ACTION_DIM), "movement logits shape mismatch.")
-        _assert(torch.isfinite(logits[observation.boundary_action_mask]).all().item(), "legal logits should be finite.")
+        boundary_mask = torch.as_tensor(observation.boundary_action_mask, dtype=torch.bool, device=logits.device)
+        _assert(torch.isfinite(logits[boundary_mask]).all().item(), "legal logits should be finite.")
         _assert(
-            torch.all(logits[~torch.as_tensor(observation.boundary_action_mask, dtype=torch.bool)] < -1.0e20).item(),
+            torch.all(logits[~boundary_mask] < -1.0e20).item(),
             "illegal movement logits should be masked after network output.",
         )
 
