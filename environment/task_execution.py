@@ -4,8 +4,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import config
+from environment.assignment import CleanAssignmentBuffer, TemporaryReservationState, is_assignment_legal
 from environment import comm_model
-from environment.dag_tasks import DAGTaskManager, TASK_STATE_READY, TaskNode
+from environment.dag_tasks import DAGTaskManager, TaskNode
 
 
 @dataclass(slots=True)
@@ -41,6 +42,8 @@ class CleanExecutionStepStats:
     step_return_energy: float = 0.0
     completed_task_ids: list[str] = field(default_factory=list)
     completed_dag_ids: list[str] = field(default_factory=list)
+    reward_completed_task_ids: list[str] = field(default_factory=list)
+    reward_completed_dag_ids: list[str] = field(default_factory=list)
     compute_time_by_uav: dict[int, float] = field(default_factory=dict)
     completed_workload_by_uav: dict[int, float] = field(default_factory=dict)
 
@@ -64,35 +67,46 @@ class CleanTaskExecutor:
         self.task_records.clear()
         self.latest_stats = CleanExecutionStepStats()
 
+    def is_task_scheduled(self, task_id: str) -> bool:
+        record = self.task_records.get(str(task_id))
+        return bool(record is not None and not record.completed)
+
     def assign_tasks(
         self,
-        assignments: dict[str, int] | None,
+        assignments: dict[str, int] | CleanAssignmentBuffer | None,
         task_manager: DAGTaskManager,
         uavs: list[Any],
         ues: list[Any],
         current_time_step: float,
+        uav_service_positions: dict[int, Any] | None = None,
+        ue_service_positions: dict[int, Any] | None = None,
     ) -> CleanExecutionStepStats:
         self.latest_stats = CleanExecutionStepStats()
-        if not assignments:
+        assignment_items = _assignment_items(assignments)
+        if not assignment_items:
             return self.latest_stats
 
         uav_map = {int(uav.id): uav for uav in uavs}
-        for task_id, raw_uav_id in assignments.items():
+        reservation = TemporaryReservationState.from_executor(uavs, self)
+        valid_uav_ids = set(uav_map)
+        for task_id, raw_uav_id in assignment_items:
             try:
                 uav_id = int(raw_uav_id)
             except (TypeError, ValueError):
                 self.latest_stats.invalid_assignments += 1
                 continue
             task = task_manager.get_task(str(task_id))
-            if task is None or uav_id not in uav_map:
+            if not is_assignment_legal(
+                task=task,
+                uav_id=uav_id,
+                state_view=reservation,
+                valid_uav_ids=valid_uav_ids,
+                executor=self,
+                service_positions=uav_service_positions,
+            ):
                 self.latest_stats.invalid_assignments += 1
                 continue
-            if task.state != TASK_STATE_READY or task.task_id in self.task_records:
-                self.latest_stats.invalid_assignments += 1
-                continue
-            if len(self.uav_queues.setdefault(uav_id, [])) >= int(config.CLEAN_MAX_QUEUE_PER_UAV):
-                self.latest_stats.invalid_assignments += 1
-                continue
+            assert task is not None
 
             record = self._build_schedule_record(
                 task=task,
@@ -101,6 +115,8 @@ class CleanTaskExecutor:
                 uav_map=uav_map,
                 ues=ues,
                 assignment_time=float(current_time_step),
+                uav_service_positions=uav_service_positions,
+                ue_service_positions=ue_service_positions,
             )
             if record is None:
                 self.latest_stats.invalid_assignments += 1
@@ -111,6 +127,7 @@ class CleanTaskExecutor:
             self.task_records[task.task_id] = record
             self.uav_queues[uav_id].append(task.task_id)
             self.uav_available_time[uav_id] = record.finish_time
+            reservation.reserve(task.task_id, uav_id)
             self.latest_stats.newly_assigned_tasks += 1
         return self.latest_stats
 
@@ -120,6 +137,8 @@ class CleanTaskExecutor:
         uavs: list[Any],
         ues: list[Any],
         current_time_step: float,
+        uav_service_positions: dict[int, Any] | None = None,
+        ue_service_positions: dict[int, Any] | None = None,
     ) -> CleanExecutionStepStats:
         step_end = float(current_time_step) + float(config.TIME_SLOT_DURATION)
         uav_map = {int(uav.id): uav for uav in uavs}
@@ -135,7 +154,17 @@ class CleanTaskExecutor:
                 continue
 
             if task.task_id in set(job.sink_task_ids):
-                self._maybe_start_return(record, task, job, uav_map, ues, step_end)
+                self._maybe_start_return(
+                    record,
+                    task,
+                    job,
+                    uav_map,
+                    ues,
+                    step_end,
+                    task_manager,
+                    uav_service_positions,
+                    ue_service_positions,
+                )
                 if record.return_started and record.finish_time <= step_end:
                     self._complete_record(record, task, task_manager)
                 continue
@@ -153,6 +182,8 @@ class CleanTaskExecutor:
         uav_map: dict[int, Any],
         ues: list[Any],
         assignment_time: float,
+        uav_service_positions: dict[int, Any] | None = None,
+        ue_service_positions: dict[int, Any] | None = None,
     ) -> CleanScheduledTask | None:
         job = task_manager.get_job(task.dag_id)
         if job is None:
@@ -165,7 +196,9 @@ class CleanTaskExecutor:
         predecessor_ready_time = assignment_time
 
         if not task.predecessors:
-            distance = comm_model.clean_distance_2d(job.source_pos, getattr(uav, "pos"))
+            ue_source_pos = _service_position(ue_service_positions, int(job.ue_id), job.source_pos)
+            uav_pos = _service_position(uav_service_positions, int(uav.id), getattr(uav, "pos"))
+            distance = comm_model.clean_distance_2d(ue_source_pos, uav_pos)
             upload_time = _clean_tx_seconds(
                 task.input_data_size_mb,
                 job.base_upload_bandwidth_mbps,
@@ -178,7 +211,7 @@ class CleanTaskExecutor:
                 parent = task_manager.get_task(parent_id)
                 if parent is None or parent.finish_time is None or parent.assigned_uav is None:
                     return None
-                if parent.state == TASK_STATE_READY:
+                if parent.is_ready:
                     return None
                 parent_finish_times.append(float(parent.finish_time))
                 if int(parent.assigned_uav) == int(uav.id):
@@ -186,7 +219,13 @@ class CleanTaskExecutor:
                 parent_uav = uav_map.get(int(parent.assigned_uav))
                 if parent_uav is None:
                     return None
-                distance = comm_model.clean_distance_2d(getattr(parent_uav, "pos"), getattr(uav, "pos"))
+                parent_uav_pos = _service_position(
+                    uav_service_positions,
+                    int(parent.assigned_uav),
+                    getattr(parent_uav, "pos"),
+                )
+                uav_pos = _service_position(uav_service_positions, int(uav.id), getattr(uav, "pos"))
+                distance = comm_model.clean_distance_2d(parent_uav_pos, uav_pos)
                 transfer_time = _clean_tx_seconds(
                     parent.output_data_size_mb,
                     job.base_upload_bandwidth_mbps,
@@ -243,6 +282,9 @@ class CleanTaskExecutor:
         uav_map: dict[int, Any],
         ues: list[Any],
         step_end: float,
+        task_manager: DAGTaskManager,
+        uav_service_positions: dict[int, Any] | None = None,
+        ue_service_positions: dict[int, Any] | None = None,
     ) -> None:
         if record.return_started or record.compute_finish_time > step_end:
             return
@@ -252,7 +294,13 @@ class CleanTaskExecutor:
         ue = next((item for item in ues if int(item.id) == int(job.ue_id)), None)
         if ue is None:
             return
-        distance = comm_model.clean_distance_2d(getattr(uav, "pos"), getattr(ue, "pos"))
+        task.assigned_uav = record.uav_id
+        task.compute_energy = record.compute_energy
+        task.communication_energy = record.communication_energy
+        task.total_energy = record.communication_energy + record.compute_energy
+        uav_pos = _service_position(uav_service_positions, record.uav_id, getattr(uav, "pos"))
+        ue_pos = _service_position(ue_service_positions, int(job.ue_id), getattr(ue, "pos"))
+        distance = comm_model.clean_distance_2d(uav_pos, ue_pos)
         record.return_time = _clean_tx_seconds(
             task.output_data_size_mb,
             job.base_download_bandwidth_mbps,
@@ -262,6 +310,9 @@ class CleanTaskExecutor:
         record.total_energy = record.communication_energy + record.compute_energy + record.return_energy
         record.finish_time = record.compute_finish_time + record.return_time
         record.return_started = True
+        # Sink compute is finished, but the task is not reward-completed or DAG-complete
+        # until the return finishes.
+        task_manager.mark_task_returning(task.task_id, record.compute_finish_time)
         self.uav_available_time[record.uav_id] = max(
             float(self.uav_available_time.get(record.uav_id, 0.0)),
             record.finish_time,
@@ -293,6 +344,7 @@ class CleanTaskExecutor:
 
         self.latest_stats.completed_tasks += 1
         self.latest_stats.completed_task_ids.append(task.task_id)
+        self.latest_stats.reward_completed_task_ids.append(task.task_id)
         self.latest_stats.step_task_energy += record.total_energy
         self.latest_stats.step_compute_energy += record.compute_energy
         self.latest_stats.step_communication_energy += record.communication_energy
@@ -309,6 +361,7 @@ class CleanTaskExecutor:
         if became_completed or task_manager.mark_dag_completed_if_ready(task.dag_id, task.finish_time):
             self.latest_stats.completed_dags += 1
             self.latest_stats.completed_dag_ids.append(task.dag_id)
+            self.latest_stats.reward_completed_dag_ids.append(task.dag_id)
 
 
 # Compatibility alias for old imports. Clean Env uses CleanTaskExecutor directly.
@@ -318,3 +371,19 @@ PhaseOneTaskExecutor = CleanTaskExecutor
 def _clean_tx_seconds(data_size_mb: float, base_bandwidth_mbps: float, distance_m: float) -> float:
     fn = getattr(comm_model, "clean_" + "transmission" + "_time_seconds")
     return float(fn(data_size_mb, base_bandwidth_mbps, distance_m))
+
+
+def _service_position(position_map: dict[int, Any] | None, entity_id: int, fallback: Any) -> Any:
+    if position_map is None:
+        return fallback
+    return position_map.get(int(entity_id), fallback)
+
+
+def _assignment_items(assignments: dict[str, int] | CleanAssignmentBuffer | None) -> list[tuple[str, Any]]:
+    if assignments is None:
+        return []
+    if isinstance(assignments, CleanAssignmentBuffer):
+        return [(entry.task_id, entry.uav_id) for entry in assignments.entries]
+    if isinstance(assignments, dict):
+        return [(str(task_id), uav_id) for task_id, uav_id in assignments.items()]
+    return []

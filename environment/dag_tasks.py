@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 import math
 from typing import Any
@@ -8,16 +9,26 @@ import config
 import numpy as np
 
 
-TASK_STATE_PENDING = "pending"
-TASK_STATE_READY = "ready"
-TASK_STATE_QUEUED = "queued"
-TASK_STATE_RUNNING = "running"
-TASK_STATE_FINISHED = "finished"
-TASK_STATE_RETURNED = "returned"
-TASK_STATE_DROPPED = "dropped"  # Deprecated compatibility state; clean mainline does not deadline-drop tasks.
+TASK_STATE_WAITING_DEPENDENCY = "WAITING_DEPENDENCY"
+TASK_STATE_READY_UNSCHEDULED = "READY_UNSCHEDULED"
+TASK_STATE_IN_SERVICE = "IN_SERVICE"
+TASK_STATE_RETURNING = "RETURNING"
+TASK_STATE_COMPLETED = "COMPLETED"
+TASK_STATE_DROPPED = "DROPPED"  # Deprecated compatibility state; clean mainline does not deadline-drop tasks.
 
-# Deprecated aliases kept for old imports.
-TASK_STATE_WAITING = TASK_STATE_PENDING
+SERVICE_PHASE_UPLOADING_OR_TRANSFERRING = "UPLOADING_OR_TRANSFERRING"
+SERVICE_PHASE_QUEUED = "QUEUED"
+SERVICE_PHASE_COMPUTING = "COMPUTING"
+
+# Deprecated aliases kept for old imports. Clean task states still use the five
+# canonical clean lifecycle values above.
+TASK_STATE_PENDING = TASK_STATE_WAITING_DEPENDENCY
+TASK_STATE_READY = TASK_STATE_READY_UNSCHEDULED
+TASK_STATE_QUEUED = TASK_STATE_IN_SERVICE
+TASK_STATE_RUNNING = TASK_STATE_IN_SERVICE
+TASK_STATE_FINISHED = TASK_STATE_COMPLETED
+TASK_STATE_RETURNED = TASK_STATE_COMPLETED
+TASK_STATE_WAITING = TASK_STATE_WAITING_DEPENDENCY
 
 
 @dataclass(slots=True)
@@ -38,14 +49,18 @@ class TaskNode:
     ready_time: float | None = None
     start_time: float | None = None
     finish_time: float | None = None
+    compute_finish_time: float | None = None
+    reward_completion_time: float | None = None
     assigned_uav: int | None = None
-    state: str = TASK_STATE_PENDING
+    state: str = TASK_STATE_WAITING_DEPENDENCY
+    service_phase: str | None = None
     is_critical_path: bool = False
     compute_energy: float = 0.0
     communication_energy: float = 0.0
     return_energy: float = 0.0
     total_energy: float = 0.0
     enqueue_time: float | None = None
+    reward_settled: bool = False
     # Deprecated compatibility fields. They must not participate in clean reward,
     # graph construction, candidate filtering, critical path, or main metrics.
     deadline: float | None = None
@@ -72,15 +87,15 @@ class TaskNode:
 
     @property
     def is_terminal(self) -> bool:
-        return self.state in {TASK_STATE_FINISHED, TASK_STATE_RETURNED, TASK_STATE_DROPPED}
+        return self.state in {TASK_STATE_COMPLETED, TASK_STATE_DROPPED}
 
     @property
     def is_computation_finished(self) -> bool:
-        return self.state in {TASK_STATE_FINISHED, TASK_STATE_RETURNED}
+        return self.state in {TASK_STATE_RETURNING, TASK_STATE_COMPLETED}
 
     @property
     def is_fully_completed(self) -> bool:
-        return self.state in {TASK_STATE_FINISHED, TASK_STATE_RETURNED}
+        return self.state == TASK_STATE_COMPLETED
 
     def remaining_slack(self, current_time_step: float) -> float:
         """Deprecated compatibility helper. Clean mainline does not use slack."""
@@ -99,8 +114,10 @@ class DAGJob:
     base_download_bandwidth_mbps: float
     task_ids: list[str]
     sink_task_ids: list[str]
+    khop_hyperedges_global: list[list[str]] = field(default_factory=list)
     return_complete_time: float | None = None
     completed: bool = False
+    completion_reward_settled: bool = False
 
 
 class DAGTaskManager:
@@ -113,6 +130,8 @@ class DAGTaskManager:
         self._job_counter: int = 0
         self._task_counter: int = 0
         self._last_arrival_step: int = -1
+        self._dag_arrival_version: int = 0
+        self._last_created_dag_ids: list[str] = []
 
     @property
     def jobs(self) -> dict[str, DAGJob]:
@@ -122,6 +141,14 @@ class DAGTaskManager:
     def tasks(self) -> dict[str, TaskNode]:
         return self._tasks
 
+    @property
+    def dag_arrival_version(self) -> int:
+        return self._dag_arrival_version
+
+    @property
+    def last_created_dag_ids(self) -> list[str]:
+        return list(self._last_created_dag_ids)
+
     def reset(self) -> None:
         self._jobs.clear()
         self._tasks.clear()
@@ -129,6 +156,8 @@ class DAGTaskManager:
         self._job_counter = 0
         self._task_counter = 0
         self._last_arrival_step = -1
+        self._dag_arrival_version = 0
+        self._last_created_dag_ids = []
 
     def create_dag_for_ue(
         self,
@@ -181,6 +210,7 @@ class DAGTaskManager:
 
         self._connect_levels(levels)
         sink_task_ids = [task_id for task_id in task_ids if not self._tasks[task_id].successors]
+        khop_hyperedges_global = self._precompute_khop_hyperedges(task_ids)
         job = DAGJob(
             dag_id=dag_id,
             ue_id=ue_id,
@@ -190,8 +220,11 @@ class DAGTaskManager:
             base_download_bandwidth_mbps=base_download,
             task_ids=task_ids,
             sink_task_ids=sink_task_ids,
+            khop_hyperedges_global=khop_hyperedges_global,
         )
         self._jobs[dag_id] = job
+        self._dag_arrival_version += 1
+        self._last_created_dag_ids = [dag_id]
         self._refresh_ready_states()
         self._mark_critical_path(dag_id)
         return job
@@ -207,6 +240,7 @@ class DAGTaskManager:
             self._refresh_ready_states()
             return
         self._last_arrival_step = current_time_step
+        created_dag_ids: list[str] = []
         for ue in ues:
             ue_id = int(getattr(ue, "id"))
             if self._ue_has_active_dag(ue_id):
@@ -215,19 +249,21 @@ class DAGTaskManager:
             if np.random.random() >= arrival_prob:
                 continue
             pos = np.asarray(getattr(ue, "pos"), dtype=np.float32).reshape(-1)[:2]
-            self.create_dag_for_ue(ue_id=ue_id, source_pos=pos, current_time_step=current_time_step)
+            job = self.create_dag_for_ue(ue_id=ue_id, source_pos=pos, current_time_step=current_time_step)
+            created_dag_ids.append(job.dag_id)
+        self._last_created_dag_ids = created_dag_ids
         self._refresh_ready_states()
 
     def get_active_tasks(self) -> list[TaskNode]:
         return [
             task
             for task in self._tasks.values()
-            if task.state not in {TASK_STATE_FINISHED, TASK_STATE_RETURNED, TASK_STATE_DROPPED}
+            if task.state not in {TASK_STATE_COMPLETED, TASK_STATE_DROPPED}
         ]
 
     def get_all_non_returned_tasks(self) -> list[TaskNode]:
         """Compatibility view for old callers that still expect finished tasks before return."""
-        return [task for task in self._tasks.values() if task.state not in {TASK_STATE_RETURNED, TASK_STATE_DROPPED}]
+        return [task for task in self._tasks.values() if task.state not in {TASK_STATE_COMPLETED, TASK_STATE_DROPPED}]
 
     def get_ready_tasks(self) -> list[TaskNode]:
         return [task for task in self._tasks.values() if task.state == TASK_STATE_READY]
@@ -261,28 +297,45 @@ class DAGTaskManager:
         task = self._tasks[task_id]
         if task.state != TASK_STATE_READY:
             raise ValueError(f"Task {task_id} is not ready and cannot be queued.")
-        task.state = TASK_STATE_QUEUED
+        task.state = TASK_STATE_IN_SERVICE
+        task.service_phase = SERVICE_PHASE_QUEUED
         task.assigned_uav = int(uav_id)
         task.enqueue_time = float(current_time_step)
 
     def mark_task_running(self, task_id: str, current_time_step: float) -> None:
         task = self._tasks[task_id]
-        if task.state not in {TASK_STATE_READY, TASK_STATE_QUEUED}:
+        if task.state not in {TASK_STATE_READY, TASK_STATE_IN_SERVICE}:
             raise ValueError(f"Task {task_id} is not queueable and cannot start.")
-        task.state = TASK_STATE_RUNNING
+        task.state = TASK_STATE_IN_SERVICE
+        task.service_phase = SERVICE_PHASE_COMPUTING
         task.start_time = float(current_time_step)
 
     def mark_task_finished(self, task_id: str, current_time_step: float) -> None:
         task = self._tasks[task_id]
-        task.state = TASK_STATE_FINISHED
+        task.state = TASK_STATE_COMPLETED
+        task.service_phase = None
+        task.compute_finish_time = float(current_time_step)
         task.finish_time = float(current_time_step)
+        task.reward_completion_time = float(current_time_step)
         task.total_energy = task.compute_energy + task.communication_energy + task.return_energy
         self._refresh_ready_states()
 
+    def mark_task_returning(self, task_id: str, current_time_step: float) -> None:
+        task = self._tasks[task_id]
+        if task.state == TASK_STATE_COMPLETED:
+            return
+        task.state = TASK_STATE_RETURNING
+        task.service_phase = None
+        task.compute_finish_time = float(current_time_step)
+        task.finish_time = float(current_time_step)
+        task.total_energy = task.compute_energy + task.communication_energy + task.return_energy
+
     def mark_task_returned(self, task_id: str, current_time_step: float) -> None:
         task = self._tasks[task_id]
-        task.state = TASK_STATE_RETURNED
+        task.state = TASK_STATE_COMPLETED
+        task.service_phase = None
         task.finish_time = float(current_time_step)
+        task.reward_completion_time = float(current_time_step)
         task.total_energy = task.compute_energy + task.communication_energy + task.return_energy
         self.mark_dag_completed_if_ready(task.dag_id, current_time_step)
 
@@ -298,16 +351,16 @@ class DAGTaskManager:
         if not job_tasks:
             return False
         non_sink_finished = all(
-            task.state in {TASK_STATE_FINISHED, TASK_STATE_RETURNED}
+            task.state == TASK_STATE_COMPLETED
             for task in job_tasks
             if task.task_id not in set(job.sink_task_ids)
         )
-        sink_returned = all(self._tasks[task_id].state == TASK_STATE_RETURNED for task_id in job.sink_task_ids)
+        sink_returned = all(self._tasks[task_id].state == TASK_STATE_COMPLETED for task_id in job.sink_task_ids)
         if non_sink_finished and sink_returned:
             job.completed = True
             complete_time = current_time_step
             if complete_time is None:
-                finish_times = [task.finish_time for task in job_tasks if task.finish_time is not None]
+                finish_times = [task.reward_completion_time for task in job_tasks if task.reward_completion_time is not None]
                 complete_time = max(finish_times) if finish_times else job.arrival_time
             job.return_complete_time = float(complete_time)
             return True
@@ -319,14 +372,19 @@ class DAGTaskManager:
         incomplete_jobs = total_jobs - completed_jobs
         generated_tasks = len(self._tasks)
         finished_tasks = sum(
-            1 for task in self._tasks.values() if task.state in {TASK_STATE_FINISHED, TASK_STATE_RETURNED}
+            1 for task in self._tasks.values() if task.state == TASK_STATE_COMPLETED
         )
-        returned_tasks = sum(1 for task in self._tasks.values() if task.state == TASK_STATE_RETURNED)
+        returned_tasks = sum(
+            1
+            for job in self._jobs.values()
+            for task_id in job.sink_task_ids
+            if self._tasks[task_id].state == TASK_STATE_COMPLETED
+        )
         critical_tasks = sum(1 for task in self._tasks.values() if task.is_critical_path)
         critical_finished = sum(
             1
             for task in self._tasks.values()
-            if task.is_critical_path and task.state in {TASK_STATE_FINISHED, TASK_STATE_RETURNED}
+            if task.is_critical_path and task.state == TASK_STATE_COMPLETED
         )
         flowtimes = [
             float(job.return_complete_time - job.arrival_time)
@@ -355,7 +413,7 @@ class DAGTaskManager:
         job_tasks = self.get_job_tasks(dag_id)
         if not job_tasks:
             return 0.0
-        done = sum(1 for task in job_tasks if task.state in {TASK_STATE_FINISHED, TASK_STATE_RETURNED})
+        done = sum(1 for task in job_tasks if task.state == TASK_STATE_COMPLETED)
         return float(done / max(len(job_tasks), 1))
 
     def get_dag_remaining_slack(self, dag_id: str, current_time_step: float) -> float:
@@ -515,17 +573,55 @@ class DAGTaskManager:
                     self._tasks[task_id].predecessors.append(parent_id)
                     self._tasks[parent_id].successors.append(task_id)
 
+    def _precompute_khop_hyperedges(self, task_ids: list[str]) -> list[list[str]]:
+        if not config.ENABLE_KHOP_DEPENDENCY_HYPEREDGES:
+            return []
+        max_hops = max(int(config.KHOP_K), 0)
+        if max_hops <= 0:
+            return []
+
+        task_id_set = set(task_ids)
+        dedup: set[tuple[str, ...]] = set()
+        output: list[list[str]] = []
+        for root_id in sorted(task_ids, key=_stable_sort_value):
+            reachable: set[str] = {root_id}
+            queue: deque[tuple[str, int]] = deque(
+                (child_id, 1)
+                for child_id in self._tasks[root_id].successors
+                if child_id in task_id_set
+            )
+            while queue:
+                task_id, depth = queue.popleft()
+                if depth > max_hops or task_id not in task_id_set:
+                    continue
+                reachable.add(task_id)
+                if depth == max_hops:
+                    continue
+                for child_id in self._tasks[task_id].successors:
+                    if child_id in task_id_set:
+                        queue.append((child_id, depth + 1))
+            if len(reachable) < 2:
+                continue
+            group = tuple(sorted(reachable, key=_stable_sort_value))
+            if group in dedup:
+                continue
+            dedup.add(group)
+            output.append(list(group))
+        return output
+
     def _refresh_ready_states(self) -> None:
         for task in self._tasks.values():
-            if task.state in {TASK_STATE_FINISHED, TASK_STATE_RETURNED, TASK_STATE_RUNNING, TASK_STATE_QUEUED, TASK_STATE_DROPPED}:
+            if task.state in {TASK_STATE_COMPLETED, TASK_STATE_RETURNING, TASK_STATE_IN_SERVICE, TASK_STATE_DROPPED}:
                 continue
             if not task.predecessors:
                 task.state = TASK_STATE_READY
+                task.service_phase = None
                 if task.ready_time is None:
                     task.ready_time = float(task.arrival_time)
                 continue
-            if all(self._tasks[parent_id].state in {TASK_STATE_FINISHED, TASK_STATE_RETURNED} for parent_id in task.predecessors):
+            if all(self._tasks[parent_id].state == TASK_STATE_COMPLETED for parent_id in task.predecessors):
                 task.state = TASK_STATE_READY
+                task.service_phase = None
                 if task.ready_time is None:
                     parent_finish = [
                         self._tasks[parent_id].finish_time
@@ -534,7 +630,8 @@ class DAGTaskManager:
                     ]
                     task.ready_time = max(parent_finish) if parent_finish else float(task.arrival_time)
             else:
-                task.state = TASK_STATE_PENDING
+                task.state = TASK_STATE_WAITING_DEPENDENCY
+                task.service_phase = None
 
     def _mark_critical_path(self, dag_id: str) -> None:
         job_tasks = self.get_job_tasks(dag_id)

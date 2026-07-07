@@ -23,10 +23,10 @@ def main() -> None:
     obs = env.reset()
 
     assert len(obs) == config.NUM_UAVS
-    assert len(env.uavs) == config.NUM_UAVS == 8
-    assert len(env.ues) == config.NUM_UES == 100
+    assert len(env.uavs) == config.NUM_UAVS == 5
+    assert len(env.ues) == config.NUM_UES == 60
     assert env.hotspot_center is not None
-    assert float(env.hotspot_radius) == float(config.HOTSPOT_RADIUS) == 200.0
+    assert float(env.hotspot_radius) == float(config.HOTSPOT_RADIUS) == 150.0
     assert config.HOTSPOT_RADIUS <= float(env.hotspot_center[0]) <= config.AREA_WIDTH - config.HOTSPOT_RADIUS
     assert config.HOTSPOT_RADIUS <= float(env.hotspot_center[1]) <= config.AREA_HEIGHT - config.HOTSPOT_RADIUS
 
@@ -48,6 +48,8 @@ def main() -> None:
 
         created = env._process_clean_dag_arrivals()
         assert created == 1
+        assert env.new_dag_arrived
+        assert env.dag_arrival_version == env.task_manager.dag_arrival_version == 1
         assert target.service_waiting
         assert target.active_dag_id is not None
         job = env.task_manager.get_job(target.active_dag_id)
@@ -57,6 +59,8 @@ def main() -> None:
         target.pos[:2] = np.array([0.0, 0.0], dtype=np.float32)
         np.testing.assert_allclose(job.source_pos, source_pos)
         assert env._process_clean_dag_arrivals() == 0
+        assert not env.new_dag_arrived
+        assert env.dag_arrival_version == env.task_manager.dag_arrival_version == 1
         assert len([job for job in env.task_manager.jobs.values() if job.ue_id == target.id]) == 1
 
         outside = env.ues[1]
@@ -65,6 +69,7 @@ def main() -> None:
         setattr(outside, "is_hotspot", True)
         config.DAG_BASE_ARRIVAL_PROB = 0.0
         assert env._process_clean_dag_arrivals() == 0
+        assert not env.new_dag_arrived
         assert outside.active_dag_id is None
     finally:
         config.DAG_BASE_ARRIVAL_PROB = old_base_prob

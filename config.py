@@ -12,17 +12,17 @@ np.random.seed(SEED)
 # ===================== zrj_3 clean mainline: ENV =====================
 # Clean mainline canonical environment parameters. Deprecated aliases may remain
 # below only to keep old imports from crashing.
-AREA_WIDTH: int = 700
-AREA_HEIGHT: int = 700
-NUM_UAVS: int = 8
-NUM_UES: int = 100
+AREA_WIDTH: int = 500
+AREA_HEIGHT: int = 500
+NUM_UAVS: int = 5
+NUM_UES: int = 60
 EPISODE_LENGTH: int = 500
-TIME_SLOT_DURATION: float = 1.0
+TIME_SLOT_DURATION: float = 5.0
 # Deprecated alias used by old training loops; clean mainline uses EPISODE_LENGTH.
 STEPS_PER_EPISODE: int = EPISODE_LENGTH
 
 # ===================== zrj_3 clean mainline: HOTSPOT =====================
-HOTSPOT_RADIUS: float = 200.0
+HOTSPOT_RADIUS: float = 150.0
 DAG_BASE_ARRIVAL_PROB: float = 0.05
 DAG_HOTSPOT_ARRIVAL_MULTIPLIER: float = 2.0
 
@@ -58,8 +58,15 @@ BANDWIDTH_LEVEL_PROBS: list[float] = [0.3, 0.5, 0.2]
 P_UAV_COMPUTE: float = 50.0
 P_UE_TX: float = 0.5
 P_UAV_TX: float = 0.5
+CLEAN_POWER_MOVE: float = 100.0
 UAV_COMPUTE_RATE_OPS_PER_SEC: float = 1_000_000.0
 CLEAN_MAX_QUEUE_PER_UAV: int = 16
+
+# ===================== zrj_3 clean mainline: MOVEMENT =====================
+CLEAN_MOVEMENT_ACTIONS: tuple[str, ...] = ("hover", "+x", "-x", "+y", "-y")
+CLEAN_MOVEMENT_ACTION_DIM: int = len(CLEAN_MOVEMENT_ACTIONS)
+CLEAN_MOVEMENT_HOVER_ACTION: str = "hover"
+CLEAN_UAV_MOVEMENT_SPEED: float = 15.0
 
 # ===================== zrj_3 clean mainline: GRAPH =====================
 ENABLE_DAG_DEPENDENCY_EDGES: bool = True
@@ -68,13 +75,23 @@ ENABLE_ATTRIBUTE_HYPEREDGES: bool = True
 ATTRIBUTE_HYPEREDGE_UPDATE_INTERVAL: int = 5
 ATTRIBUTE_HYPEREDGE_CLUSTER_NUM: int = 4
 KHOP_K: int = 2
+ENABLE_KAHYPAR_PARTITION_HYPEREDGES: bool = True
+KAHYPAR_PARTITION_UPDATE_INTERVAL: int = 5
+KAHYPAR_DEGRADED_EXPERIMENT_LABEL: str = "no-KaHyPar / degraded"
 
 # ===================== zrj_3 clean mainline: REWARD =====================
 REWARD_TIME_WEIGHT: float = 1.0
-REWARD_ENERGY_WEIGHT: float = 0.001
-REWARD_COMPLETED_DAG_WEIGHT: float = 10.0
+REWARD_ENERGY_WEIGHT: float = 0.1
+REWARD_MOVEMENT_ENERGY_WEIGHT: float = 0.05
+REWARD_COMPLETED_DAG_WEIGHT: float = 2.0
 CRITICAL_TASK_WEIGHT: float = 1.0
 NONCRITICAL_TASK_WEIGHT: float = 0.5
+CLEAN_REWARD_TIME_REF: float = TIME_SLOT_DURATION
+CLEAN_REWARD_TASK_ENERGY_REF: float = P_UAV_COMPUTE * TIME_SLOT_DURATION
+CLEAN_REWARD_MOVE_ENERGY_REF: float = NUM_UAVS * CLEAN_POWER_MOVE * TIME_SLOT_DURATION
+
+# ===================== zrj_3 clean mainline: PROFILING =====================
+ENABLE_CLEAN_PROFILING: bool = False
 
 # ===================== zrj_3 clean mainline: QOS =====================
 ENABLE_DEADLINE_QOS_EVAL: bool = False
