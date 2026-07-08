@@ -45,6 +45,22 @@ def _assert(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def _is_on_selected_device(tensor_device: object, selected_device: object, torch_module: object) -> bool:
+    tensor_device = torch_module.device(tensor_device)
+    selected_device = torch_module.device(selected_device)
+    if tensor_device.type != selected_device.type:
+        return False
+    if selected_device.type != "cuda":
+        return tensor_device.index == selected_device.index
+    selected_index = selected_device.index
+    if selected_index is None:
+        selected_index = torch_module.cuda.current_device()
+    tensor_index = tensor_device.index
+    if tensor_index is None:
+        tensor_index = torch_module.cuda.current_device()
+    return tensor_index == selected_index
+
+
 def main() -> None:
     _validate_runbook()
     try:
@@ -143,7 +159,10 @@ def _torch_validation(torch) -> None:
             movement_actor=modules.movement_actor,
             device=device,
         )
-        _assert(encoded.task_embeddings.device == device, "HGNN task embeddings should be on selected device.")
+        _assert(
+            _is_on_selected_device(encoded.task_embeddings.device, device, torch),
+            "HGNN task embeddings should be on selected device.",
+        )
         _assert(torch.isfinite(encoded.task_embeddings).all().item(), "HGNN embeddings should be finite.")
         _assert(torch.isfinite(encoded.movement_logits).all().item(), "movement logits should be finite after masking.")
         movement_mask = torch.as_tensor(encoded.movement_observation.boundary_action_mask, dtype=torch.bool, device=device)

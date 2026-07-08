@@ -286,8 +286,10 @@ def _encode_task_embeddings(
         return output
     if torch is None:
         raise ModuleNotFoundError("torch is required to run HGNN forward")
-    task_features = torch.as_tensor(snapshot.task_features, dtype=torch.float32, device=device)
-    incidence = torch.as_tensor(snapshot.incidence_matrix, dtype=torch.float32, device=device)
+    task_features_np = np.asarray(snapshot.task_features, dtype=np.float32).copy()
+    incidence_np = np.asarray(snapshot.incidence_matrix, dtype=np.float32).copy()
+    task_features = torch.as_tensor(task_features_np, dtype=torch.float32, device=device)
+    incidence = torch.as_tensor(incidence_np, dtype=torch.float32, device=device)
     return hgnn(task_features, incidence)
 
 
