@@ -41,6 +41,8 @@ class CleanSlotRolloutRecord:
     reward: float
     terminated: bool
     truncated: bool
+    next_value: float | None = None
+    bootstrap_value: float | None = None
     movement_records: list[CleanMovementActionRecord] = field(default_factory=list)
     offloading_records: list[Any] = field(default_factory=list)
 
@@ -71,6 +73,25 @@ def build_clean_critic_global_input(
         if task_embeddings.shape[0] > 0
         else np.zeros((embedding_dim,), dtype=np.float32)
     )
+    non_graph = build_clean_critic_non_graph_input(
+        graph_snapshot=graph_snapshot,
+        uavs=uavs,
+        executor=executor,
+        pre_move_positions=pre_move_positions,
+        current_time_step=float(current_time_step),
+    )
+    return np.concatenate([active_mean, non_graph]).astype(np.float32)
+
+
+def build_clean_critic_non_graph_input(
+    *,
+    graph_snapshot: Any,
+    uavs: list[Any],
+    executor: Any | None,
+    pre_move_positions: dict[int, Any] | None = None,
+    current_time_step: float = 0.0,
+) -> np.ndarray:
+    """Build the critic input slice that does not depend on HGNN parameters."""
     u_global = _critic_uav_global(
         uavs=uavs,
         executor=executor,
@@ -94,7 +115,24 @@ def build_clean_critic_global_input(
         executor=executor,
         current_time_step=float(current_time_step),
     )
-    return np.concatenate([active_mean, u_global, counts, q_summary]).astype(np.float32)
+    return np.concatenate([u_global, counts, q_summary]).astype(np.float32)
+
+
+def assemble_clean_critic_global_input(
+    *,
+    task_embeddings: np.ndarray,
+    critic_non_graph_input: np.ndarray,
+) -> np.ndarray:
+    """Combine current HGNN task embedding pool with historical non-graph critic input."""
+    task_embeddings = np.asarray(task_embeddings, dtype=np.float32)
+    if task_embeddings.ndim != 2:
+        raise ValueError("task_embeddings must be a 2D array.")
+    active_mean = (
+        task_embeddings.mean(axis=0).astype(np.float32)
+        if task_embeddings.shape[0] > 0
+        else np.zeros((int(task_embeddings.shape[1]),), dtype=np.float32)
+    )
+    return np.concatenate([active_mean, np.asarray(critic_non_graph_input, dtype=np.float32).reshape(-1)]).astype(np.float32)
 
 
 def clean_critic_input_dim(task_embedding_dim: int, num_uavs: int | None = None) -> int:

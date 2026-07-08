@@ -161,11 +161,48 @@ def build_offloading_candidate_batch(
     ue_service_positions: dict[int, Any] | None = None,
     ues: list[Any] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, list[int], list[OffloadingCandidateEstimate]]:
+    dynamic_uav_features, pair_features, candidate_mask, candidate_uav_ids, estimates = build_offloading_candidate_components(
+        task=task,
+        uavs=uavs,
+        task_manager=task_manager,
+        executor=executor,
+        state_view=state_view,
+        current_time_step=current_time_step,
+        uav_service_positions=uav_service_positions,
+        ue_service_positions=ue_service_positions,
+        ues=ues,
+    )
+    task_embedding = np.asarray(task_embedding, dtype=np.float32).reshape(1, -1)
+    if dynamic_uav_features.shape[0] == 0:
+        feature_dim = int(task_embedding.shape[1]) + CLEAN_OFFLOADING_UAV_FEATURE_DIM + CLEAN_OFFLOADING_PAIR_FEATURE_DIM
+        return np.zeros((0, feature_dim), dtype=np.float32), candidate_mask, candidate_uav_ids, estimates
+    repeated_task_embeddings = np.repeat(task_embedding, dynamic_uav_features.shape[0], axis=0)
+    return (
+        np.concatenate([repeated_task_embeddings, dynamic_uav_features, pair_features], axis=1).astype(np.float32),
+        candidate_mask,
+        candidate_uav_ids,
+        estimates,
+    )
+
+
+def build_offloading_candidate_components(
+    *,
+    task: TaskNode,
+    uavs: list[Any],
+    task_manager: DAGTaskManager,
+    executor: Any,
+    state_view: TemporaryReservationState,
+    current_time_step: float,
+    uav_service_positions: dict[int, Any] | None = None,
+    ue_service_positions: dict[int, Any] | None = None,
+    ues: list[Any] | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[int], list[OffloadingCandidateEstimate]]:
+    """Build candidate dynamic non-graph inputs without task embeddings."""
     ordered_uavs = sorted(uavs, key=lambda item: int(item.id))
     uav_map = {int(uav.id): uav for uav in ordered_uavs}
     valid_uav_ids = set(uav_map)
-    task_embedding = np.asarray(task_embedding, dtype=np.float32).reshape(-1)
-    candidate_rows: list[np.ndarray] = []
+    dynamic_rows: list[np.ndarray] = []
+    pair_rows: list[np.ndarray] = []
     mask_values: list[bool] = []
     candidate_uav_ids: list[int] = []
     estimates: list[OffloadingCandidateEstimate] = []
@@ -192,15 +229,22 @@ def build_offloading_candidate_batch(
             ues=ues,
             legal=legal,
         )
-        candidate_rows.append(np.concatenate([task_embedding, estimate.dynamic_uav_features, estimate.pair_features]))
+        dynamic_rows.append(np.asarray(estimate.dynamic_uav_features, dtype=np.float32).reshape(-1))
+        pair_rows.append(np.asarray(estimate.pair_features, dtype=np.float32).reshape(-1))
         mask_values.append(bool(estimate.legal))
         candidate_uav_ids.append(uav_id)
         estimates.append(estimate)
-    if not candidate_rows:
-        feature_dim = int(task_embedding.shape[0]) + CLEAN_OFFLOADING_UAV_FEATURE_DIM + CLEAN_OFFLOADING_PAIR_FEATURE_DIM
-        return np.zeros((0, feature_dim), dtype=np.float32), np.zeros((0,), dtype=bool), [], []
+    if not dynamic_rows:
+        return (
+            np.zeros((0, CLEAN_OFFLOADING_UAV_FEATURE_DIM), dtype=np.float32),
+            np.zeros((0, CLEAN_OFFLOADING_PAIR_FEATURE_DIM), dtype=np.float32),
+            np.zeros((0,), dtype=bool),
+            [],
+            [],
+        )
     return (
-        np.stack(candidate_rows, axis=0).astype(np.float32),
+        np.stack(dynamic_rows, axis=0).astype(np.float32),
+        np.stack(pair_rows, axis=0).astype(np.float32),
         np.asarray(mask_values, dtype=bool),
         candidate_uav_ids,
         estimates,

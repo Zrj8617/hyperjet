@@ -13,16 +13,19 @@ from environment.assignment import (
     CLEAN_OFFLOADING_UAV_FEATURE_DIM,
     CleanAssignmentBuffer,
     TemporaryReservationState,
-    build_offloading_candidate_batch,
+    build_offloading_candidate_components,
 )
 
 
 @dataclass(slots=True)
 class CleanOffloadingActionRecord:
     task_id: str
+    task_local_index: int
     decision_order: int
     candidate_uav_ids: list[int]
     candidate_features: torch.Tensor
+    dynamic_uav_features: torch.Tensor
+    pair_features: torch.Tensor
     candidate_mask: torch.Tensor
     selected_action: int
     selected_uav_id: int
@@ -95,9 +98,8 @@ class CleanOffloadingActor(nn.Module):
             task_idx = graph_snapshot.task_id_to_idx.get(task.task_id)
             if task_idx is None:
                 continue
-            candidate_features_np, candidate_mask_np, candidate_uav_ids, estimates = build_offloading_candidate_batch(
+            dynamic_features_np, pair_features_np, candidate_mask_np, candidate_uav_ids, estimates = build_offloading_candidate_components(
                 task=task,
-                task_embedding=task_embeddings_tensor[int(task_idx)].detach().cpu().numpy(),
                 uavs=uavs,
                 task_manager=task_manager,
                 executor=executor,
@@ -107,10 +109,23 @@ class CleanOffloadingActor(nn.Module):
                 ue_service_positions=ue_service_positions,
                 ues=ues,
             )
+            if dynamic_features_np.shape[0] == 0:
+                continue
+            task_embedding_np = task_embeddings_tensor[int(task_idx)].detach().cpu().numpy().reshape(1, -1)
+            candidate_features_np = np.concatenate(
+                [
+                    np.repeat(task_embedding_np, dynamic_features_np.shape[0], axis=0),
+                    dynamic_features_np,
+                    pair_features_np,
+                ],
+                axis=1,
+            ).astype(np.float32)
             if candidate_features_np.shape[0] == 0 or not bool(candidate_mask_np.any()):
                 continue
 
             candidate_features = torch.as_tensor(candidate_features_np, dtype=torch.float32, device=device)
+            dynamic_features = torch.as_tensor(dynamic_features_np, dtype=torch.float32, device=device)
+            pair_features = torch.as_tensor(pair_features_np, dtype=torch.float32, device=device)
             candidate_mask = torch.as_tensor(candidate_mask_np, dtype=torch.bool, device=device)
             logits = self.scorer(candidate_features)
             masked_logits = logits.masked_fill(~candidate_mask, torch.finfo(logits.dtype).min)
@@ -129,9 +144,12 @@ class CleanOffloadingActor(nn.Module):
             records.append(
                 CleanOffloadingActionRecord(
                     task_id=str(task.task_id),
+                    task_local_index=int(task_idx),
                     decision_order=int(decision_order),
                     candidate_uav_ids=list(candidate_uav_ids),
                     candidate_features=candidate_features.detach().cpu().clone(),
+                    dynamic_uav_features=dynamic_features.detach().cpu().clone(),
+                    pair_features=pair_features.detach().cpu().clone(),
                     candidate_mask=candidate_mask.detach().cpu().clone(),
                     selected_action=selected_action,
                     selected_uav_id=selected_uav_id,

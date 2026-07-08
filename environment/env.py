@@ -48,6 +48,8 @@ class Env:
         self._latest_dag_arrival_version: int = 0
         self._last_movement_energy_by_uav: dict[int, float] = {}
         self._last_movement_energy_total: float = 0.0
+        self._prepared_slot_open: bool = False
+        self._prepared_slot_context: dict[str, Any] = {}
 
     @property
     def uavs(self) -> list[UAV]:
@@ -124,6 +126,8 @@ class Env:
         self._latest_dag_arrival_version = self._task_manager.dag_arrival_version
         self._last_movement_energy_by_uav = {int(uav.id): 0.0 for uav in self._uavs}
         self._last_movement_energy_total = 0.0
+        self._prepared_slot_open = False
+        self._prepared_slot_context = {}
         self._latest_slot_boundary = {
             "internal_state": "x_0^-",
             "decision_state": None,
@@ -139,7 +143,21 @@ class Env:
         return self._get_obs()
 
     def step(self, actions: Any | None = None) -> tuple[list[np.ndarray], list[float], bool, dict[str, Any]]:
-        # Slot starts from the previous post-execution internal state x_t^-.
+        parsed_actions = self._parse_clean_actions(actions)
+        self.prepare_slot_state()
+        self.apply_movement(parsed_actions["movement_actions"])
+        return self.commit_and_advance(assignments=parsed_actions["assignments"])
+
+    def prepare_slot_state(self) -> dict[str, Any]:
+        """Prepare clean decision state s_t exactly once for the next slot.
+
+        This stage is environment/parameter independent: UE movement, DAG
+        arrivals, ready refresh, and frozen ready-set construction happen here.
+        Model encoding is intentionally outside this method.
+        """
+        if self._prepared_slot_open:
+            raise RuntimeError("A prepared clean slot is already open; commit it before preparing the next slot.")
+
         slot_index = self._time_step
         previous_internal_state = f"x_{slot_index}^-"
         self._time_step += 1
@@ -150,15 +168,67 @@ class Env:
 
         created_dags = self._process_clean_dag_arrivals()
         self._task_manager.refresh_ready_states()
-        # After UE movement, DAG arrivals, and ready refresh, the clean decision
-        # state s_t is formed. Graph/HGNN construction is deliberately left to T4.
-        decision_state = f"s_{slot_index}"
-        parsed_actions = self._parse_clean_actions(actions)
-        assignments = parsed_actions["assignments"]
-        self._apply_clean_movement(parsed_actions["movement_actions"])
         ready_tasks = freeze_ready_tasks(self._task_manager)
         self._frozen_ready_task_ids = [task.task_id for task in ready_tasks]
-        assignment_buffer, offloading_skip_count = self._build_assignment_buffer(ready_tasks, assignments)
+        self._uav_pre_move_positions = {int(uav.id): uav.pos[:2].copy() for uav in self._uavs}
+        decision_state = f"s_{slot_index}"
+        self._latest_slot_boundary = {
+            "slot": slot_index,
+            "started_from": previous_internal_state,
+            "decision_state": decision_state,
+            "post_execution_state": None,
+            "next_decision_state": None,
+        }
+        self._prepared_slot_context = {
+            "slot_index": slot_index,
+            "time_step": self._time_step,
+            "previous_internal_state": previous_internal_state,
+            "decision_state": decision_state,
+            "created_dags": created_dags,
+            "new_dag_arrived": self._last_new_dag_arrived,
+            "dag_arrival_version": self._latest_dag_arrival_version,
+            "frozen_ready_task_ids": list(self._frozen_ready_task_ids),
+            "ue_service_positions": self.ue_service_positions,
+            "uav_pre_move_positions": {uav_id: pos.copy() for uav_id, pos in self._uav_pre_move_positions.items()},
+        }
+        self._prepared_slot_open = True
+        return self._copy_slot_context(self._prepared_slot_context)
+
+    def apply_movement(self, movement_actions: dict[int, int | str] | None = None) -> dict[str, Any]:
+        """Apply movement after R_t is frozen and expose current service positions."""
+        if not self._prepared_slot_open:
+            raise RuntimeError("prepare_slot_state() must be called before apply_movement().")
+        self._apply_clean_movement(movement_actions or {})
+        return {
+            "movement_energy_by_uav": dict(self._last_movement_energy_by_uav),
+            "movement_energy_total": float(self._last_movement_energy_total),
+            "uav_pre_move_positions": {uav_id: pos.copy() for uav_id, pos in self._uav_pre_move_positions.items()},
+            "uav_service_positions": self.uav_service_positions,
+        }
+
+    def commit_and_advance(
+        self,
+        *,
+        assignments: dict[str, int] | None = None,
+        assignment_buffer: CleanAssignmentBuffer | None = None,
+        offloading_skip_count: int = 0,
+    ) -> tuple[list[np.ndarray], list[float], bool, dict[str, Any]]:
+        """Commit clean assignments, advance executor one slot, and close reward/metrics."""
+        if not self._prepared_slot_open:
+            raise RuntimeError("prepare_slot_state() must be called before commit_and_advance().")
+        if not self._uav_service_positions:
+            self.apply_movement({})
+
+        context = self._prepared_slot_context
+        slot_index = int(context["slot_index"])
+        previous_internal_state = str(context["previous_internal_state"])
+        decision_state = str(context["decision_state"])
+        created_dags = int(context["created_dags"])
+        if assignment_buffer is None:
+            ready_tasks = self._frozen_ready_tasks_from_ids(self._frozen_ready_task_ids)
+            assignment_buffer, offloading_skip_count = self._build_assignment_buffer(ready_tasks, assignments or {})
+        else:
+            assignment_buffer = CleanAssignmentBuffer(entries=list(assignment_buffer.entries))
         self._last_assignment_buffer = assignment_buffer
         self._executor.assign_tasks(
             assignments=assignment_buffer,
@@ -241,6 +311,8 @@ class Env:
         reward_per_uav = step_reward.reward_total / float(max(len(self._uavs), 1))
         rewards = [reward_per_uav for _ in self._uavs]
         done = self._time_step >= int(config.EPISODE_LENGTH)
+        self._prepared_slot_open = False
+        self._prepared_slot_context = {}
         return self._get_obs(), rewards, done, dict(info)
 
     def _sample_episode_hotspot(self) -> np.ndarray:
@@ -367,6 +439,21 @@ class Env:
             buffer.append(task.task_id, selected_uav_id, decision_order)
             reservation.reserve(task.task_id, selected_uav_id)
         return buffer, skipped_no_candidate
+
+    def _frozen_ready_tasks_from_ids(self, task_ids: list[str]) -> list[Any]:
+        tasks = []
+        for task_id in task_ids:
+            task = self._task_manager.get_task(task_id)
+            if task is not None:
+                tasks.append(task)
+        return tasks
+
+    def _copy_slot_context(self, context: dict[str, Any]) -> dict[str, Any]:
+        copied = dict(context)
+        for key in ("ue_service_positions", "uav_pre_move_positions"):
+            copied[key] = {int(item_id): np.asarray(pos, dtype=np.float32).copy() for item_id, pos in context.get(key, {}).items()}
+        copied["frozen_ready_task_ids"] = list(context.get("frozen_ready_task_ids", []))
+        return copied
 
     def _apply_clean_movement(self, movement_actions: dict[int, int | str]) -> None:
         self._uav_pre_move_positions = {int(uav.id): uav.pos[:2].copy() for uav in self._uavs}
