@@ -101,14 +101,19 @@ def report_schema() -> dict[str, Any]:
         "plot_paths": [],
         "final_reward": None,
         "recent_reward": None,
+        "generated_DAG_count": None,
+        "completed_DAG_count": None,
         "completion_rate": None,
         "throughput": None,
         "average_DAG_flowtime": None,
         "energy_per_completed_DAG": None,
         "invalid_assignment_rate": None,
         "action_executed_rate": None,
+        "movement_action_distribution": {},
         "movement_hover_rate": None,
         "offloading_action_count": None,
+        "train_final_metrics_source": None,
+        "eval_final_metrics_source": None,
         "checkpoint_path": None,
         "pass_fail": {},
         "overall_pass": False,
@@ -280,8 +285,14 @@ def _merge_train_metrics(report: dict[str, Any], summary: dict[str, Any], rows: 
     recent = rows[-min(len(rows), 5) :] if rows else []
     rewards = [_number(row.get("reward")) for row in recent]
     latest_info = summary.get("latest_info", {}) if isinstance(summary, dict) else {}
+    report["train_final_metrics_source"] = {
+        "train_metrics_jsonl": "last row" if rows else None,
+        "run_summary": "latest_info" if latest_info else None,
+    }
     report["final_reward"] = _number(latest.get("reward", latest_info.get("step_reward")))
     report["recent_reward"] = float(np.mean(rewards)) if rewards else None
+    report["generated_DAG_count"] = _first_not_none(latest.get("generated_DAG_count"), latest_info.get("generated_dag_count"))
+    report["completed_DAG_count"] = _first_not_none(latest.get("completed_DAG_count"), latest_info.get("completed_dag_count"))
     report["completion_rate"] = _first_not_none(latest.get("DAG_completion_rate"), latest_info.get("dag_completion_rate"))
     report["throughput"] = _first_not_none(latest.get("DAG_throughput"), latest_info.get("dag_throughput"))
     report["average_DAG_flowtime"] = _first_not_none(latest.get("Average_DAG_flowtime"), latest_info.get("average_dag_flowtime"))
@@ -289,14 +300,19 @@ def _merge_train_metrics(report: dict[str, Any], summary: dict[str, Any], rows: 
     report["invalid_assignment_rate"] = _first_not_none(latest.get("invalid_assignment_rate"), latest_info.get("invalid_assignment_rate"))
     report["action_executed_rate"] = _first_not_none(latest.get("action_executed_rate"), latest_info.get("action_executed_rate"))
     movement = latest.get("movement_action_distribution") or latest_info.get("movement_action_distribution") or {}
+    report["movement_action_distribution"] = movement if isinstance(movement, dict) else {}
     report["movement_hover_rate"] = movement.get("hover") if isinstance(movement, dict) else None
     report["offloading_action_count"] = _first_not_none(latest.get("offloading_action_count"), latest_info.get("offloading_action_count"))
     report["nan_or_inf_detected"] = _has_nan_inf(rows)
+    _apply_zero_completed_metric_policy(report)
 
 
 def _merge_eval_metrics(report: dict[str, Any], eval_summary: dict[str, Any]) -> None:
     report["eval_run_dir"] = eval_summary.get("run_dir")
+    report["eval_final_metrics_source"] = {"eval_summary": "summary" if eval_summary else None}
     for output_key, eval_key in [
+        ("generated_DAG_count", "generated_DAG_count"),
+        ("completed_DAG_count", "completed_DAG_count"),
         ("completion_rate", "DAG_completion_rate"),
         ("throughput", "DAG_throughput"),
         ("average_DAG_flowtime", "Average_DAG_flowtime"),
@@ -309,7 +325,16 @@ def _merge_eval_metrics(report: dict[str, Any], eval_summary: dict[str, Any]) ->
             report[output_key] = eval_summary.get(eval_key)
     movement = eval_summary.get("movement_action_distribution") or {}
     if isinstance(movement, dict) and movement.get("hover") is not None:
+        report["movement_action_distribution"] = movement
         report["movement_hover_rate"] = movement.get("hover")
+    _apply_zero_completed_metric_policy(report)
+
+
+def _apply_zero_completed_metric_policy(report: dict[str, Any]) -> None:
+    completed = _optional_float(report.get("completed_DAG_count"))
+    if completed is not None and completed <= 0.0:
+        report["average_DAG_flowtime"] = None
+        report["energy_per_completed_DAG"] = None
 
 
 def _has_nan_inf(rows: list[dict[str, Any]]) -> bool:
@@ -382,6 +407,16 @@ def _number(value: Any) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if np.isfinite(number) else None
 
 
 def _jsonable(value: Any) -> Any:

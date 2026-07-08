@@ -213,8 +213,10 @@ class CleanPPOUpdater:
         value_losses: list[Any] = []
 
         for slot_idx, record in enumerate(records):
-            task_features = torch.as_tensor(record.graph_snapshot.task_features, dtype=torch.float32, device=self.device)
-            incidence = torch.as_tensor(record.graph_snapshot.incidence_matrix, dtype=torch.float32, device=self.device)
+            task_features_np = np.asarray(record.graph_snapshot.task_features, dtype=np.float32).copy()
+            incidence_np = np.asarray(record.graph_snapshot.incidence_matrix, dtype=np.float32).copy()
+            task_features = torch.as_tensor(task_features_np, dtype=torch.float32, device=self.device)
+            incidence = torch.as_tensor(incidence_np, dtype=torch.float32, device=self.device)
             task_embeddings = self.modules.hgnn(task_features, incidence)
             critic_input = _critic_input_tensor(task_embeddings, record.critic_non_graph_input)
             value = self.modules.critic(critic_input).reshape(-1)[0]

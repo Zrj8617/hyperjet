@@ -60,19 +60,65 @@ def main() -> None:
         "plot_paths",
         "final_reward",
         "recent_reward",
+        "generated_DAG_count",
+        "completed_DAG_count",
         "completion_rate",
         "throughput",
         "average_DAG_flowtime",
         "energy_per_completed_DAG",
         "invalid_assignment_rate",
         "action_executed_rate",
+        "movement_action_distribution",
         "movement_hover_rate",
         "offloading_action_count",
+        "train_final_metrics_source",
+        "eval_final_metrics_source",
         "checkpoint_path",
         "pass_fail",
         "overall_pass",
     ]:
         _assert(key in schema, f"sanity report schema missing {key}.")
+
+    zero_train_report = run_clean_sanity.report_schema()
+    run_clean_sanity._merge_train_metrics(
+        zero_train_report,
+        {"latest_info": {"generated_dag_count": 5, "completed_dag_count": 0}},
+        [
+            {
+                "reward": -1.0,
+                "generated_DAG_count": 5,
+                "completed_DAG_count": 0,
+                "DAG_completion_rate": 0.0,
+                "DAG_throughput": 0.0,
+                "Average_DAG_flowtime": 123.0,
+                "Energy_per_completed_DAG": 1772.686,
+                "movement_action_distribution": {"hover": 0.0, "+x": 1.0},
+            }
+        ],
+    )
+    _assert(zero_train_report["generated_DAG_count"] == 5, "generated DAG count should be preserved.")
+    _assert(zero_train_report["completed_DAG_count"] == 0, "completed DAG count should be preserved.")
+    _assert(zero_train_report["average_DAG_flowtime"] is None, "zero completed DAGs should have no flowtime.")
+    _assert(zero_train_report["energy_per_completed_DAG"] is None, "zero completed DAGs should have no energy per completed DAG.")
+    _assert(zero_train_report["movement_action_distribution"].get("+x") == 1.0, "movement distribution should be reported.")
+    _assert(zero_train_report["train_final_metrics_source"]["train_metrics_jsonl"] == "last row", "train metrics source should be reported.")
+
+    zero_eval_report = run_clean_sanity.report_schema()
+    run_clean_sanity._merge_eval_metrics(
+        zero_eval_report,
+        {
+            "generated_DAG_count": 3,
+            "completed_DAG_count": 0,
+            "DAG_completion_rate": 0.0,
+            "DAG_throughput": 0.0,
+            "Average_DAG_flowtime": 99.0,
+            "Energy_per_completed_DAG": 88.0,
+            "movement_action_distribution": {"hover": 0.25, "+y": 0.75},
+        },
+    )
+    _assert(zero_eval_report["average_DAG_flowtime"] is None, "zero completed eval DAGs should have no flowtime.")
+    _assert(zero_eval_report["energy_per_completed_DAG"] is None, "zero completed eval DAGs should have no energy.")
+    _assert(zero_eval_report["eval_final_metrics_source"]["eval_summary"] == "summary", "eval metrics source should be reported.")
 
     source = (ROOT / "scripts" / "run_clean_sanity.py").read_text(encoding="utf-8")
     for forbidden in ["train_clean_assignment_" + "mappo", "clean_" + "mappo", "clean_assignment_" + "policy"]:
