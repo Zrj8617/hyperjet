@@ -71,6 +71,22 @@ def main() -> None:
         "movement_action_distribution",
         "movement_hover_rate",
         "offloading_action_count",
+        "final_active_DAG_count",
+        "final_active_task_count",
+        "task_lifecycle_counts",
+        "service_phase_counts",
+        "ready_task_count_mean",
+        "ready_task_count_max",
+        "skipped_ready_due_to_no_legal_candidate_count",
+        "assignment_buffer_entry_count",
+        "successfully_committed_assignment_count",
+        "reward_completed_task_count",
+        "completed_non_sink_task_count",
+        "returning_sink_task_count",
+        "completed_sink_task_count",
+        "unfinished_DAG_progress_samples",
+        "executor_queue_summary",
+        "drain_end_reason",
         "train_final_metrics_source",
         "eval_final_metrics_source",
         "checkpoint_path",
@@ -114,11 +130,30 @@ def main() -> None:
             "Average_DAG_flowtime": 99.0,
             "Energy_per_completed_DAG": 88.0,
             "movement_action_distribution": {"hover": 0.25, "+y": 0.75},
+            "final_active_DAG_count": 3,
+            "final_active_task_count": 12,
+            "task_lifecycle_counts": {"READY_UNSCHEDULED": 4, "IN_SERVICE": 3, "RETURNING": 1, "COMPLETED": 4},
+            "service_phase_counts": {"QUEUED": 1, "COMPUTING": 2},
+            "ready_task_count_mean": 2.5,
+            "ready_task_count_max": 5,
+            "skipped_ready_due_to_no_legal_candidate_count": 7,
+            "assignment_buffer_entry_count": 9,
+            "successfully_committed_assignment_count": 8,
+            "reward_completed_task_count": 4,
+            "completed_non_sink_task_count": 4,
+            "returning_sink_task_count": 1,
+            "completed_sink_task_count": 0,
+            "unfinished_DAG_progress_samples": [{"dag_id": "dag_1", "total_tasks": 4}],
+            "executor_queue_summary": {"mean_queue_length": 1.0, "max_queue_length": 3},
+            "drain_end_reason": "max_drain_steps_reached",
         },
     )
     _assert(zero_eval_report["average_DAG_flowtime"] is None, "zero completed eval DAGs should have no flowtime.")
     _assert(zero_eval_report["energy_per_completed_DAG"] is None, "zero completed eval DAGs should have no energy.")
     _assert(zero_eval_report["eval_final_metrics_source"]["eval_summary"] == "summary", "eval metrics source should be reported.")
+    _assert(zero_eval_report["final_active_DAG_count"] == 3, "sanity report should carry final active DAG count.")
+    _assert(zero_eval_report["task_lifecycle_counts"]["READY_UNSCHEDULED"] == 4, "sanity report should carry lifecycle counts.")
+    _assert(zero_eval_report["drain_end_reason"] == "max_drain_steps_reached", "sanity report should carry drain end reason.")
 
     source = (ROOT / "scripts" / "run_clean_sanity.py").read_text(encoding="utf-8")
     for forbidden in ["train_clean_assignment_" + "mappo", "clean_" + "mappo", "clean_assignment_" + "policy"]:

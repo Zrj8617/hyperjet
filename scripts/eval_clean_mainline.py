@@ -155,6 +155,10 @@ def _run_eval_episode(
     movement_action_counts = {str(action): 0 for action in config.CLEAN_MOVEMENT_ACTIONS}
     offloading_action_count = 0
     last_info: dict[str, Any] = {}
+    ready_task_counts: list[int] = []
+    skipped_ready_no_candidate_total = 0
+    assignment_buffer_entry_total = 0
+    committed_assignment_total = 0
 
     for _ in range(max(int(arrival_steps), 0)):
         done, info, movement_counts, off_count = _eval_one_slot(
@@ -168,6 +172,10 @@ def _run_eval_episode(
         offloading_action_count += off_count
         _merge_counts(movement_action_counts, movement_counts)
         last_info = info
+        ready_task_counts.append(int(info.get("frozen_ready_task_count", 0)))
+        skipped_ready_no_candidate_total += int(info.get("offloading_skipped_no_candidate", 0))
+        assignment_buffer_entry_total += int(info.get("assignment_buffer_entry_count", 0))
+        committed_assignment_total += int(info.get("newly_assigned_tasks", 0))
         if done:
             break
 
@@ -183,6 +191,10 @@ def _run_eval_episode(
         offloading_action_count += off_count
         _merge_counts(movement_action_counts, movement_counts)
         last_info = info
+        ready_task_counts.append(int(info.get("frozen_ready_task_count", 0)))
+        skipped_ready_no_candidate_total += int(info.get("offloading_skipped_no_candidate", 0))
+        assignment_buffer_entry_total += int(info.get("assignment_buffer_entry_count", 0))
+        committed_assignment_total += int(info.get("newly_assigned_tasks", 0))
         if done:
             break
 
@@ -193,17 +205,29 @@ def _run_eval_episode(
     generated = float(info_metrics.get("generated_dag_count", 0.0))
     assignment_entries = float(env.metrics.metrics.action_count)
     movement_distribution = _normalized_distribution(movement_action_counts)
+    diagnostics = _evaluation_diagnostics(
+        env=env,
+        last_info=last_info,
+        ready_task_counts=ready_task_counts,
+        skipped_ready_no_candidate_total=skipped_ready_no_candidate_total,
+        assignment_buffer_entry_total=assignment_buffer_entry_total,
+        committed_assignment_total=committed_assignment_total,
+        drain_slots=drain_slots,
+        max_drain_steps=max_drain_steps,
+    )
+    average_flowtime = None if completed <= 0.0 else float(info_metrics.get("average_dag_flowtime", 0.0))
+    energy_per_completed = None if completed <= 0.0 else float(info_metrics.get("energy_per_completed_dag", 0.0))
     return {
         "episode": int(episode),
         "generated_DAG_count": generated,
         "completed_DAG_count": completed,
         "DAG_completion_rate": float(completed / max(generated, 1.0)),
-        "Average_DAG_flowtime": float(info_metrics.get("average_dag_flowtime", 0.0)),
+        "Average_DAG_flowtime": average_flowtime,
         "DAG_throughput": float(completed / max(total_time, float(config.TIME_SLOT_DURATION))),
         "Average_critical_path_task_completion_delay": float(
             info_metrics.get("average_critical_path_task_completion_delay", 0.0)
         ),
-        "Energy_per_completed_DAG": float(info_metrics.get("energy_per_completed_dag", 0.0)),
+        "Energy_per_completed_DAG": energy_per_completed,
         "total_executed_slots": total_slots,
         "arrival_slots_executed": int(arrival_slots),
         "drain_slots_executed": int(drain_slots),
@@ -214,6 +238,7 @@ def _run_eval_episode(
         "offloading_action_count": int(offloading_action_count),
         "total_evaluation_time": total_time,
         "active_dag_count_after_eval": int(_active_dag_count(env)),
+        **diagnostics,
         "last_info": _jsonable(last_info),
     }
 
@@ -378,6 +403,119 @@ def _active_dag_count(env: Env) -> int:
     return sum(1 for job in env.task_manager.jobs.values() if not job.completed)
 
 
+def _evaluation_diagnostics(
+    *,
+    env: Env,
+    last_info: dict[str, Any],
+    ready_task_counts: list[int],
+    skipped_ready_no_candidate_total: int,
+    assignment_buffer_entry_total: int,
+    committed_assignment_total: int,
+    drain_slots: int,
+    max_drain_steps: int,
+) -> dict[str, Any]:
+    task_manager = env.task_manager
+    tasks = list(task_manager.tasks.values())
+    jobs = list(task_manager.jobs.values())
+    lifecycle_states = [
+        "WAITING_DEPENDENCY",
+        "READY_UNSCHEDULED",
+        "IN_SERVICE",
+        "RETURNING",
+        "COMPLETED",
+    ]
+    service_phases = ["UPLOADING_OR_TRANSFERRING", "QUEUED", "COMPUTING"]
+    lifecycle_counts = {state: 0 for state in lifecycle_states}
+    service_phase_counts = {phase: 0 for phase in service_phases}
+    for task in tasks:
+        state = str(getattr(task, "state", ""))
+        if state in lifecycle_counts:
+            lifecycle_counts[state] += 1
+        phase = getattr(task, "service_phase", None)
+        if phase in service_phase_counts:
+            service_phase_counts[phase] += 1
+
+    ready_count = int(lifecycle_counts["READY_UNSCHEDULED"])
+    queue_lengths = [
+        len(env.executor.uav_queues.get(int(getattr(uav, "id")), []))
+        for uav in env.uavs
+    ]
+    queued_workloads: list[float] = []
+    for queue in env.executor.uav_queues.values():
+        workload = 0.0
+        for task_id in queue:
+            task = task_manager.get_task(task_id)
+            if task is not None:
+                workload += float(getattr(task, "num_operation", 0.0))
+        queued_workloads.append(workload)
+    active_jobs = [job for job in jobs if not job.completed]
+    sink_task_ids = {task_id for job in jobs for task_id in job.sink_task_ids}
+    reward_completed_task_count = sum(1 for task in tasks if bool(getattr(task, "reward_settled", False)))
+    completed_non_sink_task_count = sum(
+        1
+        for task in tasks
+        if task.task_id not in sink_task_ids and getattr(task, "state", None) == "COMPLETED"
+    )
+    returning_sink_task_count = sum(
+        1
+        for task in tasks
+        if task.task_id in sink_task_ids and getattr(task, "state", None) == "RETURNING"
+    )
+    completed_sink_task_count = sum(
+        1
+        for task in tasks
+        if task.task_id in sink_task_ids and getattr(task, "state", None) == "COMPLETED"
+    )
+    progress_samples = []
+    for job in active_jobs[:5]:
+        job_tasks = task_manager.get_job_tasks(job.dag_id)
+        job_sink_ids = set(job.sink_task_ids)
+        progress_samples.append(
+            {
+                "dag_id": str(job.dag_id),
+                "total_tasks": int(len(job_tasks)),
+                "completed_tasks": int(sum(1 for task in job_tasks if getattr(task, "state", None) == "COMPLETED")),
+                "sink_count": int(len(job_sink_ids)),
+                "completed_sink_count": int(
+                    sum(1 for task in job_tasks if task.task_id in job_sink_ids and getattr(task, "state", None) == "COMPLETED")
+                ),
+                "returning_sink_count": int(
+                    sum(1 for task in job_tasks if task.task_id in job_sink_ids and getattr(task, "state", None) == "RETURNING")
+                ),
+            }
+        )
+    max_available = max((float(value) for value in env.executor.uav_available_time.values()), default=0.0)
+    return {
+        "final_active_DAG_count": int(len(active_jobs)),
+        "final_active_task_count": int(len([task for task in tasks if getattr(task, "state", None) != "COMPLETED"])),
+        "task_lifecycle_counts": lifecycle_counts,
+        "service_phase_counts": service_phase_counts,
+        "ready_task_count_mean": float(np.mean(ready_task_counts)) if ready_task_counts else float(ready_count),
+        "ready_task_count_max": int(max(ready_task_counts)) if ready_task_counts else int(ready_count),
+        "skipped_ready_due_to_no_legal_candidate_count": int(skipped_ready_no_candidate_total),
+        "assignment_buffer_entry_count": int(assignment_buffer_entry_total),
+        "successfully_committed_assignment_count": int(committed_assignment_total),
+        "reward_completed_task_count": int(reward_completed_task_count),
+        "completed_non_sink_task_count": int(completed_non_sink_task_count),
+        "returning_sink_task_count": int(returning_sink_task_count),
+        "completed_sink_task_count": int(completed_sink_task_count),
+        "unfinished_DAG_progress_samples": progress_samples,
+        "executor_queue_summary": {
+            "mean_queue_length": float(np.mean(queue_lengths)) if queue_lengths else 0.0,
+            "max_queue_length": int(max(queue_lengths)) if queue_lengths else 0,
+            "total_queued_workload": float(sum(queued_workloads)),
+            "max_available_time": float(max_available),
+        },
+        "drain_end_reason": (
+            "all_completed"
+            if len(active_jobs) == 0
+            else "max_drain_steps_reached"
+            if int(drain_slots) >= max(int(max_drain_steps), 0)
+            else "episode_terminated"
+        ),
+    }
+
+
 def _empty_aggregate() -> dict[str, Any]:
     return {
         "episodes": [],
@@ -393,14 +531,16 @@ def _update_aggregate(aggregate: dict[str, Any], row: dict[str, Any]) -> None:
 
 def _aggregate_summary(aggregate: dict[str, Any], *, episode_count: int) -> dict[str, Any]:
     rows = aggregate["episodes"]
+    generated_total = float(sum(row["generated_DAG_count"] for row in rows))
+    completed_total = float(sum(row["completed_DAG_count"] for row in rows))
     return {
-        "generated_DAG_count": float(sum(row["generated_DAG_count"] for row in rows)),
-        "completed_DAG_count": float(sum(row["completed_DAG_count"] for row in rows)),
+        "generated_DAG_count": generated_total,
+        "completed_DAG_count": completed_total,
         "DAG_completion_rate": _mean(row["DAG_completion_rate"] for row in rows),
-        "Average_DAG_flowtime": _mean(row["Average_DAG_flowtime"] for row in rows),
+        "Average_DAG_flowtime": None if completed_total <= 0.0 else _mean(row["Average_DAG_flowtime"] for row in rows),
         "DAG_throughput": _mean(row["DAG_throughput"] for row in rows),
         "Average_critical_path_task_completion_delay": _mean(row["Average_critical_path_task_completion_delay"] for row in rows),
-        "Energy_per_completed_DAG": _mean(row["Energy_per_completed_DAG"] for row in rows),
+        "Energy_per_completed_DAG": None if completed_total <= 0.0 else _mean(row["Energy_per_completed_DAG"] for row in rows),
         "total_executed_slots": int(sum(row["total_executed_slots"] for row in rows)),
         "arrival_slots_executed": int(sum(row["arrival_slots_executed"] for row in rows)),
         "drain_slots_executed": int(sum(row["drain_slots_executed"] for row in rows)),
@@ -412,12 +552,67 @@ def _aggregate_summary(aggregate: dict[str, Any], *, episode_count: int) -> dict
             for action, total in aggregate["movement_counts"].items()
         },
         "offloading_action_count": int(sum(row["offloading_action_count"] for row in rows)),
+        "final_active_DAG_count": int(sum(row.get("final_active_DAG_count", 0) for row in rows)),
+        "final_active_task_count": int(sum(row.get("final_active_task_count", 0) for row in rows)),
+        "task_lifecycle_counts": _sum_count_dicts(row.get("task_lifecycle_counts", {}) for row in rows),
+        "service_phase_counts": _sum_count_dicts(row.get("service_phase_counts", {}) for row in rows),
+        "ready_task_count_mean": _mean(row.get("ready_task_count_mean") for row in rows),
+        "ready_task_count_max": int(max((row.get("ready_task_count_max", 0) for row in rows), default=0)),
+        "skipped_ready_due_to_no_legal_candidate_count": int(
+            sum(row.get("skipped_ready_due_to_no_legal_candidate_count", 0) for row in rows)
+        ),
+        "assignment_buffer_entry_count": int(sum(row.get("assignment_buffer_entry_count", 0) for row in rows)),
+        "successfully_committed_assignment_count": int(
+            sum(row.get("successfully_committed_assignment_count", 0) for row in rows)
+        ),
+        "reward_completed_task_count": int(sum(row.get("reward_completed_task_count", 0) for row in rows)),
+        "completed_non_sink_task_count": int(sum(row.get("completed_non_sink_task_count", 0) for row in rows)),
+        "returning_sink_task_count": int(sum(row.get("returning_sink_task_count", 0) for row in rows)),
+        "completed_sink_task_count": int(sum(row.get("completed_sink_task_count", 0) for row in rows)),
+        "unfinished_DAG_progress_samples": [
+            sample
+            for row in rows
+            for sample in row.get("unfinished_DAG_progress_samples", [])
+        ][:10],
+        "executor_queue_summary": _aggregate_queue_summaries(row.get("executor_queue_summary", {}) for row in rows),
+        "drain_end_reason": _aggregate_drain_end_reason(row.get("drain_end_reason") for row in rows),
     }
 
 
-def _mean(values: Any) -> float:
-    values_list = [float(value) for value in values]
-    return float(np.mean(values_list)) if values_list else 0.0
+def _mean(values: Any) -> float | None:
+    values_list = [float(value) for value in values if value is not None]
+    return float(np.mean(values_list)) if values_list else None
+
+
+def _sum_count_dicts(dicts: Any) -> dict[str, int]:
+    result: dict[str, int] = {}
+    for item in dicts:
+        if not isinstance(item, dict):
+            continue
+        for key, value in item.items():
+            result[str(key)] = int(result.get(str(key), 0)) + int(value)
+    return result
+
+
+def _aggregate_queue_summaries(summaries: Any) -> dict[str, float]:
+    items = [summary for summary in summaries if isinstance(summary, dict)]
+    return {
+        "mean_queue_length": _mean(item.get("mean_queue_length") for item in items),
+        "max_queue_length": float(max((item.get("max_queue_length", 0.0) for item in items), default=0.0)),
+        "total_queued_workload": float(sum(float(item.get("total_queued_workload", 0.0)) for item in items)),
+        "max_available_time": float(max((item.get("max_available_time", 0.0) for item in items), default=0.0)),
+    }
+
+
+def _aggregate_drain_end_reason(reasons: Any) -> str | None:
+    reason_list = [str(reason) for reason in reasons if reason is not None]
+    if not reason_list:
+        return None
+    if all(reason == "all_completed" for reason in reason_list):
+        return "all_completed"
+    if any(reason == "max_drain_steps_reached" for reason in reason_list):
+        return "max_drain_steps_reached"
+    return "mixed"
 
 
 def _merge_counts(target: dict[str, int], source: dict[str, int]) -> None:

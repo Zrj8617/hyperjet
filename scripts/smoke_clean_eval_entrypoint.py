@@ -31,6 +31,22 @@ REQUIRED_METRIC_FIELDS = [
     "action_executed_rate",
     "movement_action_distribution",
     "offloading_action_count",
+    "final_active_DAG_count",
+    "final_active_task_count",
+    "task_lifecycle_counts",
+    "service_phase_counts",
+    "ready_task_count_mean",
+    "ready_task_count_max",
+    "skipped_ready_due_to_no_legal_candidate_count",
+    "assignment_buffer_entry_count",
+    "successfully_committed_assignment_count",
+    "reward_completed_task_count",
+    "completed_non_sink_task_count",
+    "returning_sink_task_count",
+    "completed_sink_task_count",
+    "unfinished_DAG_progress_samples",
+    "executor_queue_summary",
+    "drain_end_reason",
 ]
 
 
@@ -90,6 +106,27 @@ def main() -> None:
                     "action_executed_rate": 1.0,
                     "movement_action_distribution": {"hover": 1.0},
                     "offloading_action_count": 1,
+                    "final_active_DAG_count": 0,
+                    "final_active_task_count": 0,
+                    "task_lifecycle_counts": {"COMPLETED": 1},
+                    "service_phase_counts": {"QUEUED": 0},
+                    "ready_task_count_mean": 1.0,
+                    "ready_task_count_max": 2,
+                    "skipped_ready_due_to_no_legal_candidate_count": 0,
+                    "assignment_buffer_entry_count": 1,
+                    "successfully_committed_assignment_count": 1,
+                    "reward_completed_task_count": 1,
+                    "completed_non_sink_task_count": 0,
+                    "returning_sink_task_count": 0,
+                    "completed_sink_task_count": 1,
+                    "unfinished_DAG_progress_samples": [],
+                    "executor_queue_summary": {
+                        "mean_queue_length": 0.0,
+                        "max_queue_length": 0,
+                        "total_queued_workload": 0.0,
+                        "max_available_time": 1.0,
+                    },
+                    "drain_end_reason": "all_completed",
                 }
             ],
             "movement_counts": {"hover": 1.0},
@@ -100,6 +137,58 @@ def main() -> None:
         _assert(field in sample_summary, f"eval summary schema should include {field}.")
     _assert(sample_summary["total_executed_slots"] == 5, "summary should preserve total executed slots.")
     _assert(np.isclose(sample_summary["DAG_throughput"], 1.0 / 25.0), "throughput should reflect total executed time.")
+    _assert(sample_summary["drain_end_reason"] == "all_completed", "summary should include drain end reason.")
+
+    zero_completed_summary = eval_clean_mainline._aggregate_summary(
+        {
+            "episodes": [
+                {
+                    "generated_DAG_count": 180.0,
+                    "completed_DAG_count": 0.0,
+                    "DAG_completion_rate": 0.0,
+                    "Average_DAG_flowtime": None,
+                    "DAG_throughput": 0.0,
+                    "Average_critical_path_task_completion_delay": 235.21,
+                    "Energy_per_completed_DAG": None,
+                    "total_executed_slots": 1500,
+                    "arrival_slots_executed": 600,
+                    "drain_slots_executed": 900,
+                    "invalid_assignment_count": 0.0,
+                    "invalid_assignment_rate": 0.0,
+                    "action_executed_rate": 1.0,
+                    "movement_action_distribution": {"hover": 0.0, "+x": 1.0},
+                    "offloading_action_count": 465,
+                    "final_active_DAG_count": 180,
+                    "final_active_task_count": 500,
+                    "task_lifecycle_counts": {"READY_UNSCHEDULED": 100, "IN_SERVICE": 50, "COMPLETED": 350},
+                    "service_phase_counts": {"QUEUED": 10, "COMPUTING": 40},
+                    "ready_task_count_mean": 2.0,
+                    "ready_task_count_max": 8,
+                    "skipped_ready_due_to_no_legal_candidate_count": 3,
+                    "assignment_buffer_entry_count": 465,
+                    "successfully_committed_assignment_count": 465,
+                    "reward_completed_task_count": 350,
+                    "completed_non_sink_task_count": 330,
+                    "returning_sink_task_count": 20,
+                    "completed_sink_task_count": 0,
+                    "unfinished_DAG_progress_samples": [{"dag_id": "dag_1", "total_tasks": 5}],
+                    "executor_queue_summary": {
+                        "mean_queue_length": 1.0,
+                        "max_queue_length": 3,
+                        "total_queued_workload": 100.0,
+                        "max_available_time": 999.0,
+                    },
+                    "drain_end_reason": "max_drain_steps_reached",
+                }
+            ],
+            "movement_counts": {"hover": 0.0, "+x": 1.0},
+        },
+        episode_count=1,
+    )
+    _assert(zero_completed_summary["Average_DAG_flowtime"] is None, "zero completed DAGs should have no eval flowtime.")
+    _assert(zero_completed_summary["Energy_per_completed_DAG"] is None, "zero completed DAGs should have no eval energy.")
+    _assert(zero_completed_summary["drain_end_reason"] == "max_drain_steps_reached", "zero-completion diagnostics should keep drain reason.")
+    _assert(zero_completed_summary["final_active_DAG_count"] == 180, "zero-completion diagnostics should keep active DAG count.")
 
     source = (ROOT / "scripts" / "eval_clean_mainline.py").read_text(encoding="utf-8")
     for token in ["clean_" + "mappo", "clean_assignment_" + "policy", "train_clean_assignment_" + "mappo"]:
