@@ -24,6 +24,7 @@ class CleanPreparedSlotState:
 
     slot_index: int
     time_step: int
+    current_time_seconds: float
     previous_internal_state: str
     decision_state: str
     created_dags: int
@@ -152,11 +153,12 @@ def prepare_slot_state(
         uavs=env.uavs,
         executor=env.executor,
         pre_move_positions=context["uav_pre_move_positions"],
-        current_time_step=env.time_step,
+        current_time_seconds=env.current_time_seconds,
     )
     return CleanPreparedSlotState(
         slot_index=int(context["slot_index"]),
         time_step=int(context["time_step"]),
+        current_time_seconds=float(env.current_time_seconds),
         previous_internal_state=str(context["previous_internal_state"]),
         decision_state=str(context["decision_state"]),
         created_dags=int(context["created_dags"]),
@@ -190,7 +192,7 @@ def encode_prepared_slot(
         executor=env.executor,
         graph_snapshot=snapshot,
         pre_move_positions=prepared_state.uav_pre_move_positions,
-        current_time_step=prepared_state.time_step,
+        current_time_seconds=prepared_state.current_time_seconds,
     )
     movement_logits = None
     if movement_actor is not None:

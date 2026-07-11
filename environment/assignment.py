@@ -156,7 +156,7 @@ def build_offloading_candidate_batch(
     task_manager: DAGTaskManager,
     executor: Any,
     state_view: TemporaryReservationState,
-    current_time_step: float,
+    current_time_seconds: float,
     uav_service_positions: dict[int, Any] | None = None,
     ue_service_positions: dict[int, Any] | None = None,
     ues: list[Any] | None = None,
@@ -167,7 +167,7 @@ def build_offloading_candidate_batch(
         task_manager=task_manager,
         executor=executor,
         state_view=state_view,
-        current_time_step=current_time_step,
+        current_time_seconds=current_time_seconds,
         uav_service_positions=uav_service_positions,
         ue_service_positions=ue_service_positions,
         ues=ues,
@@ -192,7 +192,7 @@ def build_offloading_candidate_components(
     task_manager: DAGTaskManager,
     executor: Any,
     state_view: TemporaryReservationState,
-    current_time_step: float,
+    current_time_seconds: float,
     uav_service_positions: dict[int, Any] | None = None,
     ue_service_positions: dict[int, Any] | None = None,
     ues: list[Any] | None = None,
@@ -223,7 +223,7 @@ def build_offloading_candidate_components(
             task_manager=task_manager,
             executor=executor,
             state_view=state_view,
-            current_time_step=current_time_step,
+            current_time_seconds=current_time_seconds,
             uav_service_positions=uav_service_positions,
             ue_service_positions=ue_service_positions,
             ues=ues,
@@ -259,7 +259,7 @@ def estimate_offloading_candidate(
     task_manager: DAGTaskManager,
     executor: Any,
     state_view: TemporaryReservationState,
-    current_time_step: float,
+    current_time_seconds: float,
     uav_service_positions: dict[int, Any] | None = None,
     ue_service_positions: dict[int, Any] | None = None,
     ues: list[Any] | None = None,
@@ -270,7 +270,7 @@ def estimate_offloading_candidate(
         uav=uav,
         uav_id=int(uav_id),
         state_view=state_view,
-        current_time_step=current_time_step,
+        current_time_seconds=current_time_seconds,
         uav_service_positions=uav_service_positions,
     )
     zero_pair = np.zeros((CLEAN_OFFLOADING_PAIR_FEATURE_DIM,), dtype=np.float32)
@@ -283,7 +283,7 @@ def estimate_offloading_candidate(
 
     transfer_time = 0.0
     communication_energy = 0.0
-    predecessor_ready_time = float(current_time_step)
+    predecessor_ready_time = float(current_time_seconds)
     target_pos = _service_position(uav_service_positions, int(uav_id), getattr(uav, "pos"))
 
     if not task.predecessors:
@@ -316,11 +316,11 @@ def estimate_offloading_candidate(
             )
             transfer_time += parent_transfer_time
             communication_energy += parent_transfer_time * float(config.P_UAV_TX)
-        predecessor_ready_time = max(parent_finish_times) if parent_finish_times else float(current_time_step)
+        predecessor_ready_time = max(parent_finish_times) if parent_finish_times else float(current_time_seconds)
 
     available_time = float(state_view.available_times.get(int(uav_id), getattr(executor, "uav_available_time", {}).get(int(uav_id), 0.0)))
-    queue_waiting_time = max(available_time, predecessor_ready_time, float(current_time_step)) - float(current_time_step)
-    transfer_ready_time = max(float(current_time_step), available_time, predecessor_ready_time) + transfer_time
+    queue_waiting_time = max(available_time, predecessor_ready_time, float(current_time_seconds)) - float(current_time_seconds)
+    transfer_ready_time = max(float(current_time_seconds), available_time, predecessor_ready_time) + transfer_time
     compute_time = float(task.num_operation) / float(config.UAV_COMPUTE_RATE_OPS_PER_SEC)
     compute_energy = compute_time * float(config.P_UAV_COMPUTE)
     compute_finish_time = transfer_ready_time + compute_time
@@ -334,7 +334,7 @@ def estimate_offloading_candidate(
         return_energy = return_time * float(config.P_UAV_TX)
 
     estimated_finish_time = compute_finish_time + return_time
-    incremental_delay = max(estimated_finish_time - float(current_time_step), 0.0)
+    incremental_delay = max(estimated_finish_time - float(current_time_seconds), 0.0)
     pair_features = _normalize_pair_features(
         [
             transfer_time,
@@ -379,7 +379,7 @@ def _dynamic_uav_features(
     uav: Any | None,
     uav_id: int,
     state_view: TemporaryReservationState,
-    current_time_step: float,
+    current_time_seconds: float,
     uav_service_positions: dict[int, Any] | None,
 ) -> np.ndarray:
     if uav is None:
@@ -394,7 +394,7 @@ def _dynamic_uav_features(
     )
     queue_length = float(state_view.queue_lengths.get(uav_id, 0))
     remaining_slots = float(state_view.remaining_slots(uav_id))
-    available_delta = max(float(state_view.available_times.get(uav_id, current_time_step)) - float(current_time_step), 0.0)
+    available_delta = max(float(state_view.available_times.get(uav_id, current_time_seconds)) - float(current_time_seconds), 0.0)
     queued_workload = float(state_view.queued_workloads.get(uav_id, 0.0))
     slot_assigned = float(state_view.slot_assigned_counts.get(uav_id, 0))
     return np.asarray(

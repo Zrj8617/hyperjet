@@ -87,6 +87,18 @@ class Env:
         return self._time_step
 
     @property
+    def current_time_seconds(self) -> float:
+        """Physical simulation time in seconds for the current slot.
+
+        Canonical clean time semantics: one slot advances physical time by
+        TIME_SLOT_DURATION seconds. The slot-index -> seconds conversion happens
+        ONLY here; executor, assignment estimator, DAG timestamps, and metrics
+        all consume seconds. slot_index (`time_step`) remains for the episode
+        loop, graph update intervals, and log labels.
+        """
+        return float(self._time_step) * float(config.TIME_SLOT_DURATION)
+
+    @property
     def latest_info(self) -> dict[str, Any]:
         """返回最近一个时间步的信息副本。"""
         return dict(self._latest_info)
@@ -268,7 +280,7 @@ class Env:
             task_manager=self._task_manager,
             uavs=self._uavs,
             ues=self._ues,
-            current_time_step=self._time_step,
+            current_time_seconds=self.current_time_seconds,
             uav_service_positions=self._uav_service_positions,
             ue_service_positions=self._ue_service_positions,
         )
@@ -276,7 +288,7 @@ class Env:
             task_manager=self._task_manager,
             uavs=self._uavs,
             ues=self._ues,
-            current_time_step=self._time_step,
+            current_time_seconds=self.current_time_seconds,
             uav_service_positions=self._uav_service_positions,
             ue_service_positions=self._ue_service_positions,
         )
@@ -312,7 +324,7 @@ class Env:
             movement_action_count=self._last_movement_action_count,
             movement_displacement_total=self._last_movement_distance_total,
         )
-        metric_info = self._metrics.to_info(self._time_step)
+        metric_info = self._metrics.to_info(self._time_step, total_time_seconds=self.current_time_seconds)
         metric_info["generated_dag_count"] = float(len(self._task_manager.jobs))
         info = {
             "time_step": self._time_step,
@@ -400,7 +412,7 @@ class Env:
             job = self._task_manager.create_dag_for_ue(
                 ue_id=ue.id,
                 source_pos=self._ue_service_positions.get(int(ue.id), ue.pos[:2]).copy(),
-                current_time_step=self._time_step,
+                current_time_step=self.current_time_seconds,  # DAG timestamps are seconds
             )
             ue.enter_service_waiting(job.dag_id)
             created_count += 1
@@ -558,4 +570,47 @@ class Env:
         """
         if not bool(getattr(config, "ENABLE_MOVEMENT_POSITION_SHAPING", False)):
             return 0.0
-        ready_t
+        ready_task_ids = self._frozen_ready_task_ids
+        if not ready_task_ids or not self._uav_service_positions:
+            return 0.0
+        coverage_radius = float(config.UAV_COVERAGE_RADIUS)
+        uav_positions = [
+            np.asarray(pos, dtype=np.float32).reshape(-1)[:2] for pos in self._uav_service_positions.values()
+        ]
+        covered = 0
+        counted = 0
+        for task_id in ready_task_ids:
+            task = self._task_manager.get_task(task_id)
+            if task is None:
+                continue
+            counted += 1
+            source_xy = np.asarray(task.source_pos, dtype=np.float32).reshape(-1)[:2]
+            nearest = min(float(np.linalg.norm(pos - source_xy)) for pos in uav_positions)
+            if nearest <= coverage_radius:
+                covered += 1
+        if counted == 0:
+            return 0.0
+        return float(covered) / float(counted)
+
+    def _movement_delta(self, action: int | str) -> np.ndarray:
+        step_distance = float(config.CLEAN_UAV_MOVEMENT_SPEED) * float(config.TIME_SLOT_DURATION)
+        if isinstance(action, str):
+            action_name = action
+        else:
+            action_names = tuple(getattr(config, "CLEAN_MOVEMENT_ACTIONS", ("hover", "+x", "-x", "+y", "-y")))
+            action_name = action_names[int(action)] if 0 <= int(action) < len(action_names) else "hover"
+        if action_name == "+x":
+            return np.array([step_distance, 0.0], dtype=np.float32)
+        if action_name == "-x":
+            return np.array([-step_distance, 0.0], dtype=np.float32)
+        if action_name == "+y":
+            return np.array([0.0, step_distance], dtype=np.float32)
+        if action_name == "-y":
+            return np.array([0.0, -step_distance], dtype=np.float32)
+        return np.zeros((2,), dtype=np.float32)
+
+    def _inside_map(self, position: np.ndarray) -> bool:
+        return (
+            0.0 <= float(position[0]) <= float(config.AREA_WIDTH)
+            and 0.0 <= float(position[1]) <= float(config.AREA_HEIGHT)
+        )

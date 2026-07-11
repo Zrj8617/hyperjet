@@ -62,7 +62,7 @@ def build_clean_critic_global_input(
     uavs: list[Any],
     executor: Any | None,
     pre_move_positions: dict[int, Any] | None = None,
-    current_time_step: float = 0.0,
+    current_time_seconds: float = 0.0,
 ) -> np.ndarray:
     task_embeddings = np.asarray(task_embeddings, dtype=np.float32)
     if task_embeddings.ndim != 2:
@@ -78,7 +78,7 @@ def build_clean_critic_global_input(
         uavs=uavs,
         executor=executor,
         pre_move_positions=pre_move_positions,
-        current_time_step=float(current_time_step),
+        current_time_seconds=float(current_time_seconds),
     )
     return np.concatenate([active_mean, non_graph]).astype(np.float32)
 
@@ -89,14 +89,14 @@ def build_clean_critic_non_graph_input(
     uavs: list[Any],
     executor: Any | None,
     pre_move_positions: dict[int, Any] | None = None,
-    current_time_step: float = 0.0,
+    current_time_seconds: float = 0.0,
 ) -> np.ndarray:
     """Build the critic input slice that does not depend on HGNN parameters."""
     u_global = _critic_uav_global(
         uavs=uavs,
         executor=executor,
         pre_move_positions=pre_move_positions,
-        current_time_step=float(current_time_step),
+        current_time_seconds=float(current_time_seconds),
     )
     active_count = len(getattr(graph_snapshot, "active_task_ids", getattr(graph_snapshot, "task_ids", [])))
     ready_count = len(getattr(graph_snapshot, "ready_task_ids", []))
@@ -113,7 +113,7 @@ def build_clean_critic_non_graph_input(
     q_summary = _critic_queue_summary(
         uavs=uavs,
         executor=executor,
-        current_time_step=float(current_time_step),
+        current_time_seconds=float(current_time_seconds),
     )
     return np.concatenate([u_global, counts, q_summary]).astype(np.float32)
 
@@ -314,7 +314,7 @@ def _critic_uav_global(
     uavs: list[Any],
     executor: Any | None,
     pre_move_positions: dict[int, Any] | None,
-    current_time_step: float,
+    current_time_seconds: float,
 ) -> np.ndarray:
     rows: list[np.ndarray] = []
     queues = getattr(executor, "uav_queues", {}) if executor is not None else {}
@@ -332,7 +332,7 @@ def _critic_uav_global(
         queue = list(queues.get(uav_id, []))
         queue_length = float(len(queue))
         remaining_capacity = max(float(config.CLEAN_MAX_QUEUE_PER_UAV) - queue_length, 0.0)
-        available_delta = max(float(available_times.get(uav_id, current_time_step)) - float(current_time_step), 0.0)
+        available_delta = max(float(available_times.get(uav_id, current_time_seconds)) - float(current_time_seconds), 0.0)
         workload = 0.0
         for task_id in queue:
             record = task_records.get(str(task_id))
@@ -360,7 +360,7 @@ def _critic_queue_summary(
     *,
     uavs: list[Any],
     executor: Any | None,
-    current_time_step: float,
+    current_time_seconds: float,
 ) -> np.ndarray:
     queues = getattr(executor, "uav_queues", {}) if executor is not None else {}
     available_times = getattr(executor, "uav_available_time", {}) if executor is not None else {}
@@ -372,7 +372,7 @@ def _critic_queue_summary(
         uav_id = int(uav.id)
         queue = list(queues.get(uav_id, []))
         queue_lengths.append(float(len(queue)))
-        available_deltas.append(max(float(available_times.get(uav_id, current_time_step)) - float(current_time_step), 0.0))
+        available_deltas.append(max(float(available_times.get(uav_id, current_time_seconds)) - float(current_time_seconds), 0.0))
         workload = 0.0
         for task_id in queue:
             record = task_records.get(str(task_id))

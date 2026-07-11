@@ -38,7 +38,7 @@ def main() -> None:
         job = env.task_manager.create_dag_for_ue(
             ue_id=ue.id,
             source_pos=ue.pos[:2].copy(),
-            current_time_step=env.time_step,
+            current_time_step=env.current_time_seconds,
         )
         ue.enter_service_waiting(job.dag_id)
         env.task_manager.refresh_ready_states()
@@ -52,7 +52,7 @@ def main() -> None:
             uavs=env.uavs,
             executor=env.executor,
             pre_move_positions={int(uav.id): uav.pos[:2].copy() for uav in env.uavs},
-            current_time_step=env.time_step,
+            current_time_seconds=env.current_time_seconds,
         )
         _assert(
             critic_input.shape == (clean_critic_input_dim(task_embedding_dim, config.NUM_UAVS),),
@@ -69,7 +69,7 @@ def main() -> None:
             graph_snapshot=empty_snapshot,
             uavs=empty_env.uavs,
             executor=empty_env.executor,
-            current_time_step=0,
+            current_time_seconds=0.0,
         )
         _assert(empty_critic_input[:task_embedding_dim].sum() == 0.0, "empty active task mean should be zero.")
 
@@ -139,7 +139,7 @@ def main() -> None:
             uavs=env.uavs,
             executor=env.executor,
             graph_snapshot=snapshot,
-            current_time_step=env.time_step,
+            current_time_seconds=env.current_time_seconds,
         )
         movement_records = [
             CleanMovementActionRecord(
@@ -161,7 +161,7 @@ def main() -> None:
             task_manager=env.task_manager,
             uavs=env.uavs,
             executor=env.executor,
-            current_time_step=env.time_step,
+            current_time_seconds=env.current_time_seconds,
             uav_service_positions={int(uav.id): uav.pos[:2].copy() for uav in env.uavs},
             ue_service_positions={int(ue.id): ue.pos[:2].copy() for ue in env.ues},
             ues=env.ues,

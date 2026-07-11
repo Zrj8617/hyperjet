@@ -202,8 +202,8 @@ def _run_eval_episode(
             break
 
     total_slots = int(arrival_slots + drain_slots)
-    info_metrics = env.metrics.to_info(total_slots)
     total_time = float(total_slots) * float(config.TIME_SLOT_DURATION)
+    info_metrics = env.metrics.to_info(total_slots, total_time_seconds=total_time)
     completed = float(info_metrics.get("completed_dag_count", 0.0))
     generated = float(info_metrics.get("generated_dag_count", 0.0))
     assignment_entries = float(env.metrics.metrics.action_count)
@@ -298,7 +298,7 @@ def _eval_one_slot(
         task_manager=env.task_manager,
         uavs=env.uavs,
         executor=env.executor,
-        current_time_step=env.time_step,
+        current_time_seconds=env.current_time_seconds,
         uav_service_positions=env.uav_service_positions,
         ue_service_positions=env.ue_service_positions,
         ues=env.ues,

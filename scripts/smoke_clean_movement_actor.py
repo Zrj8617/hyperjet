@@ -45,7 +45,7 @@ def main() -> None:
         job = env.task_manager.create_dag_for_ue(
             ue_id=ue.id,
             source_pos=ue.pos[:2].copy(),
-            current_time_step=env.time_step,
+            current_time_step=env.current_time_seconds,
         )
         ue.enter_service_waiting(job.dag_id)
         env.task_manager.refresh_ready_states()
@@ -56,7 +56,7 @@ def main() -> None:
             executor=env.executor,
             graph_snapshot=snapshot,
             pre_move_positions={int(uav.id): uav.pos[:2].copy() for uav in env.uavs},
-            current_time_step=env.time_step,
+            current_time_seconds=env.current_time_seconds,
         )
         _assert(
             observation.uav_features.shape == (config.NUM_UAVS, CLEAN_MOVEMENT_UAV_FEATURE_DIM),
@@ -97,7 +97,7 @@ def main() -> None:
             uavs=empty_env.uavs,
             executor=empty_env.executor,
             graph_snapshot=empty_snapshot,
-            current_time_step=0,
+            current_time_seconds=0.0,
         )
         empty_logits = actor(
             uav_features=torch.as_tensor(empty_observation.uav_features, dtype=torch.float32),

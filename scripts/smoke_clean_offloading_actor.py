@@ -40,7 +40,7 @@ def main() -> None:
         job = env.task_manager.create_dag_for_ue(
             ue_id=ue.id,
             source_pos=ue.pos[:2].copy(),
-            current_time_step=env.time_step,
+            current_time_step=env.current_time_seconds,
         )
         ue.enter_service_waiting(job.dag_id)
         env.task_manager.refresh_ready_states()
@@ -59,7 +59,7 @@ def main() -> None:
             task_manager=env.task_manager,
             executor=env.executor,
             state_view=reservation,
-            current_time_step=env.time_step,
+            current_time_seconds=env.current_time_seconds,
             uav_service_positions={int(uav.id): uav.pos[:2].copy() for uav in env.uavs},
             ue_service_positions={int(ue.id): ue.pos[:2].copy() for ue in env.ues},
             ues=env.ues,
@@ -89,7 +89,7 @@ def main() -> None:
             task_manager=env.task_manager,
             executor=env.executor,
             state_view=reservation,
-            current_time_step=env.time_step,
+            current_time_seconds=env.current_time_seconds,
             uav_service_positions={int(uav.id): uav.pos[:2].copy() for uav in env.uavs},
             ue_service_positions={int(ue.id): ue.pos[:2].copy() for ue in env.ues},
             ues=env.ues,
@@ -114,7 +114,7 @@ def main() -> None:
             task_manager=env.task_manager,
             uavs=env.uavs,
             executor=env.executor,
-            current_time_step=env.time_step,
+            current_time_seconds=env.current_time_seconds,
             uav_service_positions={int(uav.id): uav.pos[:2].copy() for uav in env.uavs},
             ue_service_positions={int(ue.id): ue.pos[:2].copy() for ue in env.ues},
             ues=env.ues,

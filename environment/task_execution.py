@@ -77,7 +77,7 @@ class CleanTaskExecutor:
         task_manager: DAGTaskManager,
         uavs: list[Any],
         ues: list[Any],
-        current_time_step: float,
+        current_time_seconds: float,
         uav_service_positions: dict[int, Any] | None = None,
         ue_service_positions: dict[int, Any] | None = None,
     ) -> CleanExecutionStepStats:
@@ -114,7 +114,7 @@ class CleanTaskExecutor:
                 uav=uav_map[uav_id],
                 uav_map=uav_map,
                 ues=ues,
-                assignment_time=float(current_time_step),
+                assignment_time=float(current_time_seconds),
                 uav_service_positions=uav_service_positions,
                 ue_service_positions=ue_service_positions,
             )
@@ -122,7 +122,7 @@ class CleanTaskExecutor:
                 self.latest_stats.invalid_assignments += 1
                 continue
 
-            task_manager.mark_task_queued(task.task_id, uav_id, current_time_step)
+            task_manager.mark_task_queued(task.task_id, uav_id, current_time_seconds)
             task_manager.mark_task_running(task.task_id, record.start_time)
             self.task_records[task.task_id] = record
             self.uav_queues[uav_id].append(task.task_id)
@@ -136,11 +136,11 @@ class CleanTaskExecutor:
         task_manager: DAGTaskManager,
         uavs: list[Any],
         ues: list[Any],
-        current_time_step: float,
+        current_time_seconds: float,
         uav_service_positions: dict[int, Any] | None = None,
         ue_service_positions: dict[int, Any] | None = None,
     ) -> CleanExecutionStepStats:
-        step_end = float(current_time_step) + float(config.TIME_SLOT_DURATION)
+        step_end = float(current_time_seconds) + float(config.TIME_SLOT_DURATION)
         uav_map = {int(uav.id): uav for uav in uavs}
 
         for record in list(self.task_records.values()):

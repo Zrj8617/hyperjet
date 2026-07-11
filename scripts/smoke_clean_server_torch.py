@@ -129,7 +129,7 @@ def _torch_validation(torch) -> None:
         job = env.task_manager.create_dag_for_ue(
             ue_id=ue.id,
             source_pos=ue.pos[:2].copy(),
-            current_time_step=env.time_step,
+            current_time_step=env.current_time_seconds,
         )
         ue.enter_service_waiting(job.dag_id)
         env.task_manager.refresh_ready_states()
@@ -205,7 +205,7 @@ def _torch_validation(torch) -> None:
             task_manager=env.task_manager,
             uavs=env.uavs,
             executor=env.executor,
-            current_time_step=env.time_step,
+            current_time_seconds=env.current_time_seconds,
             uav_service_positions=env.uav_service_positions,
             ue_service_positions=env.ue_service_positions,
             ues=env.ues,

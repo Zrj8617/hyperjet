@@ -151,14 +151,14 @@ def build_clean_movement_observation(
     executor: Any | None,
     graph_snapshot: Any,
     pre_move_positions: dict[int, Any] | None = None,
-    current_time_step: float = 0.0,
+    current_time_seconds: float = 0.0,
 ) -> CleanMovementObservation:
     uav_ids = [int(uav.id) for uav in uavs]
     uav_features = _build_uav_movement_features(
         uavs=uavs,
         executor=executor,
         pre_move_positions=pre_move_positions,
-        current_time_step=float(current_time_step),
+        current_time_seconds=float(current_time_seconds),
     )
     boundary_action_mask = build_boundary_action_mask(uavs=uavs, pre_move_positions=pre_move_positions)
     active_count = max(len(getattr(graph_snapshot, "active_task_ids", getattr(graph_snapshot, "task_ids", []))), 1)
@@ -202,7 +202,7 @@ def _build_uav_movement_features(
     uavs: list[Any],
     executor: Any | None,
     pre_move_positions: dict[int, Any] | None,
-    current_time_step: float,
+    current_time_seconds: float,
 ) -> np.ndarray:
     max_queue = max(float(config.CLEAN_MAX_QUEUE_PER_UAV), 1.0)
     max_available_time = max(float(config.EPISODE_LENGTH) * float(config.TIME_SLOT_DURATION), 1.0)
@@ -221,7 +221,7 @@ def _build_uav_movement_features(
         queue = list(queues.get(uav_id, []))
         queue_length = len(queue)
         remaining_slots = max(float(config.CLEAN_MAX_QUEUE_PER_UAV - queue_length), 0.0)
-        available_time = max(float(available_times.get(uav_id, current_time_step)) - current_time_step, 0.0)
+        available_time = max(float(available_times.get(uav_id, current_time_seconds)) - current_time_seconds, 0.0)
         queued_workload = 0.0
         for task_id in queue:
             record = task_records.get(str(task_id))

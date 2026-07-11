@@ -201,9 +201,11 @@ class CleanMetricsTracker:
         self.metrics.movement_action_total += int(movement_action_count)
         self.metrics.movement_displacement_total += float(movement_displacement_total)
 
-    def to_info(self, elapsed_steps: int) -> dict[str, float]:
+    def to_info(self, elapsed_steps: int, total_time_seconds: float) -> dict[str, float]:
         steps = max(int(elapsed_steps), 1)
-        total_evaluation_time = float(steps) * float(config.TIME_SLOT_DURATION)
+        # Phase 1: the slot->seconds conversion lives in the caller (env); metrics
+        # never multiplies slot counts by TIME_SLOT_DURATION itself.
+        total_evaluation_time = max(float(total_time_seconds), float(config.TIME_SLOT_DURATION))
         num_uavs = max(int(config.NUM_UAVS), 1)
         compute_total = sum(self.metrics.compute_time_by_uav.values())
         workload_values = np.asarray(list(self.metrics.completed_workload_by_uav.values()), dtype=np.float64)
@@ -215,7 +217,7 @@ class CleanMetricsTracker:
         completed = int(self.metrics.completed_dag_count)
         avg_flowtime = float(np.mean(self.metrics.dag_flowtimes)) if self.metrics.dag_flowtimes else 0.0
         completion_rate = float(completed / max(generated, 1))
-        throughput = float(completed / max(total_evaluation_time, float(config.TIME_SLOT_DURATION)))
+        throughput = float(completed / total_evaluation_time)
         # Spec: total_episode_energy = task energy actually consumed + movement energy
         # actually consumed. Energy per completed DAG divides that combined numerator.
         total_episode_energy = float(self.metrics.total_task_energy) + float(self.metrics.uav_movement_energy_total)
@@ -243,7 +245,7 @@ class CleanMetricsTracker:
             "total_communication_energy": float(self.metrics.total_communication_energy),
             "total_return_energy": float(self.metrics.total_return_energy),
             "uav_computation_utilization": float(
-                compute_total / (num_uavs * steps * float(config.TIME_SLOT_DURATION))
+                compute_total / (num_uavs * total_evaluation_time)
             ),
             "avg_uav_queue_length": float(
                 self.metrics.queue_length_total / max(self.metrics.queue_length_samples, 1)

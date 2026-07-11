@@ -124,7 +124,15 @@ class DAGJob:
 
 
 class DAGTaskManager:
-    """Clean mainline DAG generator and task-state manager for zrj_3."""
+    """Clean mainline DAG generator and task-state manager for zrj_3.
+
+    Time semantics (Phase 1): every physical timestamp stored on TaskNode /
+    DAGJob (arrival_time, ready_time, start_time, finish_time,
+    compute_finish_time, reward_completion_time, return_complete_time, and the
+    `current_time_step` arguments of the mark_* / create methods) is in SECONDS
+    on the episode clock. The slot-index -> seconds conversion happens only in
+    environment/env.py.
+    """
 
     def __init__(self) -> None:
         self._jobs: dict[str, DAGJob] = {}

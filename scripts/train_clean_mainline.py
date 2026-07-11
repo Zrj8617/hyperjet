@@ -352,7 +352,7 @@ def _collect_clean_slot(
         task_manager=env.task_manager,
         uavs=env.uavs,
         executor=env.executor,
-        current_time_step=env.time_step,
+        current_time_seconds=env.current_time_seconds,
         uav_service_positions=env.uav_service_positions,
         ue_service_positions=env.ue_service_positions,
         ues=env.ues,
