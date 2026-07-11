@@ -111,3 +111,12 @@ TASK_CONSTANT_RANGE = (6, 60)
 - hover ratio 是否符合当前 baseline/improved 配置预期。
 
 如果 quick RL 中 random/greedy 仍区分不足，再考虑 Phase 4 的 reward 标定或观察增强，不要继续反复修改场景参数。
+
+## Phase 4 P1:reward 时间尺度重标(2026-07-11)
+
+依据 P0 的 200-slot 基线(greedy 0.7850±0.0991,random 0.5261±0.0989;drain 协议下两基线完成率均为 1.0,判别指标改为 flowtime:greedy 188s vs random 566s)以及 quick RL 日志中 time_penalty 分布(均值 -57/slot,p5 -156,尾部 -335;DAG bonus 均值 +0.8),将:
+
+- `CLEAN_REWARD_TIME_REF`: 5.0s -> **60.0s**
+- 新增 `CLEAN_REWARD_TIME_CLIP = 10.0`(仅作用于 reward 的 norm_time,不影响 metrics 原始 delay/flowtime)
+
+预期:step reward 收敛到 O(1) 量级,|V| 从 ~4e3 降至 O(1e2),pre-clip grad norm 下降 3-4 个数量级,actor 梯度不再被全局 clip 吞没。验证字段:`ppo_returns_mean/std`、`ppo_value_pred_mean`、`ppo_explained_variance`。
