@@ -21,7 +21,16 @@ def _assert(condition: bool, message: str) -> None:
 def main() -> None:
     np.random.seed(13)
     original_arrival_prob = config.DAG_BASE_ARRIVAL_PROB
+    original_input_range = config.INPUT_DATA_SIZE_MB_RANGE
+    original_output_range = config.OUTPUT_DATA_SIZE_MB_RANGE
+    original_task_constant_range = config.TASK_CONSTANT_RANGE
     config.DAG_BASE_ARRIVAL_PROB = 0.0
+    # Keep this smoke independent from Phase 3 load calibration. The large input
+    # guarantees at least one unfinished idle slot so the "no repeated delay
+    # penalty before completion" assertion remains meaningful.
+    config.INPUT_DATA_SIZE_MB_RANGE = (75.0, 75.0)
+    config.OUTPUT_DATA_SIZE_MB_RANGE = (1.0, 1.0)
+    config.TASK_CONSTANT_RANGE = (6, 6)
     try:
         env = Env()
         env.reset()
@@ -98,6 +107,9 @@ def main() -> None:
         _assert(move_info["step_task_energy_penalty"] == 0.0, "movement-only step should not create task energy penalty.")
     finally:
         config.DAG_BASE_ARRIVAL_PROB = original_arrival_prob
+        config.INPUT_DATA_SIZE_MB_RANGE = original_input_range
+        config.OUTPUT_DATA_SIZE_MB_RANGE = original_output_range
+        config.TASK_CONSTANT_RANGE = original_task_constant_range
 
     print("smoke_clean_reward_metrics passed")
 
