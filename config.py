@@ -111,18 +111,7 @@ REWARD_MOVEMENT_ENERGY_WEIGHT: float = 0.05
 REWARD_COMPLETED_DAG_WEIGHT: float = 2.0
 CRITICAL_TASK_WEIGHT: float = 1.0
 NONCRITICAL_TASK_WEIGHT: float = 0.5
-# Phase 4 reward calibration (P1). Basis: P0 200-slot baselines and the quick-RL
-# time-penalty distribution. Under the Phase 3 load, random-policy per-task
-# incremental delay is queue-dominated (mean ~100 s, avg task service ~15 s);
-# with the old T_ref = TIME_SLOT_DURATION (5 s) the per-slot time penalty
-# averaged -57 with tails to -335, drowning the DAG bonus (~+0.8) and blowing
-# critic targets to |V|~4e3 (pre-clip grad norms ~1e5-1e6, so the global 0.5
-# grad clip crushed actor updates). T_ref = 60 s + a per-task cap of 10
-# normalized units bounds the tail and brings step rewards to ~O(1) so the
-# actor/critic gradients share a sane scale. Raw delays/flowtime in metrics
-# are NOT clipped; the cap applies to the reward's norm_time only.
-CLEAN_REWARD_TIME_REF: float = 60.0
-CLEAN_REWARD_TIME_CLIP: float = 10.0
+CLEAN_REWARD_TIME_REF: float = TIME_SLOT_DURATION
 CLEAN_REWARD_TASK_ENERGY_REF: float = P_UAV_COMPUTE * TIME_SLOT_DURATION
 CLEAN_REWARD_MOVE_ENERGY_REF: float = NUM_UAVS * CLEAN_POWER_MOVE * TIME_SLOT_DURATION
 

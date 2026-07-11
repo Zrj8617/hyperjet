@@ -134,7 +134,7 @@ class CleanCheckpointManager:
     ) -> dict[str, Any]:
         if torch is None:
             raise ModuleNotFoundError("torch is required to load clean model checkpoints")
-        payload = torch.load(Path(path), map_location="cpu")
+        payload = torch.load(Path(path), map_location="cpu", weights_only=False)
         modules.hgnn.load_state_dict(payload["hgnn"])
         modules.movement_actor.load_state_dict(payload["movement_actor"])
         modules.offloading_actor.load_state_dict(payload["offloading_actor"])

@@ -294,11 +294,7 @@ class CleanMetricsTracker:
         return max(0.0, float(task.reward_completion_time - ready_time))
 
     def _norm_time(self, value: float) -> float:
-        # Phase 4 reward calibration: normalized time cost is capped at
-        # CLEAN_REWARD_TIME_CLIP so long-queue tail delays cannot dominate the
-        # step reward. Reward-only: raw delays and flowtime metrics stay unclipped.
-        normalized = max(float(value), 0.0) / max(float(config.CLEAN_REWARD_TIME_REF), 1.0)
-        return min(normalized, float(getattr(config, "CLEAN_REWARD_TIME_CLIP", float("inf"))))
+        return max(float(value), 0.0) / max(float(config.CLEAN_REWARD_TIME_REF), 1.0)
 
     def _norm_task_energy(self, value: float) -> float:
         return max(float(value), 0.0) / max(float(config.CLEAN_REWARD_TASK_ENERGY_REF), 1.0)

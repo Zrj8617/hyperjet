@@ -56,15 +56,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint-interval", type=int, default=10)
     parser.add_argument("--resume-checkpoint", type=Path, default=None)
     parser.add_argument("--smoke", action="store_true")
-    parser.add_argument(
-        "--freeze-movement",
-        action="store_true",
-        default=False,
-        help="Phase 4 P1 A/B switch: force all UAV movement actions to hover and "
-        "skip movement rollout records, so the movement head contributes no "
-        "policy loss/entropy. Offloading actor, critic, and HGNN train normally. "
-        "Off by default; pass explicitly for the frozen-movement baseline runs.",
-    )
     parser.add_argument("--device", type=str, default="cuda" if _torch_cuda_available() else "cpu")
     parser.add_argument("--task-embedding-dim", type=int, default=64)
     parser.add_argument("--hidden-dim", type=int, default=128)
@@ -227,7 +218,6 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                     categorical_cls=Categorical,
                     device=device,
                     task_state_ready=TASK_STATE_READY_UNSCHEDULED,
-                    freeze_movement=bool(args.freeze_movement),
                 )
                 global_slot += 1
                 episode_reward += float(slot_record.reward)
@@ -334,36 +324,16 @@ def _collect_clean_slot(
     categorical_cls: Any,
     device: Any,
     task_state_ready: str,
-    freeze_movement: bool = False,
 ) -> tuple[Any, bool, dict[str, Any]]:
     import torch
 
     movement_obs = encoded_state.movement_observation
-    movement_actions: dict[int, int] = {}
-    movement_records: list[CleanMovementRolloutRecord] = []
-    if freeze_movement:
-        # Phase 4 P1 frozen-movement baseline: force hover (action index 0),
-        # record NO movement rollout entries so the PPO movement loss/entropy
-        # terms see zero actions (trainer already averages only over slots with
-        # movement records). Offloading/critic/HGNN training is unaffected.
-        hover_action = 0
-        assert config.CLEAN_MOVEMENT_ACTIONS[hover_action] == config.CLEAN_MOVEMENT_HOVER_ACTION
-        for uav_id in movement_obs.uav_ids:
-            movement_actions[int(uav_id)] = hover_action
-        return _finish_collect_clean_slot(
-            env=env,
-            modules=modules,
-            encoded_state=encoded_state,
-            task_state_ready=task_state_ready,
-            movement_actions=movement_actions,
-            movement_records=movement_records,
-            movement_frozen=True,
-        )
-
     movement_dist = categorical_cls(logits=encoded_state.movement_logits)
     selected_movement = movement_dist.sample()
     movement_log_probs = movement_dist.log_prob(selected_movement)
     movement_entropy = movement_dist.entropy()
+    movement_actions: dict[int, int] = {}
+    movement_records: list[CleanMovementRolloutRecord] = []
     for idx, uav_id in enumerate(movement_obs.uav_ids):
         action = int(selected_movement[idx].item())
         movement_actions[int(uav_id)] = action
@@ -383,27 +353,6 @@ def _collect_clean_slot(
             )
         )
 
-    return _finish_collect_clean_slot(
-        env=env,
-        modules=modules,
-        encoded_state=encoded_state,
-        task_state_ready=task_state_ready,
-        movement_actions=movement_actions,
-        movement_records=movement_records,
-        movement_frozen=False,
-    )
-
-
-def _finish_collect_clean_slot(
-    *,
-    env: Env,
-    modules: CleanTrainingModules,
-    encoded_state: Any,
-    task_state_ready: str,
-    movement_actions: dict[int, int],
-    movement_records: list[CleanMovementRolloutRecord],
-    movement_frozen: bool,
-) -> tuple[Any, bool, dict[str, Any]]:
     env.apply_movement(movement_actions)
     frozen_ready_tasks = [env.task_manager.get_task(task_id) for task_id in encoded_state.prepared_state.frozen_ready_task_ids]
     frozen_ready_tasks = [task for task in frozen_ready_tasks if task is not None and task.state == task_state_ready]
@@ -442,14 +391,7 @@ def _finish_collect_clean_slot(
     slot_record.movement_records = movement_records
     slot_record.offloading_records = offloading_records
     slot_record.reward = float(info["step_reward"])
-    if movement_frozen:
-        info["movement_action_distribution"] = {
-            str(action): (1.0 if str(action) == str(config.CLEAN_MOVEMENT_HOVER_ACTION) else 0.0)
-            for action in config.CLEAN_MOVEMENT_ACTIONS
-        }
-    else:
-        info["movement_action_distribution"] = _movement_action_distribution(movement_records)
-    info["movement_frozen"] = bool(movement_frozen)
+    info["movement_action_distribution"] = _movement_action_distribution(movement_records)
     info["offloading_action_count"] = len(offloading_records)
     partition_status = str(getattr(encoded_state.prepared_state.graph_snapshot, "partition_status", "disabled"))
     info["kahypar_partition_status"] = partition_status

@@ -56,14 +56,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--seeds", nargs="+", type=int, default=None)
     parser.add_argument("--policies", nargs="+", default=["greedy", "random"], choices=["greedy", "random"])
-    parser.add_argument(
-        "--drain-slots",
-        type=int,
-        default=0,
-        help="Diagnostic-only drain phase: after the arrival slots, disable DAG "
-        "arrivals (same protocol as eval: DAG_BASE_ARRIVAL_PROB=0) and keep "
-        "executing up to this many extra slots or until all active DAGs finish.",
-    )
     parser.add_argument("--sweep", action="store_true", help="Run an in-memory Phase 3 load sweep.")
     parser.add_argument(
         "--arrival-probs",
@@ -92,7 +84,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run_baseline(policy: str, slots: int, seed: int, drain_slots: int = 0) -> dict:
+def run_baseline(policy: str, slots: int, seed: int) -> dict:
     np.random.seed(int(seed))
     # Keep policy sampling out of the environment RNG stream so greedy/random
     # diagnostics do not diverge merely because random offloading consumes RNG.
@@ -105,8 +97,7 @@ def run_baseline(policy: str, slots: int, seed: int, drain_slots: int = 0) -> di
     queue_total_samples: list[int] = []
     offloading_skipped_total = 0
 
-    def _execute_one_slot() -> None:
-        nonlocal offloading_skipped_total
+    for _ in range(int(slots)):
         context = env.prepare_slot_state()
         env.apply_movement({})  # hover baseline
 
@@ -161,44 +152,6 @@ def run_baseline(policy: str, slots: int, seed: int, drain_slots: int = 0) -> di
             sum(len(env.executor.uav_queues.get(int(uav.id), [])) for uav in env.uavs)
         )
 
-    for _ in range(int(slots)):
-        _execute_one_slot()
-
-    # Snapshot at the end of the arrival phase (before any drain).
-    def _completion_snapshot() -> tuple[int, int]:
-        generated = len(env.task_manager.jobs)
-        completed = sum(1 for job in env.task_manager.jobs.values() if job.completed)
-        return generated, completed
-
-    arrival_generated, arrival_completed = _completion_snapshot()
-    arrival_snapshot = {
-        "completion_rate_arrival_end": round(arrival_completed / max(arrival_generated, 1), 4),
-        "active_dag_backlog_arrival_end": int(arrival_generated - arrival_completed),
-        "ready_backlog_arrival_end": ready_backlog_samples[-1] if ready_backlog_samples else 0,
-        "queue_len_arrival_end": [len(env.executor.uav_queues.get(int(uav.id), [])) for uav in env.uavs],
-    }
-
-    # Diagnostic-only drain phase: disable arrivals exactly like eval does
-    # (DAG_BASE_ARRIVAL_PROB=0) and keep executing the same baseline policy.
-    drain_executed = 0
-    drain_end_reason = "disabled"
-    if int(drain_slots) > 0:
-        original_arrival_prob = config.DAG_BASE_ARRIVAL_PROB
-        drain_end_reason = "max_drain"
-        try:
-            config.DAG_BASE_ARRIVAL_PROB = 0.0
-            while drain_executed < int(drain_slots):
-                if sum(1 for job in env.task_manager.jobs.values() if not job.completed) == 0:
-                    drain_end_reason = "all_completed"
-                    break
-                _execute_one_slot()
-                drain_executed += 1
-            else:
-                if sum(1 for job in env.task_manager.jobs.values() if not job.completed) == 0:
-                    drain_end_reason = "all_completed"
-        finally:
-            config.DAG_BASE_ARRIVAL_PROB = original_arrival_prob
-
     task_manager = env.task_manager
     generated_dags = len(task_manager.jobs)
     completed_dags = sum(1 for job in task_manager.jobs.values() if job.completed)
@@ -234,10 +187,6 @@ def run_baseline(policy: str, slots: int, seed: int, drain_slots: int = 0) -> di
         "policy": policy,
         "slots": int(slots),
         "seed": int(seed),
-        "drain_slots_max": int(drain_slots),
-        "drain_slots_executed": int(drain_executed),
-        "drain_end_reason": drain_end_reason,
-        **arrival_snapshot,
         "generated_dags": generated_dags,
         "completed_dags": completed_dags,
         "completion_rate": round(completed_dags / max(generated_dags, 1), 4),
@@ -470,10 +419,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.sweep:
         return run_sweep(args)
 
-    seeds = list(args.seeds) if args.seeds else [args.seed]
     for policy in args.policies:
-      for seed in seeds:
-        result = run_baseline(policy=policy, slots=args.slots, seed=seed, drain_slots=args.drain_slots)
+        result = run_baseline(policy=policy, slots=args.slots, seed=args.seed)
         print(
             f"[{result['policy']}] slots={result['slots']} seed={result['seed']} "
             f"gen={result['generated_dags']} comp={result['completed_dags']} "
@@ -481,14 +428,8 @@ def main(argv: list[str] | None = None) -> int:
             f"active_end={result['active_dag_backlog_end']} ready_mean={result['ready_backlog_mean']} "
             f"queues_end={result['queue_len_end']} skipped={result['offloading_skipped_total']} "
             f"drift_slot={result['avail_drift_vs_slot_index']} drift_sec={result['avail_drift_vs_seconds']}"
-            + (
-                f" | drain_exec={result['drain_slots_executed']} reason={result['drain_end_reason']} "
-                f"arrival_rate={result['completion_rate_arrival_end']}"
-                if int(args.drain_slots) > 0
-                else ""
-            )
         )
-        print("DIAG_JSON " + json.dumps(result, ensure_ascii=True, sort_keys=True), flush=True)
+        print("DIAG_JSON " + json.dumps(result, ensure_ascii=True, sort_keys=True))
     return 0
 
 
