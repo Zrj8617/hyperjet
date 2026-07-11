@@ -86,6 +86,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def run_baseline(policy: str, slots: int, seed: int) -> dict:
     np.random.seed(int(seed))
+    # Keep policy sampling out of the environment RNG stream so greedy/random
+    # diagnostics do not diverge merely because random offloading consumes RNG.
+    policy_rng = np.random.default_rng(int(seed) + 1_000_003)
     env = Env()
     env.reset()
 
@@ -138,7 +141,7 @@ def run_baseline(policy: str, slots: int, seed: int) -> dict:
                         best_finish = estimate.estimated_finish_time
                 selected_uav_id = int(best_uav_id)
             else:
-                selected_uav_id = int(np.random.choice(legal))
+                selected_uav_id = int(policy_rng.choice(legal))
             assignments[task.task_id] = selected_uav_id
             reservation.reserve(task.task_id, selected_uav_id)
 
