@@ -50,6 +50,12 @@ class CleanPPOUpdateStats:
     grad_norm: float
     hgnn_grad_norm: float
     update_step: int
+    # Value/return scale diagnostics (Phase 4 P0): computed from the pre-update
+    # GAE returns and value predictions of the rollout being consumed.
+    returns_mean: float = 0.0
+    returns_std: float = 0.0
+    value_pred_mean: float = 0.0
+    explained_variance: float = 0.0
 
 
 @dataclass(slots=True)
@@ -170,6 +176,20 @@ class CleanPPOUpdater:
             gamma=self.config.gamma,
             gae_lambda=self.config.gae_lambda,
         )
+        # Scale diagnostics from the pre-update rollout: value predictions are
+        # returns - advantages (GAE identity), explained variance uses raw
+        # (un-normalized) advantages.
+        values_np = returns_np - advantages_np
+        returns_var = float(np.var(returns_np))
+        explained_variance = (
+            1.0 - float(np.var(advantages_np)) / returns_var if returns_var > 1e-12 else 0.0
+        )
+        scale_diags = {
+            "returns_mean": float(np.mean(returns_np)),
+            "returns_std": float(np.std(returns_np)),
+            "value_pred_mean": float(np.mean(values_np)),
+            "explained_variance": float(explained_variance),
+        }
         returns = torch.as_tensor(returns_np, dtype=torch.float32, device=self.device)
         advantages = torch.as_tensor(advantages_np, dtype=torch.float32, device=self.device)
         if advantages.numel() > 1:
@@ -193,6 +213,8 @@ class CleanPPOUpdater:
             )
             self.optimizer.step()
             latest_stats = self._stats_from_loss_parts(records, loss_parts, float(grad_norm))
+            for key, value in scale_diags.items():
+                setattr(latest_stats, key, float(value))
 
         self.update_step += 1
         assert latest_stats is not None
@@ -419,6 +441,10 @@ def write_clean_training_log(
         "kahypar_partition_status": info.get("kahypar_partition_status"),
         "kahypar_degraded_label": info.get("kahypar_degraded_label"),
         "hover_action_ratio": info.get("hover_action_ratio"),
+        "avg_uav_queue_length": info.get("avg_uav_queue_length"),
+        "active_dags": info.get("active_dags"),
+        "frozen_ready_task_count": info.get("frozen_ready_task_count"),
+        "offloading_skipped_no_candidate": info.get("offloading_skipped_no_candidate"),
         "mean_uav_displacement_per_slot": info.get("mean_uav_displacement_per_slot"),
         "terminated": bool(info.get("terminated", False)),
         "truncated": bool(info.get("truncated", False)),
