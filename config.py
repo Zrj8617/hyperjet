@@ -23,7 +23,7 @@ STEPS_PER_EPISODE: int = EPISODE_LENGTH
 
 # ===================== zrj_3 clean mainline: HOTSPOT =====================
 HOTSPOT_RADIUS: float = 150.0
-DAG_BASE_ARRIVAL_PROB: float = 0.016
+DAG_BASE_ARRIVAL_PROB: float = 0.0145
 DAG_HOTSPOT_ARRIVAL_MULTIPLIER: float = 2.0
 
 # ===================== zrj_3 clean mainline: UE_MOBILITY =====================
@@ -38,8 +38,8 @@ DAG_MAX_PARENTS: int = 3
 BASE_UNIT_BYTES: int = 10 * 1024
 
 # ===================== zrj_3 clean mainline: TASK_ATTRIBUTES =====================
-INPUT_DATA_SIZE_MB_RANGE: tuple[float, float] = (0.75, 15.0)
-OUTPUT_DATA_SIZE_MB_RANGE: tuple[float, float] = (0.6, 11.0)
+INPUT_DATA_SIZE_MB_RANGE: tuple[float, float] = (0.75, 14.0)
+OUTPUT_DATA_SIZE_MB_RANGE: tuple[float, float] = (0.6, 10.5)
 TASK_CONSTANT_RANGE: tuple[int, int] = (6, 60)
 TASK_COMPLEXITY_PROBS: dict[str, float] = {
     "n": 0.2,
