@@ -441,6 +441,7 @@ def write_clean_training_log(
         "kahypar_partition_status": info.get("kahypar_partition_status"),
         "kahypar_degraded_label": info.get("kahypar_degraded_label"),
         "hover_action_ratio": info.get("hover_action_ratio"),
+        "movement_frozen": bool(info.get("movement_frozen", False)),
         "avg_uav_queue_length": info.get("avg_uav_queue_length"),
         "active_dags": info.get("active_dags"),
         "frozen_ready_task_count": info.get("frozen_ready_task_count"),
