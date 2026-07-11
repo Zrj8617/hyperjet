@@ -387,11 +387,8 @@ def _dynamic_uav_features(
     else:
         service_pos = np.asarray(_service_position(uav_service_positions, uav_id, getattr(uav, "pos")), dtype=np.float32)
     max_queue = max(float(config.CLEAN_MAX_QUEUE_PER_UAV), 1.0)
-    max_available_time = max(float(config.EPISODE_LENGTH) * float(config.TIME_SLOT_DURATION), 1.0)
-    max_workload = max(
-        float(config.UAV_COMPUTE_RATE_OPS_PER_SEC) * float(config.TIME_SLOT_DURATION) * max_queue,
-        1.0,
-    )
+    max_available_time = max(float(config.CLEAN_NORM_AVAIL_TIME_REF), 1.0)
+    max_workload = max(float(config.CLEAN_NORM_QUEUE_WORKLOAD_REF), 1.0)
     queue_length = float(state_view.queue_lengths.get(uav_id, 0))
     remaining_slots = float(state_view.remaining_slots(uav_id))
     available_delta = max(float(state_view.available_times.get(uav_id, current_time_seconds)) - float(current_time_seconds), 0.0)
@@ -412,10 +409,15 @@ def _dynamic_uav_features(
 
 
 def _normalize_pair_features(values: list[float]) -> np.ndarray:
-    max_time = max(float(config.TIME_SLOT_DURATION) * float(config.EPISODE_LENGTH), 1.0)
-    max_energy = max(float(config.P_UAV_COMPUTE) * float(config.TIME_SLOT_DURATION), 1.0)
+    # Column order: transfer_time, communication_energy, queue_waiting_time,
+    # compute_time, compute_energy, incremental_delay, return_time, return_energy.
+    # Scales come from config (single source of truth). Waiting/delay columns use
+    # the longer availability scale; link/compute columns the pair time scale.
+    time_ref = max(float(config.CLEAN_NORM_PAIR_TIME_REF), 1.0)
+    wait_ref = max(float(config.CLEAN_NORM_AVAIL_TIME_REF), 1.0)
+    energy_ref = max(float(config.CLEAN_NORM_PAIR_ENERGY_REF), 1.0)
     scales = np.asarray(
-        [max_time, max_energy, max_time, max_time, max_energy, max_time, max_time, max_energy],
+        [time_ref, energy_ref, wait_ref, time_ref, energy_ref, wait_ref, time_ref, energy_ref],
         dtype=np.float32,
     )
     raw = np.asarray(values, dtype=np.float32)

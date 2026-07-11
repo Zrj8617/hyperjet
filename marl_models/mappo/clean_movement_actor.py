@@ -205,11 +205,8 @@ def _build_uav_movement_features(
     current_time_seconds: float,
 ) -> np.ndarray:
     max_queue = max(float(config.CLEAN_MAX_QUEUE_PER_UAV), 1.0)
-    max_available_time = max(float(config.EPISODE_LENGTH) * float(config.TIME_SLOT_DURATION), 1.0)
-    max_workload = max(
-        float(config.UAV_COMPUTE_RATE_OPS_PER_SEC) * float(config.TIME_SLOT_DURATION) * max_queue,
-        1.0,
-    )
+    max_available_time = max(float(config.CLEAN_NORM_AVAIL_TIME_REF), 1.0)
+    max_workload = max(float(config.CLEAN_NORM_QUEUE_WORKLOAD_REF), 1.0)
     queues = getattr(executor, "uav_queues", {}) if executor is not None else {}
     available_times = getattr(executor, "uav_available_time", {}) if executor is not None else {}
     task_records = getattr(executor, "task_records", {}) if executor is not None else {}

@@ -68,6 +68,19 @@ CLEAN_MOVEMENT_ACTION_DIM: int = len(CLEAN_MOVEMENT_ACTIONS)
 CLEAN_MOVEMENT_HOVER_ACTION: str = "hover"
 CLEAN_UAV_MOVEMENT_SPEED: float = 15.0
 
+# ===================== zrj_3 clean mainline: FEATURE NORMALIZATION =====================
+# Single source of truth for clean observation/feature normalization scales.
+# Feature builders must reference these constants; inline scales like
+# `EPISODE_LENGTH * TIME_SLOT_DURATION` are forbidden in feature code (they
+# crushed pair features to ~1e-3 and blinded the offloading actor).
+CLEAN_NORM_PAIR_TIME_REF: float = 4.0 * TIME_SLOT_DURATION  # link/compute time scale (s)
+CLEAN_NORM_AVAIL_TIME_REF: float = 8.0 * TIME_SLOT_DURATION  # queue-wait / availability scale (s)
+CLEAN_NORM_PAIR_ENERGY_REF: float = P_UAV_COMPUTE * TIME_SLOT_DURATION  # per-task energy scale (J)
+CLEAN_NORM_QUEUE_WORKLOAD_REF: float = (
+    UAV_COMPUTE_RATE_OPS_PER_SEC * TIME_SLOT_DURATION * CLEAN_MAX_QUEUE_PER_UAV
+)  # per-UAV queued ops scale
+CLEAN_NORM_ACTIVE_TASK_REF: float = float(NUM_UES * DAG_MAX_TASKS)  # max possible active tasks
+
 # ===================== zrj_3 clean mainline: GRAPH =====================
 # CLEAN ABLATION NOTE:
 # The clean-mainline hypergraph (environment/graph_builder.py -> CleanGraphBuilder)

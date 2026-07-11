@@ -27,6 +27,7 @@ class CleanGraphSnapshot:
     #   "disabled"          -> ENABLE_KAHYPAR_PARTITION_HYPEREDGES off or < 2 active tasks
     #   "success"           -> KaHyPar re-partitioned this slot; cache updated
     #   "cache_interval"    -> not attempted this slot (interval); reused global cache
+    #   "no_base_hyperedges"-> active tasks exist but no valid base hyperedges; cache kept
     #   "degraded_cache"    -> attempt failed/unavailable; reused existing cache
     #   "degraded_no_cache" -> attempt failed/unavailable AND no cache; no partition edges
     partition_status: str = "disabled"
@@ -318,6 +319,17 @@ class CleanGraphBuilder:
             self._last_partition_status = "disabled"
             return []
 
+        valid_base_hyperedges = [
+            sorted({int(idx) for idx in edge if 0 <= int(idx) < len(active_task_ids)})
+            for edge in base_hyperedges
+        ]
+        valid_base_hyperedges = [edge for edge in valid_base_hyperedges if len(edge) >= 2]
+        if not valid_base_hyperedges:
+            # No information to partition on. Keep any previous cache untouched; do
+            # not report KaHyPar success or clear cached groups with an empty result.
+            self._last_partition_status = "no_base_hyperedges"
+            return self._remap_global_groups(self._cached_partition_groups_global, task_id_to_idx)
+
         interval = max(int(config.KAHYPAR_PARTITION_UPDATE_INTERVAL), 1)
         should_update = (
             force_update
@@ -328,7 +340,7 @@ class CleanGraphBuilder:
             self._last_partition_attempt_step = current_time_step
             partition_groups = self._run_kahypar_partition(
                 node_count=len(active_task_ids),
-                base_hyperedges=base_hyperedges,
+                base_hyperedges=valid_base_hyperedges,
             )
             if partition_groups is not None:
                 self._cached_partition_groups_global = [
@@ -357,7 +369,7 @@ class CleanGraphBuilder:
         base_hyperedges: list[list[int]],
     ) -> list[list[int]] | None:
         if node_count < 2 or not base_hyperedges:
-            return []
+            return None
         try:
             import kahypar  # type: ignore
         except Exception:
@@ -370,7 +382,7 @@ class CleanGraphBuilder:
             ]
             cleaned_edges = [edge for edge in cleaned_edges if len(edge) >= 2]
             if not cleaned_edges:
-                return []
+                return None
 
             hyperedge_indices = [0]
             pins: list[int] = []

@@ -101,7 +101,10 @@ def build_clean_critic_non_graph_input(
     active_count = len(getattr(graph_snapshot, "active_task_ids", getattr(graph_snapshot, "task_ids", [])))
     ready_count = len(getattr(graph_snapshot, "ready_task_ids", []))
     pending_count = len(getattr(graph_snapshot, "pending_task_ids", []))
-    max_tasks = max(float(getattr(config, "DAG_MAX_TASKS", 1) * max(len(getattr(config, "BASE_UPLOAD_BANDWIDTH_MBPS", [1])), 1)), 1.0)
+    # Active-task count scale: the theoretical maximum is one active DAG per UE
+    # at DAG_MAX_TASKS tasks each (the previous DAG_MAX_TASKS * bandwidth-level
+    # count was meaningless and saturated immediately).
+    max_tasks = max(float(config.CLEAN_NORM_ACTIVE_TASK_REF), 1.0)
     counts = np.asarray(
         [
             np.clip(float(active_count) / max_tasks, 0.0, 1.0),
@@ -321,8 +324,8 @@ def _critic_uav_global(
     available_times = getattr(executor, "uav_available_time", {}) if executor is not None else {}
     task_records = getattr(executor, "task_records", {}) if executor is not None else {}
     max_queue = max(float(config.CLEAN_MAX_QUEUE_PER_UAV), 1.0)
-    max_available_time = max(float(config.EPISODE_LENGTH) * float(config.TIME_SLOT_DURATION), 1.0)
-    max_workload = max(float(config.UAV_COMPUTE_RATE_OPS_PER_SEC) * float(config.TIME_SLOT_DURATION) * max_queue, 1.0)
+    max_available_time = max(float(config.CLEAN_NORM_AVAIL_TIME_REF), 1.0)
+    max_workload = max(float(config.CLEAN_NORM_QUEUE_WORKLOAD_REF), 1.0)
     for uav in sorted(uavs, key=lambda item: int(item.id)):
         uav_id = int(uav.id)
         if pre_move_positions is not None and uav_id in pre_move_positions:
@@ -380,8 +383,8 @@ def _critic_queue_summary(
                 workload += max(float(getattr(record, "compute_time", 0.0)), 0.0) * float(config.UAV_COMPUTE_RATE_OPS_PER_SEC)
         workloads.append(workload)
     max_queue = max(float(config.CLEAN_MAX_QUEUE_PER_UAV), 1.0)
-    max_available_time = max(float(config.EPISODE_LENGTH) * float(config.TIME_SLOT_DURATION), 1.0)
-    max_workload = max(float(config.UAV_COMPUTE_RATE_OPS_PER_SEC) * float(config.TIME_SLOT_DURATION) * max_queue * max(len(uavs), 1), 1.0)
+    max_available_time = max(float(config.CLEAN_NORM_AVAIL_TIME_REF), 1.0)
+    max_workload = max(float(config.CLEAN_NORM_QUEUE_WORKLOAD_REF) * max(len(uavs), 1), 1.0)
     queue_arr = np.asarray(queue_lengths, dtype=np.float32)
     available_arr = np.asarray(available_deltas, dtype=np.float32)
     workload_arr = np.asarray(workloads, dtype=np.float32)
