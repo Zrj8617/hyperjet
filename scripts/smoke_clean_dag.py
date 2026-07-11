@@ -48,8 +48,12 @@ def _assert_finished_task_is_not_active() -> None:
     assert ready_task.task_id not in active_task_ids
     assert manager.tasks[ready_task.task_id] is ready_task
     if hasattr(manager, "get_all_non_returned_tasks"):
+        # Clean lifecycle: a finished non-sink task is COMPLETED and therefore
+        # excluded from every active/non-returned view. The previous assertion
+        # (`in non_returned_ids`) encoded the pre-clean lifecycle where finished
+        # tasks lingered until an explicit return step.
         non_returned_ids = {task.task_id for task in manager.get_all_non_returned_tasks()}
-        assert ready_task.task_id in non_returned_ids
+        assert ready_task.task_id not in non_returned_ids
 
 
 def main() -> None:
@@ -57,9 +61,12 @@ def main() -> None:
     _assert_finished_task_is_not_active()
 
     manager = DAGTaskManager()
-    for idx in range(100):
+    # One DAG per distinct UE: a UE may hold only one active DAG, so the old
+    # `range(100)` with `idx % NUM_UES` (written when NUM_UES == 100) collides
+    # as soon as NUM_UES < 100.
+    for idx in range(min(100, int(config.NUM_UES))):
         source_pos = np.array([float(idx % 10) * 10.0, float(idx // 10) * 10.0], dtype=np.float32)
-        job = manager.create_dag_for_ue(ue_id=idx % config.NUM_UES, source_pos=source_pos, arrival_time=idx)
+        job = manager.create_dag_for_ue(ue_id=idx, source_pos=source_pos, arrival_time=idx)
         tasks = manager.get_job_tasks(job.dag_id)
 
         assert config.DAG_MIN_TASKS <= len(tasks) <= config.DAG_MAX_TASKS

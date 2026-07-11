@@ -23,10 +23,12 @@ def main() -> None:
     env = Env()
     env.reset()
 
-    assert len(env.uavs) == config.NUM_UAVS == 8
-    assert len(env.ues) == config.NUM_UES == 100
+    # Assert against config only; hardcoded scene numbers (8/100/200.0) belonged
+    # to an older scene revision and go stale whenever the clean scene changes.
+    assert len(env.uavs) == config.NUM_UAVS
+    assert len(env.ues) == config.NUM_UES
     assert env.hotspot_center is not None
-    assert float(env.hotspot_radius) == float(config.HOTSPOT_RADIUS) == 200.0
+    assert float(env.hotspot_radius) == float(config.HOTSPOT_RADIUS)
     assert config.HOTSPOT_RADIUS <= float(env.hotspot_center[0]) <= config.AREA_WIDTH - config.HOTSPOT_RADIUS
     assert config.HOTSPOT_RADIUS <= float(env.hotspot_center[1]) <= config.AREA_HEIGHT - config.HOTSPOT_RADIUS
 
