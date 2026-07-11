@@ -361,7 +361,16 @@ def estimate_offloading_candidate(
 def _ready_sort_key(task: TaskNode, task_manager: DAGTaskManager) -> tuple[float, str, int, str]:
     job = task_manager.get_job(task.dag_id)
     dag_arrival_time = float(job.arrival_time if job is not None else task.arrival_time)
-    topological_index = int(getattr(task, "topological_index", _task_numeric_suffix(task.task_id)))
+    # Spec ready-sort key: (dag_arrival_time, dag_id, topological_index, task_id).
+    # topological_index is now a real static field on TaskNode; fall back to the task_id
+    # numeric suffix only for legacy nodes that predate the field. Use an explicit None
+    # check so a valid topological_index == 0 (entry task) is not discarded.
+    topological_index_value = getattr(task, "topological_index", None)
+    topological_index = (
+        int(topological_index_value)
+        if topological_index_value is not None
+        else _task_numeric_suffix(task.task_id)
+    )
     return dag_arrival_time, str(task.dag_id), topological_index, str(task.task_id)
 
 

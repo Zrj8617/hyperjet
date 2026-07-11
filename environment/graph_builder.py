@@ -23,6 +23,13 @@ class CleanGraphSnapshot:
     attribute_hyperedges: list[list[int]]
     partition_hyperedges: list[list[int]]
     incidence_matrix: np.ndarray
+    # KaHyPar engineering-degrade state for this slot. One of:
+    #   "disabled"          -> ENABLE_KAHYPAR_PARTITION_HYPEREDGES off or < 2 active tasks
+    #   "success"           -> KaHyPar re-partitioned this slot; cache updated
+    #   "cache_interval"    -> not attempted this slot (interval); reused global cache
+    #   "degraded_cache"    -> attempt failed/unavailable; reused existing cache
+    #   "degraded_no_cache" -> attempt failed/unavailable AND no cache; no partition edges
+    partition_status: str = "disabled"
 
     @property
     def task_ids(self) -> list[str]:
@@ -48,6 +55,7 @@ class CleanGraphBuilder:
         self._cached_partition_groups_global: list[list[str]] = []
         self._last_partition_update_step: int | None = None
         self._last_partition_attempt_step: int | None = None
+        self._last_partition_status: str = "disabled"
         self._last_seen_dag_arrival_version: int = 0
 
     def reset(self) -> None:
@@ -57,6 +65,7 @@ class CleanGraphBuilder:
         self._cached_partition_groups_global = []
         self._last_partition_update_step = None
         self._last_partition_attempt_step = None
+        self._last_partition_status = "disabled"
         self._last_seen_dag_arrival_version = 0
 
     @property
@@ -70,6 +79,10 @@ class CleanGraphBuilder:
     @property
     def last_partition_attempt_step(self) -> int | None:
         return self._last_partition_attempt_step
+
+    @property
+    def last_partition_status(self) -> str:
+        return self._last_partition_status
 
     def build(
         self,
@@ -143,6 +156,7 @@ class CleanGraphBuilder:
             attribute_hyperedges=attribute_hyperedges,
             partition_hyperedges=partition_hyperedges,
             incidence_matrix=incidence_matrix,
+            partition_status=str(self._last_partition_status),
         )
 
     def _build_task_features(
@@ -301,6 +315,7 @@ class CleanGraphBuilder:
         force_update: bool,
     ) -> list[list[int]]:
         if not config.ENABLE_KAHYPAR_PARTITION_HYPEREDGES or len(active_task_ids) < 2:
+            self._last_partition_status = "disabled"
             return []
 
         interval = max(int(config.KAHYPAR_PARTITION_UPDATE_INTERVAL), 1)
@@ -322,6 +337,17 @@ class CleanGraphBuilder:
                     if len(group) >= 2
                 ]
                 self._last_partition_update_step = current_time_step
+                self._last_partition_status = "success"
+            else:
+                # Engineering degrade: KaHyPar unavailable or failed. Reuse cache if any,
+                # otherwise emit no partition edges this slot (never silently "success").
+                self._last_partition_status = (
+                    "degraded_cache"
+                    if self._cached_partition_groups_global
+                    else "degraded_no_cache"
+                )
+        else:
+            self._last_partition_status = "cache_interval"
 
         return self._remap_global_groups(self._cached_partition_groups_global, task_id_to_idx)
 

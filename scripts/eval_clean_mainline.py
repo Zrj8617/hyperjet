@@ -159,6 +159,7 @@ def _run_eval_episode(
     skipped_ready_no_candidate_total = 0
     assignment_buffer_entry_total = 0
     committed_assignment_total = 0
+    kahypar_status_counts: dict[str, int] = {}
 
     for _ in range(max(int(arrival_steps), 0)):
         done, info, movement_counts, off_count = _eval_one_slot(
@@ -176,6 +177,7 @@ def _run_eval_episode(
         skipped_ready_no_candidate_total += int(info.get("offloading_skipped_no_candidate", 0))
         assignment_buffer_entry_total += int(info.get("assignment_buffer_entry_count", 0))
         committed_assignment_total += int(info.get("newly_assigned_tasks", 0))
+        _count_kahypar_status(kahypar_status_counts, info)
         if done:
             break
 
@@ -195,6 +197,7 @@ def _run_eval_episode(
         skipped_ready_no_candidate_total += int(info.get("offloading_skipped_no_candidate", 0))
         assignment_buffer_entry_total += int(info.get("assignment_buffer_entry_count", 0))
         committed_assignment_total += int(info.get("newly_assigned_tasks", 0))
+        _count_kahypar_status(kahypar_status_counts, info)
         if done:
             break
 
@@ -236,6 +239,18 @@ def _run_eval_episode(
         "action_executed_rate": None if assignment_entries <= 0.0 else float(env.metrics.metrics.executed_action_count / assignment_entries),
         "movement_action_distribution": movement_distribution,
         "offloading_action_count": int(offloading_action_count),
+        "hover_action_ratio": info_metrics.get("hover_action_ratio"),
+        "mean_uav_displacement_per_slot": info_metrics.get("mean_uav_displacement_per_slot"),
+        "kahypar_partition_status_counts": dict(kahypar_status_counts),
+        "kahypar_degraded_slot_count": int(
+            sum(count for status, count in kahypar_status_counts.items() if str(status).startswith("degraded"))
+        ),
+        "kahypar_success_slot_count": int(kahypar_status_counts.get("success", 0)),
+        "kahypar_degraded_label": (
+            str(config.KAHYPAR_DEGRADED_EXPERIMENT_LABEL)
+            if any(str(status).startswith("degraded") for status in kahypar_status_counts)
+            else None
+        ),
         "total_evaluation_time": total_time,
         "active_dag_count_after_eval": int(_active_dag_count(env)),
         **diagnostics,
@@ -297,6 +312,7 @@ def _eval_one_slot(
     }
     info["movement_action_distribution"] = movement_distribution
     info["offloading_action_count"] = len(modules.offloading_actor.latest_records)
+    info["kahypar_partition_status"] = str(getattr(prepared.graph_snapshot, "partition_status", "disabled"))
     return bool(done), info, movement_counts, len(modules.offloading_actor.latest_records)
 
 
@@ -576,6 +592,18 @@ def _aggregate_summary(aggregate: dict[str, Any], *, episode_count: int) -> dict
         ][:10],
         "executor_queue_summary": _aggregate_queue_summaries(row.get("executor_queue_summary", {}) for row in rows),
         "drain_end_reason": _aggregate_drain_end_reason(row.get("drain_end_reason") for row in rows),
+        "hover_action_ratio": _mean(row.get("hover_action_ratio") for row in rows),
+        "mean_uav_displacement_per_slot": _mean(row.get("mean_uav_displacement_per_slot") for row in rows),
+        "kahypar_partition_status_counts": _sum_count_dicts(
+            row.get("kahypar_partition_status_counts", {}) for row in rows
+        ),
+        "kahypar_degraded_slot_count": int(sum(int(row.get("kahypar_degraded_slot_count", 0)) for row in rows)),
+        "kahypar_success_slot_count": int(sum(int(row.get("kahypar_success_slot_count", 0)) for row in rows)),
+        "kahypar_degraded_label": (
+            str(config.KAHYPAR_DEGRADED_EXPERIMENT_LABEL)
+            if sum(int(row.get("kahypar_degraded_slot_count", 0)) for row in rows) > 0
+            else None
+        ),
     }
 
 
@@ -618,6 +646,11 @@ def _aggregate_drain_end_reason(reasons: Any) -> str | None:
 def _merge_counts(target: dict[str, int], source: dict[str, int]) -> None:
     for key, value in source.items():
         target[key] = int(target.get(key, 0)) + int(value)
+
+
+def _count_kahypar_status(target: dict[str, int], info: dict[str, Any]) -> None:
+    status = str(info.get("kahypar_partition_status", "disabled"))
+    target[status] = int(target.get(status, 0)) + 1
 
 
 def _normalized_distribution(counts: dict[str, int]) -> dict[str, float]:

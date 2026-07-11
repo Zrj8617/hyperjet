@@ -17,6 +17,8 @@ class CleanStepReward:
     task_energy_penalty: float = 0.0
     movement_energy_penalty: float = 0.0
     completed_dag_bonus: float = 0.0
+    # Optional movement position shaping (0.0 unless ENABLE_MOVEMENT_POSITION_SHAPING).
+    movement_position_bonus: float = 0.0
     completed_tasks: int = 0
     completed_dags: int = 0
 
@@ -44,6 +46,9 @@ class CleanEpisodeMetrics:
     queue_length_samples: int = 0
     uav_movement_energy_total: float = 0.0
     uav_movement_energy_by_uav: dict[int, float] = field(default_factory=dict)
+    movement_hover_action_count: int = 0
+    movement_action_total: int = 0
+    movement_displacement_total: float = 0.0
 
 
 class CleanMetricsTracker:
@@ -64,6 +69,7 @@ class CleanMetricsTracker:
         task_manager: DAGTaskManager,
         execution_stats: Any,
         movement_energy_slot: float = 0.0,
+        movement_position_signal: float = 0.0,
     ) -> CleanStepReward:
         time_cost = 0.0
         task_energy_cost = 0.0
@@ -100,13 +106,28 @@ class CleanMetricsTracker:
         )
         energy_penalty = task_energy_penalty + movement_energy_penalty
         completed_dag_bonus = float(config.REWARD_COMPLETED_DAG_WEIGHT) * completed_dags
+        # Optional movement position shaping. OFF by default: when the flag is off (or
+        # weight is 0) this term is exactly 0.0 and the clean spec baseline reward is
+        # unchanged. Turn on only for the "improved" ablation.
+        movement_position_bonus = 0.0
+        if bool(getattr(config, "ENABLE_MOVEMENT_POSITION_SHAPING", False)):
+            movement_position_bonus = float(
+                getattr(config, "REWARD_MOVEMENT_POSITION_WEIGHT", 0.0)
+            ) * float(movement_position_signal)
         return CleanStepReward(
-            reward_total=time_penalty + task_energy_penalty + movement_energy_penalty + completed_dag_bonus,
+            reward_total=(
+                time_penalty
+                + task_energy_penalty
+                + movement_energy_penalty
+                + completed_dag_bonus
+                + movement_position_bonus
+            ),
             time_penalty=time_penalty,
             energy_penalty=energy_penalty,
             task_energy_penalty=task_energy_penalty,
             movement_energy_penalty=movement_energy_penalty,
             completed_dag_bonus=completed_dag_bonus,
+            movement_position_bonus=movement_position_bonus,
             completed_tasks=reward_completed_task_count,
             completed_dags=completed_dags,
         )
@@ -121,6 +142,9 @@ class CleanMetricsTracker:
         queue_lengths: list[int],
         elapsed_steps: int,
         movement_energy_by_uav: dict[int, float] | None = None,
+        movement_hover_count: int = 0,
+        movement_action_count: int = 0,
+        movement_displacement_total: float = 0.0,
     ) -> None:
         self.metrics.episode_reward += float(step_reward.reward_total)
         self.metrics.generated_dag_count = max(
@@ -173,6 +197,9 @@ class CleanMetricsTracker:
                     self.metrics.uav_movement_energy_by_uav.get(key, 0.0) + value
                 )
                 self.metrics.uav_movement_energy_total += value
+        self.metrics.movement_hover_action_count += int(movement_hover_count)
+        self.metrics.movement_action_total += int(movement_action_count)
+        self.metrics.movement_displacement_total += float(movement_displacement_total)
 
     def to_info(self, elapsed_steps: int) -> dict[str, float]:
         steps = max(int(elapsed_steps), 1)
@@ -189,7 +216,10 @@ class CleanMetricsTracker:
         avg_flowtime = float(np.mean(self.metrics.dag_flowtimes)) if self.metrics.dag_flowtimes else 0.0
         completion_rate = float(completed / max(generated, 1))
         throughput = float(completed / max(total_evaluation_time, float(config.TIME_SLOT_DURATION)))
-        energy_per_completed_dag = float(self.metrics.total_task_energy / max(completed, 1))
+        # Spec: total_episode_energy = task energy actually consumed + movement energy
+        # actually consumed. Energy per completed DAG divides that combined numerator.
+        total_episode_energy = float(self.metrics.total_task_energy) + float(self.metrics.uav_movement_energy_total)
+        energy_per_completed_dag = float(total_episode_energy / max(completed, 1))
         avg_critical_delay = (
             float(np.mean(self.metrics.critical_path_task_completion_delays))
             if self.metrics.critical_path_task_completion_delays
@@ -208,6 +238,7 @@ class CleanMetricsTracker:
                 float(np.mean(self.metrics.task_execution_delays)) if self.metrics.task_execution_delays else 0.0
             ),
             "total_task_energy": float(self.metrics.total_task_energy),
+            "total_episode_energy": float(total_episode_energy),
             "total_compute_energy": float(self.metrics.total_compute_energy),
             "total_communication_energy": float(self.metrics.total_communication_energy),
             "total_return_energy": float(self.metrics.total_return_energy),
@@ -227,6 +258,15 @@ class CleanMetricsTracker:
             "uav_movement_energy_ratio": float(
                 self.metrics.uav_movement_energy_total
                 / max(float(config.CLEAN_REWARD_MOVE_ENERGY_REF) * steps, 1.0)
+            ),
+            "movement_action_total": float(self.metrics.movement_action_total),
+            "hover_action_ratio": (
+                float(self.metrics.movement_hover_action_count) / float(self.metrics.movement_action_total)
+                if self.metrics.movement_action_total > 0
+                else None
+            ),
+            "mean_uav_displacement_per_slot": float(
+                self.metrics.movement_displacement_total / max(num_uavs * steps, 1)
             ),
         }
 

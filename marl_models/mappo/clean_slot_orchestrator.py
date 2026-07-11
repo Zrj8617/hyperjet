@@ -234,6 +234,7 @@ def copy_clean_graph_snapshot(snapshot: CleanGraphSnapshot) -> CleanGraphSnapsho
         attribute_hyperedges=[list(edge) for edge in snapshot.attribute_hyperedges],
         partition_hyperedges=[list(edge) for edge in snapshot.partition_hyperedges],
         incidence_matrix=incidence_matrix,
+        partition_status=str(getattr(snapshot, "partition_status", "disabled")),
     )
 
 

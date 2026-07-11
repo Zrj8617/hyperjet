@@ -28,6 +28,7 @@ class Env:
     """
 
     def __init__(self) -> None:
+        """初始化环境状态、任务管理器和指标组件。"""
         self._time_step: int = 0
         self.hotspot_center: np.ndarray | None = None
         self.hotspot_radius: float = float(config.HOTSPOT_RADIUS)
@@ -48,66 +49,85 @@ class Env:
         self._latest_dag_arrival_version: int = 0
         self._last_movement_energy_by_uav: dict[int, float] = {}
         self._last_movement_energy_total: float = 0.0
+        self._last_movement_distance_by_uav: dict[int, float] = {}
+        self._last_movement_distance_total: float = 0.0
+        self._last_movement_hover_count: int = 0
+        self._last_movement_action_count: int = 0
         self._prepared_slot_open: bool = False
         self._prepared_slot_context: dict[str, Any] = {}
 
     @property
     def uavs(self) -> list[UAV]:
+        """返回环境中的无人机列表。"""
         return self._uavs
 
     @property
     def ues(self) -> list[UE]:
+        """返回环境中的用户设备列表。"""
         return self._ues
 
     @property
     def task_manager(self) -> DAGTaskManager:
+        """返回 DAG 任务管理器。"""
         return self._task_manager
 
     @property
     def executor(self) -> CleanTaskExecutor:
+        """返回任务执行器。"""
         return self._executor
 
     @property
     def metrics(self) -> CleanMetricsTracker:
+        """返回环境指标跟踪器。"""
         return self._metrics
 
     @property
     def time_step(self) -> int:
+        """返回当前时间步。"""
         return self._time_step
 
     @property
     def latest_info(self) -> dict[str, Any]:
+        """返回最近一个时间步的信息副本。"""
         return dict(self._latest_info)
 
     @property
     def ue_service_positions(self) -> dict[int, np.ndarray]:
+        """返回各用户设备的服务位置副本。"""
         return {ue_id: pos.copy() for ue_id, pos in self._ue_service_positions.items()}
 
     @property
     def uav_service_positions(self) -> dict[int, np.ndarray]:
+        """返回各无人机的服务位置副本。"""
         return {uav_id: pos.copy() for uav_id, pos in self._uav_service_positions.items()}
 
     @property
     def latest_slot_boundary(self) -> dict[str, Any]:
+        """返回最近时隙的状态边界信息。"""
         return dict(self._latest_slot_boundary)
 
     @property
     def frozen_ready_task_ids(self) -> list[str]:
+        """返回当前冻结的就绪任务 ID。"""
         return list(self._frozen_ready_task_ids)
 
     @property
     def last_assignment_buffer(self) -> CleanAssignmentBuffer:
+        """返回最近一次任务分配缓冲区的副本。"""
         return CleanAssignmentBuffer(entries=list(self._last_assignment_buffer.entries))
 
     @property
     def new_dag_arrived(self) -> bool:
+        """判断当前时隙是否有新的 DAG 到达。"""
         return bool(self._last_new_dag_arrived)
 
     @property
     def dag_arrival_version(self) -> int:
+        """返回 DAG 到达状态的版本号。"""
         return int(self._latest_dag_arrival_version)
 
     def reset(self) -> list[np.ndarray]:
+        """重置环境并返回初始观测。"""
         self._time_step = 0
         self.hotspot_radius = float(config.HOTSPOT_RADIUS)
         self.hotspot_center = self._sample_episode_hotspot()
@@ -126,6 +146,10 @@ class Env:
         self._latest_dag_arrival_version = self._task_manager.dag_arrival_version
         self._last_movement_energy_by_uav = {int(uav.id): 0.0 for uav in self._uavs}
         self._last_movement_energy_total = 0.0
+        self._last_movement_distance_by_uav = {int(uav.id): 0.0 for uav in self._uavs}
+        self._last_movement_distance_total = 0.0
+        self._last_movement_hover_count = 0
+        self._last_movement_action_count = 0
         self._prepared_slot_open = False
         self._prepared_slot_context = {}
         self._latest_slot_boundary = {
@@ -143,6 +167,7 @@ class Env:
         return self._get_obs()
 
     def step(self, actions: Any | None = None) -> tuple[list[np.ndarray], list[float], bool, dict[str, Any]]:
+        """执行一个完整时隙并返回环境交互结果。"""
         parsed_actions = self._parse_clean_actions(actions)
         self.prepare_slot_state()
         self.apply_movement(parsed_actions["movement_actions"])
@@ -150,6 +175,8 @@ class Env:
 
     def prepare_slot_state(self) -> dict[str, Any]:
         """Prepare clean decision state s_t exactly once for the next slot.
+
+        中文：为下一时隙准备并冻结决策状态。
 
         This stage is environment/parameter independent: UE movement, DAG
         arrivals, ready refresh, and frozen ready-set construction happen here.
@@ -195,7 +222,10 @@ class Env:
         return self._copy_slot_context(self._prepared_slot_context)
 
     def apply_movement(self, movement_actions: dict[int, int | str] | None = None) -> dict[str, Any]:
-        """Apply movement after R_t is frozen and expose current service positions."""
+        """Apply movement after R_t is frozen and expose current service positions.
+
+        中文：应用无人机移动动作并返回最新服务位置。
+        """
         if not self._prepared_slot_open:
             raise RuntimeError("prepare_slot_state() must be called before apply_movement().")
         self._apply_clean_movement(movement_actions or {})
@@ -213,7 +243,10 @@ class Env:
         assignment_buffer: CleanAssignmentBuffer | None = None,
         offloading_skip_count: int = 0,
     ) -> tuple[list[np.ndarray], list[float], bool, dict[str, Any]]:
-        """Commit clean assignments, advance executor one slot, and close reward/metrics."""
+        """Commit clean assignments, advance executor one slot, and close reward/metrics.
+
+        中文：提交任务分配，推进一个时隙并结算奖励与指标。
+        """
         if not self._prepared_slot_open:
             raise RuntimeError("prepare_slot_state() must be called before commit_and_advance().")
         if not self._uav_service_positions:
@@ -258,10 +291,12 @@ class Env:
             "post_execution_state": post_execution_state,
             "next_decision_state": None,
         }
+        movement_position_signal = self._compute_movement_position_signal()
         step_reward = self._metrics.calculate_step_reward(
             self._task_manager,
             execution_stats,
             movement_energy_slot=self._last_movement_energy_total,
+            movement_position_signal=movement_position_signal,
         )
         queue_lengths = [len(self._executor.uav_queues.get(int(uav.id), [])) for uav in self._uavs]
         self._metrics.update(
@@ -273,6 +308,9 @@ class Env:
             queue_lengths=queue_lengths,
             elapsed_steps=self._time_step,
             movement_energy_by_uav=self._last_movement_energy_by_uav,
+            movement_hover_count=self._last_movement_hover_count,
+            movement_action_count=self._last_movement_action_count,
+            movement_displacement_total=self._last_movement_distance_total,
         )
         metric_info = self._metrics.to_info(self._time_step)
         metric_info["generated_dag_count"] = float(len(self._task_manager.jobs))
@@ -289,6 +327,8 @@ class Env:
             "step_task_energy_penalty": step_reward.task_energy_penalty,
             "step_movement_energy_penalty": step_reward.movement_energy_penalty,
             "step_completed_dag_bonus": step_reward.completed_dag_bonus,
+            "step_movement_position_bonus": step_reward.movement_position_bonus,
+            "movement_position_signal": movement_position_signal,
             "step_task_energy": execution_stats.step_task_energy,
             "step_movement_energy": self._last_movement_energy_total,
             "step_compute_energy": execution_stats.step_compute_energy,
@@ -316,6 +356,7 @@ class Env:
         return self._get_obs(), rewards, done, dict(info)
 
     def _sample_episode_hotspot(self) -> np.ndarray:
+        """在地图范围内随机生成本回合的热点中心。"""
         radius = float(config.HOTSPOT_RADIUS)
         width = float(config.AREA_WIDTH)
         height = float(config.AREA_HEIGHT)
@@ -332,15 +373,18 @@ class Env:
         )
 
     def _init_uavs_uniform(self) -> list[UAV]:
+        """按配置数量初始化无人机。"""
         return [UAV(i) for i in range(config.NUM_UAVS)]
 
     def _init_ues_uniform(self) -> list[UE]:
+        """按配置数量初始化并重置用户设备。"""
         ues = [UE(i) for i in range(config.NUM_UES)]
         for ue in ues:
             ue.reset_episode_state()
         return ues
 
     def _process_clean_dag_arrivals(self) -> int:
+        """处理当前时隙的新 DAG 到达事件。"""
         if not self._slot_service_positions_frozen:
             self._ue_service_positions = {int(ue.id): ue.pos[:2].copy() for ue in self._ues}
         version_before = self._task_manager.dag_arrival_version
@@ -366,12 +410,14 @@ class Env:
         return created_count
 
     def release_ue_after_dag_completed(self, dag_id: str) -> None:
+        """在 DAG 完成后解除对应用户设备的等待状态。"""
         for ue in self._ues:
             if ue.active_dag_id == dag_id:
                 ue.release_service_waiting(dag_id)
                 return
 
     def _get_obs(self) -> list[np.ndarray]:
+        """构建所有无人机的归一化环境观测。"""
         hotspot = (
             np.zeros((2,), dtype=np.float32)
             if self.hotspot_center is None
@@ -389,6 +435,7 @@ class Env:
         return obs
 
     def _parse_clean_actions(self, actions: Any | None) -> dict[str, Any]:
+        """将输入动作解析为任务分配和移动动作。"""
         if not isinstance(actions, dict):
             return {"assignments": {}, "movement_actions": {}}
         if "assignments" in actions or "offloading_assignments" in actions or "movement_actions" in actions:
@@ -405,6 +452,7 @@ class Env:
         ready_tasks: list[Any],
         requested_assignments: dict[str, int],
     ) -> tuple[CleanAssignmentBuffer, int]:
+        """筛选合法分配并构建任务分配缓冲区。"""
         reservation = TemporaryReservationState.from_executor(self._uavs, self._executor)
         valid_uav_ids = {int(uav.id) for uav in self._uavs}
         ordered_uav_ids = sorted(valid_uav_ids)
@@ -441,6 +489,7 @@ class Env:
         return buffer, skipped_no_candidate
 
     def _frozen_ready_tasks_from_ids(self, task_ids: list[str]) -> list[Any]:
+        """根据 ID 获取仍然存在的冻结就绪任务。"""
         tasks = []
         for task_id in task_ids:
             task = self._task_manager.get_task(task_id)
@@ -449,6 +498,7 @@ class Env:
         return tasks
 
     def _copy_slot_context(self, context: dict[str, Any]) -> dict[str, Any]:
+        """复制时隙上下文并隔离其中的可变数据。"""
         copied = dict(context)
         for key in ("ue_service_positions", "uav_pre_move_positions"):
             copied[key] = {int(item_id): np.asarray(pos, dtype=np.float32).copy() for item_id, pos in context.get(key, {}).items()}
@@ -456,14 +506,20 @@ class Env:
         return copied
 
     def _apply_clean_movement(self, movement_actions: dict[int, int | str]) -> None:
+        """执行无人机移动并统计位移和能耗。"""
         self._uav_pre_move_positions = {int(uav.id): uav.pos[:2].copy() for uav in self._uavs}
         self._uav_service_positions = {}
         self._last_movement_energy_by_uav = {}
         self._last_movement_energy_total = 0.0
+        self._last_movement_distance_by_uav = {}
+        self._last_movement_distance_total = 0.0
+        self._last_movement_hover_count = 0
+        self._last_movement_action_count = 0
         for uav in self._uavs:
             uav_id = int(uav.id)
             pre_pos = self._uav_pre_move_positions[uav_id]
             action = movement_actions.get(uav_id, movement_actions.get(str(uav_id), "hover"))
+            action_name = self._movement_action_name(action)
             delta = self._movement_delta(action)
             candidate = pre_pos + delta
             if not self._inside_map(candidate):
@@ -473,27 +529,33 @@ class Env:
             move_energy = float(config.CLEAN_POWER_MOVE) * float(config.TIME_SLOT_DURATION) if move_distance > 0.0 else 0.0
             self._last_movement_energy_by_uav[uav_id] = move_energy
             self._last_movement_energy_total += move_energy
+            # Displacement/hover diagnostics: hover ratio is by chosen ACTION (a blocked
+            # boundary move is not a hover); displacement is the actual distance moved.
+            self._last_movement_distance_by_uav[uav_id] = move_distance
+            self._last_movement_distance_total += move_distance
+            self._last_movement_action_count += 1
+            if action_name == str(config.CLEAN_MOVEMENT_HOVER_ACTION):
+                self._last_movement_hover_count += 1
             uav.update_position(candidate)
 
-    def _movement_delta(self, action: int | str) -> np.ndarray:
-        step_distance = float(config.CLEAN_UAV_MOVEMENT_SPEED) * float(config.TIME_SLOT_DURATION)
+    def _movement_action_name(self, action: int | str) -> str:
+        """将移动动作索引转换为动作名称。"""
         if isinstance(action, str):
-            action_name = action
-        else:
-            action_names = tuple(getattr(config, "CLEAN_MOVEMENT_ACTIONS", ("hover", "+x", "-x", "+y", "-y")))
-            action_name = action_names[int(action)] if 0 <= int(action) < len(action_names) else "hover"
-        if action_name == "+x":
-            return np.array([step_distance, 0.0], dtype=np.float32)
-        if action_name == "-x":
-            return np.array([-step_distance, 0.0], dtype=np.float32)
-        if action_name == "+y":
-            return np.array([0.0, step_distance], dtype=np.float32)
-        if action_name == "-y":
-            return np.array([0.0, -step_distance], dtype=np.float32)
-        return np.zeros((2,), dtype=np.float32)
+            return action
+        action_names = tuple(getattr(config, "CLEAN_MOVEMENT_ACTIONS", ("hover", "+x", "-x", "+y", "-y")))
+        index = int(action)
+        return action_names[index] if 0 <= index < len(action_names) else "hover"
 
-    def _inside_map(self, position: np.ndarray) -> bool:
-        return (
-            0.0 <= float(position[0]) <= float(config.AREA_WIDTH)
-            and 0.0 <= float(position[1]) <= float(config.AREA_HEIGHT)
-        )
+    def _compute_movement_position_signal(self) -> float:
+        """Coverage signal for the OPTIONAL movement position shaping term.
+
+        中文：计算就绪任务被无人机覆盖的比例信号。
+
+        Returns the fraction of current frozen ready tasks whose demand origin
+        (task source position) is within UAV coverage radius of at least one UAV
+        service position. Only computed when shaping is enabled; otherwise 0.0 so
+        the clean spec baseline reward is untouched.
+        """
+        if not bool(getattr(config, "ENABLE_MOVEMENT_POSITION_SHAPING", False)):
+            return 0.0
+        ready_t

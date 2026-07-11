@@ -69,6 +69,18 @@ CLEAN_MOVEMENT_HOVER_ACTION: str = "hover"
 CLEAN_UAV_MOVEMENT_SPEED: float = 15.0
 
 # ===================== zrj_3 clean mainline: GRAPH =====================
+# CLEAN ABLATION NOTE:
+# The clean-mainline hypergraph (environment/graph_builder.py -> CleanGraphBuilder)
+# reads ONLY the four ENABLE_* flags below to switch its four hyperedge types:
+#   E_DAG   <- ENABLE_DAG_DEPENDENCY_EDGES
+#   E_khop  <- ENABLE_KHOP_DEPENDENCY_HYPEREDGES
+#   E_attr  <- ENABLE_ATTRIBUTE_HYPEREDGES
+#   E_part  <- ENABLE_KAHYPAR_PARTITION_HYPEREDGES
+# For clean ablations (e.g. "only E_DAG", "E_DAG + E_attr") flip ONLY these ENABLE_*
+# flags. The legacy `USE_*` hyperedge switches further below (USE_ATTRIBUTE_HYPEREDGES,
+# USE_CRITICAL_HYPEREDGES, USE_RESOURCE_COMPETITION_HYPEREDGES, ...) belong to the old
+# pipeline and are NOT read by CleanGraphBuilder; editing them has no effect on the
+# clean mainline. Do not use USE_* for clean ablation.
 ENABLE_DAG_DEPENDENCY_EDGES: bool = True
 ENABLE_KHOP_DEPENDENCY_HYPEREDGES: bool = True
 ENABLE_ATTRIBUTE_HYPEREDGES: bool = True
@@ -89,6 +101,17 @@ NONCRITICAL_TASK_WEIGHT: float = 0.5
 CLEAN_REWARD_TIME_REF: float = TIME_SLOT_DURATION
 CLEAN_REWARD_TASK_ENERGY_REF: float = P_UAV_COMPUTE * TIME_SLOT_DURATION
 CLEAN_REWARD_MOVE_ENERGY_REF: float = NUM_UAVS * CLEAN_POWER_MOVE * TIME_SLOT_DURATION
+
+# --- Optional movement position shaping (OFF by default) ---------------------
+# The clean spec reward gives movement only a shared slot-level advantage plus a
+# move-energy penalty (no positive positioning signal). To study whether an extra
+# positioning signal helps WITHOUT changing the clean baseline, this optional term
+# rewards covering current ready-task demand origins with UAV service positions.
+# Keep it OFF for the spec baseline; turn it ON for the "improved" ablation only.
+#   baseline: ENABLE_MOVEMENT_POSITION_SHAPING = False
+#   improved: ENABLE_MOVEMENT_POSITION_SHAPING = True, REWARD_MOVEMENT_POSITION_WEIGHT > 0
+ENABLE_MOVEMENT_POSITION_SHAPING: bool = False
+REWARD_MOVEMENT_POSITION_WEIGHT: float = 0.0
 
 # ===================== zrj_3 clean mainline: PROFILING =====================
 ENABLE_CLEAN_PROFILING: bool = False

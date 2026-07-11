@@ -44,6 +44,9 @@ class TaskNode:
     level: int
     source_pos: np.ndarray
     arrival_time: float = 0.0
+    # Static per-DAG topological rank assigned at DAG creation (level-major creation
+    # order is a valid topological order). Used as the spec ready-sort key component.
+    topological_index: int = 0
     predecessors: list[str] = field(default_factory=list)
     successors: list[str] = field(default_factory=list)
     ready_time: float | None = None
@@ -209,6 +212,11 @@ class DAGTaskManager:
             levels.append(level_task_ids)
 
         self._connect_levels(levels)
+        # Assign static topological_index in level-major creation order. Because levels
+        # only depend on earlier levels, this ordering is a valid topological order and
+        # gives the spec ready-sort key a real topological_index (not a task_id proxy).
+        for topological_index, task_id in enumerate(task_ids):
+            self._tasks[task_id].topological_index = int(topological_index)
         sink_task_ids = [task_id for task_id in task_ids if not self._tasks[task_id].successors]
         khop_hyperedges_global = self._precompute_khop_hyperedges(task_ids)
         job = DAGJob(
