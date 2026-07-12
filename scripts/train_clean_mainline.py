@@ -217,6 +217,13 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             )
             buffer = CleanSlotRolloutBuffer()
             episode_reward = 0.0
+            episode_component_totals: dict[str, float] = {
+                "reward": 0.0,
+                "time_penalty": 0.0,
+                "dag_bonus": 0.0,
+                "task_energy_penalty": 0.0,
+                "movement_energy_penalty": 0.0,
+            }
             last_info: dict[str, Any] = {}
 
             for episode_step in range(int(args.max_steps_per_episode)):
@@ -231,6 +238,11 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                 )
                 global_slot += 1
                 episode_reward += float(slot_record.reward)
+                episode_component_totals["reward"] += float(info.get("step_reward", 0.0))
+                episode_component_totals["time_penalty"] += float(info.get("step_time_penalty", 0.0))
+                episode_component_totals["dag_bonus"] += float(info.get("step_completed_dag_bonus", 0.0))
+                episode_component_totals["task_energy_penalty"] += float(info.get("step_task_energy_penalty", 0.0))
+                episode_component_totals["movement_energy_penalty"] += float(info.get("step_movement_energy_penalty", 0.0))
                 truncated = bool((episode_step + 1) >= int(args.max_steps_per_episode) and not done)
                 slot_record.terminated = bool(done)
                 slot_record.truncated = truncated
@@ -261,6 +273,11 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                         global_slot=global_slot,
                         info=info,
                         update_stats=latest_update_stats,
+                        extra=_episode_diagnostics_payload(
+                            episode_component_totals=episode_component_totals,
+                            terminal=bool(done or truncated),
+                            env=env,
+                        ),
                     )
                     checkpoint_manager.save(
                         modules=modules,
@@ -456,6 +473,66 @@ def _finish_collect_clean_slot(
     if partition_status.startswith("degraded"):
         info["kahypar_degraded_label"] = str(config.KAHYPAR_DEGRADED_EXPERIMENT_LABEL)
     return slot_record, bool(done), info
+
+
+def _episode_diagnostics_payload(
+    *,
+    episode_component_totals: dict[str, float],
+    terminal: bool,
+    env: Env,
+) -> dict[str, Any]:
+    """Episode-level reward component accumulation (diagnostics only).
+
+    Mid-episode update boundaries (e.g. slot 128) report `episode_*_so_far`;
+    the terminal boundary (done/truncated) additionally reports
+    `episode_*_total` plus the counterfactual unsettled backlog estimate.
+    """
+    payload: dict[str, Any] = {
+        f"episode_{key}_so_far": float(value) for key, value in episode_component_totals.items()
+    }
+    payload["episode_terminal_record"] = bool(terminal)
+    if terminal:
+        payload.update(
+            {f"episode_{key}_total": float(value) for key, value in episode_component_totals.items()}
+        )
+        payload.update(_unsettled_backlog_estimate(env))
+    return payload
+
+
+def _unsettled_backlog_estimate(env: Env) -> dict[str, Any]:
+    """Counterfactual estimate of reward-relevant backlog at horizon end.
+
+    For every active unfinished (not reward-settled) task, estimate the delay
+    it WOULD contribute if it reward-completed right now (now - ready/arrival
+    time), plus the same clipped/weighted norm-time cost the reward would
+    charge. These are estimates for diagnostics; they never enter the reward.
+    """
+    now = float(env.current_time_seconds)
+    time_ref = max(float(config.CLEAN_REWARD_TIME_REF), 1.0)
+    time_clip = float(getattr(config, "CLEAN_REWARD_TIME_CLIP", float("inf")))
+    unsettled_tasks = 0
+    delay_sum = 0.0
+    norm_cost = 0.0
+    for task in env.task_manager.get_active_tasks():
+        if bool(getattr(task, "reward_settled", False)):
+            continue
+        unsettled_tasks += 1
+        reference = task.ready_time if task.ready_time is not None else task.arrival_time
+        delay = max(now - float(reference), 0.0)
+        delay_sum += delay
+        weight = (
+            float(config.CRITICAL_TASK_WEIGHT)
+            if bool(getattr(task, "is_critical_path", False))
+            else float(config.NONCRITICAL_TASK_WEIGHT)
+        )
+        norm_cost += weight * min(delay / time_ref, time_clip)
+    unsettled_dags = sum(1 for job in env.task_manager.jobs.values() if not job.completed)
+    return {
+        "unsettled_task_count": int(unsettled_tasks),
+        "unsettled_dag_count": int(unsettled_dags),
+        "unsettled_delay_seconds_sum_estimate": round(delay_sum, 2),
+        "unsettled_norm_time_cost_estimate": round(norm_cost, 4),
+    }
 
 
 def main(argv: list[str] | None = None) -> int:

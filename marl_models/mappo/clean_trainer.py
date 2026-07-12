@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 import json
 import random
 from pathlib import Path
@@ -33,6 +33,10 @@ class CleanPPOUpdateConfig:
     movement_entropy_coef: float = 0.01
     offloading_entropy_coef: float = 0.01
     max_grad_norm: float = 0.5
+    # Diagnostics-only: every N-th update, decompose the HGNN gradient into its
+    # actor-loss and value-loss components via torch.autograd.grad (never
+    # touches .grad). 0 disables the decomposition.
+    hgnn_grad_decomposition_interval: int = 5
 
 
 @dataclass(slots=True)
@@ -56,6 +60,10 @@ class CleanPPOUpdateStats:
     returns_std: float = 0.0
     value_pred_mean: float = 0.0
     explained_variance: float = 0.0
+    # Pure diagnostics (Phase 4 Commit 1): per-module pre/post-clip grad norms,
+    # actual clip scale, HGNN actor/value grad decomposition (+cosine), and
+    # rollout-time normalized entropies. Never used by the update itself.
+    diagnostics: dict = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -196,10 +204,29 @@ class CleanPPOUpdater:
             advantages = (advantages - advantages.mean()) / advantages.std(unbiased=False).clamp_min(1e-8)
 
         latest_stats: CleanPPOUpdateStats | None = None
-        for _ in range(max(int(self.config.ppo_epochs), 1)):
+        diagnostics: dict = _rollout_entropy_diagnostics(records)
+        decompose_interval = int(getattr(self.config, "hgnn_grad_decomposition_interval", 0))
+        decompose_due = decompose_interval > 0 and (self.update_step % decompose_interval == 0)
+        for epoch_index in range(max(int(self.config.ppo_epochs), 1)):
             loss_parts = self._loss(records=records, returns=returns, advantages=advantages)
+            if decompose_due and epoch_index == 0:
+                # torch.autograd.grad reads the live graph without writing .grad,
+                # so this is behavior-neutral for the optimizer step below.
+                diagnostics.update(
+                    _hgnn_grad_decomposition(
+                        loss_parts=loss_parts,
+                        hgnn=self.modules.hgnn,
+                        config=self.config,
+                    )
+                )
             self.optimizer.zero_grad(set_to_none=True)
             loss_parts["total_loss"].backward()
+            pre_clip = {
+                "grad_pre_clip_movement": _module_grad_norm(self.modules.movement_actor),
+                "grad_pre_clip_offloading": _module_grad_norm(self.modules.offloading_actor),
+                "grad_pre_clip_critic": _module_grad_norm(self.modules.critic),
+                "grad_pre_clip_hgnn": _module_grad_norm(self.modules.hgnn),
+            }
             grad_norm = torch.nn.utils.clip_grad_norm_(
                 _unique_parameters(
                     [
@@ -211,10 +238,26 @@ class CleanPPOUpdater:
                 ),
                 float(self.config.max_grad_norm),
             )
+            post_clip = {
+                "grad_post_clip_movement": _module_grad_norm(self.modules.movement_actor),
+                "grad_post_clip_offloading": _module_grad_norm(self.modules.offloading_actor),
+                "grad_post_clip_critic": _module_grad_norm(self.modules.critic),
+                "grad_post_clip_hgnn": _module_grad_norm(self.modules.hgnn),
+            }
+            diagnostics.update(pre_clip)
+            diagnostics.update(post_clip)
+            diagnostics["grad_pre_clip_global"] = float(grad_norm)
+            # Pre/post-clip module norms always reflect the LAST completed PPO
+            # epoch; the HGNN decomposition (if present) reflects epoch 0.
+            diagnostics["grad_norms_epoch"] = int(epoch_index)
+            diagnostics["grad_clip_scale"] = float(
+                min(1.0, float(self.config.max_grad_norm) / max(float(grad_norm), 1e-12))
+            )
             self.optimizer.step()
             latest_stats = self._stats_from_loss_parts(records, loss_parts, float(grad_norm))
             for key, value in scale_diags.items():
                 setattr(latest_stats, key, float(value))
+            latest_stats.diagnostics = dict(diagnostics)
 
         self.update_step += 1
         assert latest_stats is not None
@@ -419,6 +462,7 @@ def write_clean_training_log(
     info: dict[str, Any],
     update_stats: CleanPPOUpdateStats | None = None,
     torch_skipped: bool = False,
+    extra: dict[str, Any] | None = None,
 ) -> None:
     payload = {
         "episode": int(episode),
@@ -453,6 +497,8 @@ def write_clean_training_log(
     }
     if update_stats is not None:
         payload.update({f"ppo_{key}": value for key, value in asdict(update_stats).items()})
+    if extra:
+        payload.update(extra)
     logger.write("train_metrics.jsonl", payload)
 
 
@@ -508,6 +554,94 @@ def _module_grad_norm(module: Any) -> float:
     return float(total ** 0.5)
 
 
+def _rollout_entropy_diagnostics(records: list[CleanSlotRolloutRecord]) -> dict:
+    """Normalized rollout-time entropies (diagnostics only).
+
+    Offloading entropy is normalized by log(n_valid_candidates) per action;
+    actions with n_valid <= 1 are excluded from the normalized mean (a single
+    legal candidate has no meaningful entropy). Movement likewise uses the
+    boundary-legal action count. Raw entropies stay in the main stats.
+    """
+    import math
+
+    off_norm: list[float] = []
+    off_valid: list[int] = []
+    move_norm: list[float] = []
+    move_valid: list[int] = []
+    for record in records:
+        for off in record.offloading_records:
+            n_valid = int(np.asarray(off.candidate_mask, dtype=bool).sum())
+            off_valid.append(n_valid)
+            if n_valid >= 2:
+                off_norm.append(float(off.entropy) / math.log(n_valid))
+        for move in record.movement_records:
+            n_valid = int(np.asarray(move.movement_mask, dtype=bool).sum())
+            move_valid.append(n_valid)
+            if n_valid >= 2:
+                move_norm.append(float(move.entropy) / math.log(n_valid))
+    return {
+        "rollout_offloading_entropy_normalized_mean": float(np.mean(off_norm)) if off_norm else None,
+        "rollout_offloading_valid_candidates_mean": float(np.mean(off_valid)) if off_valid else None,
+        "rollout_movement_entropy_normalized_mean": float(np.mean(move_norm)) if move_norm else None,
+        "rollout_movement_valid_actions_mean": float(np.mean(move_valid)) if move_valid else None,
+    }
+
+
+def _hgnn_grad_decomposition(*, loss_parts: dict, hgnn: Any, config: CleanPPOUpdateConfig) -> dict:
+    """Decompose the HGNN gradient into actor-loss vs value-loss components.
+
+    Uses torch.autograd.grad with retain_graph=True so .grad is never written
+    and the subsequent total_loss.backward() sees an untouched graph. The actor
+    term uses the ACTUAL weighted objective (policy losses minus entropy
+    bonuses); the value term includes the actual value_coef.
+
+    Epoch semantics: computed on PPO epoch 0 only, i.e. against the pre-update
+    parameters of the rollout being consumed (reported as
+    hgnn_decomposition_epoch=0). The per-module pre/post-clip norms elsewhere in
+    diagnostics refer to the LAST PPO epoch (grad_norms_epoch).
+
+    Frozen-movement rollouts can yield loss terms that are graph-free constants
+    (e.g. zero movement loss, or zero offloading loss when M_t = 0 everywhere).
+    Terms without a grad_fn are reported as norm 0.0 and the cosine as None.
+    """
+    params = [param for param in hgnn.parameters() if param.requires_grad]
+    if not params:
+        return {}
+    actor_term = (
+        loss_parts["movement_loss"]
+        + loss_parts["offloading_loss"]
+        - float(config.movement_entropy_coef) * loss_parts["movement_entropy"]
+        - float(config.offloading_entropy_coef) * loss_parts["offloading_entropy"]
+    )
+    value_term = float(config.value_coef) * loss_parts["value_loss"]
+
+    def _flat_or_none(term: Any) -> Any:
+        if not (isinstance(term, torch.Tensor) and term.requires_grad and term.grad_fn is not None):
+            return None
+        grads = torch.autograd.grad(term, params, retain_graph=True, allow_unused=True)
+        return torch.cat(
+            [
+                (grad if grad is not None else torch.zeros_like(param)).reshape(-1)
+                for grad, param in zip(grads, params)
+            ]
+        )
+
+    actor_flat = _flat_or_none(actor_term)
+    value_flat = _flat_or_none(value_term)
+    actor_norm = 0.0 if actor_flat is None else float(actor_flat.norm().item())
+    value_norm = 0.0 if value_flat is None else float(value_flat.norm().item())
+    if actor_flat is None or value_flat is None or actor_norm * value_norm < 1e-12:
+        cosine = None
+    else:
+        cosine = float(torch.dot(actor_flat, value_flat).item() / (actor_norm * value_norm))
+    return {
+        "hgnn_actor_grad_norm": actor_norm,
+        "hgnn_value_grad_norm": value_norm,
+        "hgnn_actor_value_cosine": cosine,
+        "hgnn_decomposition_epoch": 0,
+    }
+
+
 def _rng_state() -> dict[str, Any]:
     state = {
         "python": random.getstate(),
@@ -541,4 +675,5 @@ def _jsonable(value: Any) -> Any:
     if isinstance(value, np.generic):
         return value.item()
     if torch is not None and isinstance(value, torch.Tensor):
-        return value.detach().cpu().tolist
+        return value.detach().cpu().tolist()
+    return value
