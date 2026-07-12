@@ -363,6 +363,14 @@ def _collect_clean_slot(
         # record NO movement rollout entries so the PPO movement loss/entropy
         # terms see zero actions (trainer already averages only over slots with
         # movement records). Offloading/critic/HGNN training is unaffected.
+        #
+        # RNG alignment (Phase 4 Commit 2): draw and DISCARD the same movement
+        # sample the learned path would consume, so the torch RNG stream feeding
+        # the subsequent offloading sampling stays aligned between frozen and
+        # learned runs of the same seed. This aligns sampling-stream consumption
+        # only; trajectories still diverge through the movement treatment itself.
+        movement_dist = categorical_cls(logits=encoded_state.movement_logits)
+        _ = movement_dist.sample()
         hover_action = 0
         assert config.CLEAN_MOVEMENT_ACTIONS[hover_action] == config.CLEAN_MOVEMENT_HOVER_ACTION
         for uav_id in movement_obs.uav_ids:
