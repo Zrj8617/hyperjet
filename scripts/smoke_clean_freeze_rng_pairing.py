@@ -62,6 +62,16 @@ def main() -> int:
         graph_builder = CleanGraphBuilder()
         env.reset()
         graph_builder.reset()
+        # Make the stream comparison non-vacuous: create one identical ready
+        # DAG explicitly instead of relying on a stochastic slot-1 arrival.
+        ue = env.ues[0]
+        job = env.task_manager.create_dag_for_ue(
+            ue_id=ue.id,
+            source_pos=ue.pos[:2].copy(),
+            current_time_step=env.current_time_seconds,
+        )
+        ue.enter_service_waiting(job.dag_id)
+        env.task_manager.refresh_ready_states()
         prepared = prepare_slot_state(env=env, graph_builder=graph_builder)
         task_feature_dim = int(prepared.graph_snapshot.task_features.shape[1])
         emb_dim = 16
