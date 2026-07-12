@@ -541,5 +541,4 @@ def _jsonable(value: Any) -> Any:
     if isinstance(value, np.generic):
         return value.item()
     if torch is not None and isinstance(value, torch.Tensor):
-        return value.detach().cpu().tolist()
-    return value
+        return value.detach().cpu().tolist
