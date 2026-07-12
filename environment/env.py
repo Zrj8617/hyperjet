@@ -607,4 +607,82 @@ class Env:
 
             # 地图外的候选位置不执行移动，服务位置保持在时隙开始处。
             if not self._inside_map(candidate):
-             
+                candidate = pre_pos.copy()
+            self._uav_service_positions[uav_id] = candidate.astype(np.float32, copy=True)
+            move_distance = float(np.linalg.norm(candidate - pre_pos))
+            move_energy = float(config.CLEAN_POWER_MOVE) * float(config.TIME_SLOT_DURATION) if move_distance > 0.0 else 0.0
+            self._last_movement_energy_by_uav[uav_id] = move_energy
+            self._last_movement_energy_total += move_energy
+            # Displacement/hover diagnostics: hover ratio is by chosen ACTION (a blocked
+            # boundary move is not a hover); displacement is the actual distance moved.
+            self._last_movement_distance_by_uav[uav_id] = move_distance
+            self._last_movement_distance_total += move_distance
+            self._last_movement_action_count += 1
+            if action_name == str(config.CLEAN_MOVEMENT_HOVER_ACTION):
+                self._last_movement_hover_count += 1
+            uav.update_position(candidate)
+
+    def _movement_action_name(self, action: int | str) -> str:
+        """将移动动作索引转换为动作名称。"""
+        if isinstance(action, str):
+            return action
+        action_names = tuple(getattr(config, "CLEAN_MOVEMENT_ACTIONS", ("hover", "+x", "-x", "+y", "-y")))
+        index = int(action)
+        return action_names[index] if 0 <= index < len(action_names) else "hover"
+
+    def _compute_movement_position_signal(self) -> float:
+        """Coverage signal for the OPTIONAL movement position shaping term.
+
+        中文：计算就绪任务被无人机覆盖的比例信号。
+
+        Returns the fraction of current frozen ready tasks whose demand origin
+        (task source position) is within UAV coverage radius of at least one UAV
+        service position. Only computed when shaping is enabled; otherwise 0.0 so
+        the clean spec baseline reward is untouched.
+        """
+        if not bool(getattr(config, "ENABLE_MOVEMENT_POSITION_SHAPING", False)):
+            return 0.0
+        ready_task_ids = self._frozen_ready_task_ids
+        if not ready_task_ids or not self._uav_service_positions:
+            return 0.0
+        coverage_radius = float(config.UAV_COVERAGE_RADIUS)
+        uav_positions = [
+            np.asarray(pos, dtype=np.float32).reshape(-1)[:2] for pos in self._uav_service_positions.values()
+        ]
+        covered = 0
+        counted = 0
+        for task_id in ready_task_ids:
+            task = self._task_manager.get_task(task_id)
+            if task is None:
+                continue
+            counted += 1
+            source_xy = np.asarray(task.source_pos, dtype=np.float32).reshape(-1)[:2]
+            nearest = min(float(np.linalg.norm(pos - source_xy)) for pos in uav_positions)
+            if nearest <= coverage_radius:
+                covered += 1
+        if counted == 0:
+            return 0.0
+        return float(covered) / float(counted)
+
+    def _movement_delta(self, action: int | str) -> np.ndarray:
+        step_distance = float(config.CLEAN_UAV_MOVEMENT_SPEED) * float(config.TIME_SLOT_DURATION)
+        if isinstance(action, str):
+            action_name = action
+        else:
+            action_names = tuple(getattr(config, "CLEAN_MOVEMENT_ACTIONS", ("hover", "+x", "-x", "+y", "-y")))
+            action_name = action_names[int(action)] if 0 <= int(action) < len(action_names) else "hover"
+        if action_name == "+x":
+            return np.array([step_distance, 0.0], dtype=np.float32)
+        if action_name == "-x":
+            return np.array([-step_distance, 0.0], dtype=np.float32)
+        if action_name == "+y":
+            return np.array([0.0, step_distance], dtype=np.float32)
+        if action_name == "-y":
+            return np.array([0.0, -step_distance], dtype=np.float32)
+        return np.zeros((2,), dtype=np.float32)
+
+    def _inside_map(self, position: np.ndarray) -> bool:
+        return (
+            0.0 <= float(position[0]) <= float(config.AREA_WIDTH)
+            and 0.0 <= float(position[1]) <= float(config.AREA_HEIGHT)
+        )
