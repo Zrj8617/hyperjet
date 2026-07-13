@@ -199,6 +199,10 @@ def _check_reward_control_provenance() -> None:
         snapshot["experiment_controls"]["completed_dag_weight"] == 16.0,
         "training experiment controls should record w_c=16.",
     )
+    _assert(
+        snapshot["experiment_controls"]["detach_critic_hgnn"] is False,
+        "training experiment controls should default to shared critic-HGNN mode.",
+    )
     payload = {"config": snapshot}
     _assert(
         checkpoint_experiment_controls(payload)["completed_dag_weight"] == 16.0,
@@ -217,10 +221,30 @@ def _check_reward_control_provenance() -> None:
         == float(config.REWARD_COMPLETED_DAG_WEIGHT),
         "legacy checkpoints should resolve to the configured w_c=2 baseline.",
     )
-    eval_config = build_eval_config(build_eval_arg_parser().parse_args([]), {"completed_dag_weight": 16.0})
+    _assert(
+        checkpoint_experiment_controls({})["detach_critic_hgnn"] is False,
+        "legacy checkpoints should resolve to shared critic-HGNN mode.",
+    )
+    detach_args = build_train_arg_parser().parse_args(
+        ["--completed-dag-weight", "16", "--detach-critic-hgnn"]
+    )
+    try:
+        validate_resume_experiment_controls(detach_args, payload)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("resume should reject a critic-HGNN detach mismatch.")
+    eval_config = build_eval_config(
+        build_eval_arg_parser().parse_args([]),
+        {"completed_dag_weight": 16.0, "detach_critic_hgnn": True},
+    )
     _assert(
         eval_config["checkpoint_experiment_controls"]["completed_dag_weight"] == 16.0,
         "evaluation provenance should report the checkpoint-derived reward weight.",
+    )
+    _assert(
+        eval_config["checkpoint_experiment_controls"]["detach_critic_hgnn"] is True,
+        "evaluation provenance should report the checkpoint-derived detach boundary.",
     )
 
 

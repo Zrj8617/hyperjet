@@ -33,6 +33,9 @@ class CleanPPOUpdateConfig:
     movement_entropy_coef: float = 0.01
     offloading_entropy_coef: float = 0.01
     max_grad_norm: float = 0.5
+    # Experimental boundary: the critic head still trains, but its value loss
+    # cannot update the shared HGNN when this is enabled.
+    detach_critic_hgnn: bool = False
     # Diagnostics-only: every N-th update, decompose the HGNN gradient into its
     # actor-loss and value-loss components via torch.autograd.grad (never
     # touches .grad). 0 disables the decomposition.
@@ -224,6 +227,7 @@ class CleanPPOUpdater:
 
         latest_stats: CleanPPOUpdateStats | None = None
         diagnostics: dict = _rollout_entropy_diagnostics(records)
+        diagnostics["critic_hgnn_detached"] = bool(self.config.detach_critic_hgnn)
         decompose_interval = int(getattr(self.config, "hgnn_grad_decomposition_interval", 0))
         decompose_due = decompose_interval > 0 and (self.update_step % decompose_interval == 0)
         for epoch_index in range(max(int(self.config.ppo_epochs), 1)):
@@ -302,7 +306,12 @@ class CleanPPOUpdater:
             task_features = torch.as_tensor(task_features_np, dtype=torch.float32, device=self.device)
             incidence = torch.as_tensor(incidence_np, dtype=torch.float32, device=self.device)
             task_embeddings = self.modules.hgnn(task_features, incidence)
-            critic_input = _critic_input_tensor(task_embeddings, record.critic_non_graph_input)
+            critic_embeddings = (
+                task_embeddings.detach()
+                if bool(self.config.detach_critic_hgnn)
+                else task_embeddings
+            )
+            critic_input = _critic_input_tensor(critic_embeddings, record.critic_non_graph_input)
             value = self.modules.critic(critic_input).reshape(-1)[0]
             value_losses.append(0.5 * (value - returns[slot_idx]).pow(2))
 
@@ -440,6 +449,7 @@ def reencode_prepared_after_update(
     env: Any,
     modules: CleanTrainingModules,
     device: str | Any = "cpu",
+    detach_critic_hgnn: bool = False,
 ) -> CleanEncodedSlotState:
     return encode_prepared_slot(
         prepared_state=prepared_state,
@@ -448,6 +458,7 @@ def reencode_prepared_after_update(
         critic=modules.critic,
         movement_actor=modules.movement_actor,
         device=device,
+        detach_critic_hgnn=detach_critic_hgnn,
     )
 
 

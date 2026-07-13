@@ -66,10 +66,14 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
     cli = checkpoint_config.get("cli", {}) if isinstance(checkpoint_config, dict) else {}
     if not isinstance(cli, dict):
         cli = {}
+    detach_critic_hgnn = cli.get("detach_critic_hgnn", False)
+    if not isinstance(detach_critic_hgnn, bool):
+        raise ValueError("checkpoint detach_critic_hgnn must be boolean")
     return {
         "completed_dag_weight": _validated_completed_dag_weight(
             cli.get("completed_dag_weight", config.REWARD_COMPLETED_DAG_WEIGHT)
         ),
+        "detach_critic_hgnn": detach_critic_hgnn,
     }
 
 
@@ -89,6 +93,12 @@ def validate_resume_experiment_controls(
         raise ValueError(
             "resume checkpoint completed-DAG weight mismatch: "
             f"requested {requested_weight}, checkpoint {saved['completed_dag_weight']}"
+        )
+    requested_detach = bool(getattr(args, "detach_critic_hgnn", False))
+    if requested_detach != bool(saved["detach_critic_hgnn"]):
+        raise ValueError(
+            "resume checkpoint critic-HGNN detach mismatch: "
+            f"requested {requested_detach}, checkpoint {saved['detach_critic_hgnn']}"
         )
     return saved
 
@@ -110,6 +120,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=_nonnegative_finite_float,
         default=float(config.REWARD_COMPLETED_DAG_WEIGHT),
         help="Run-level completed-DAG reward weight; the clean baseline remains 2.0.",
+    )
+    parser.add_argument(
+        "--detach-critic-hgnn",
+        action="store_true",
+        default=False,
+        help="Block value-loss gradients from the critic into the shared HGNN.",
     )
     parser.add_argument("--output-dir", type=Path, default=Path("logs") / "clean_mainline")
     parser.add_argument("--run-name", type=str, default="clean")
@@ -163,6 +179,7 @@ def build_config_snapshot(args: argparse.Namespace) -> dict[str, Any]:
         "cli": _namespace_to_dict(args),
         "experiment_controls": {
             "completed_dag_weight": completed_dag_weight,
+            "detach_critic_hgnn": bool(getattr(args, "detach_critic_hgnn", False)),
         },
         "clean_scene": {
             "AREA_WIDTH": config.AREA_WIDTH,
@@ -206,6 +223,7 @@ def initialize_run_files(run_dir: Path, args: argparse.Namespace) -> None:
             "run_dir": str(run_dir),
             "torch_required_for_training": True,
             "completed_dag_weight": _resolved_completed_dag_weight(args),
+            "detach_critic_hgnn": bool(getattr(args, "detach_critic_hgnn", False)),
             "resume_semantics": "restart_from_new_episode_only",
         },
     )
@@ -261,6 +279,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             movement_entropy_coef=float(args.entropy_coef),
             offloading_entropy_coef=float(args.entropy_coef),
             max_grad_norm=float(args.max_grad_norm),
+            detach_critic_hgnn=bool(args.detach_critic_hgnn),
         ),
         device=device,
     )
@@ -291,6 +310,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                 critic=modules.critic,
                 movement_actor=modules.movement_actor,
                 device=device,
+                detach_critic_hgnn=bool(args.detach_critic_hgnn),
             )
             buffer = CleanSlotRolloutBuffer()
             episode_reward = 0.0
@@ -338,6 +358,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                         critic=modules.critic,
                         movement_actor=modules.movement_actor,
                         device=device,
+                        detach_critic_hgnn=bool(args.detach_critic_hgnn),
                     )
 
                 should_update = len(buffer) >= int(args.rollout_horizon) or bool(done) or truncated
@@ -355,6 +376,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                             terminal=bool(done or truncated),
                             env=env,
                             completed_dag_weight=float(args.completed_dag_weight),
+                            detach_critic_hgnn=bool(args.detach_critic_hgnn),
                         ),
                     )
                     checkpoint_manager.save(
@@ -374,6 +396,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                             env=env,
                             modules=modules,
                             device=device,
+                            detach_critic_hgnn=bool(args.detach_critic_hgnn),
                         )
                         buffer = CleanSlotRolloutBuffer()
                     else:
@@ -409,6 +432,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                     "latest_info": _jsonable(last_info),
                     "latest_update": None if latest_update_stats is None else asdict(latest_update_stats),
                     "completed_dag_weight": float(args.completed_dag_weight),
+                    "detach_critic_hgnn": bool(args.detach_critic_hgnn),
                     "resume_semantics": "restart_from_new_episode_only",
                 },
             )
@@ -421,6 +445,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         "global_slot": global_slot,
         "latest_update": None if latest_update_stats is None else asdict(latest_update_stats),
         "completed_dag_weight": float(args.completed_dag_weight),
+        "detach_critic_hgnn": bool(args.detach_critic_hgnn),
         "kahypar_circuit_open": bool(graph_builder.kahypar_circuit_open),
         "kahypar_last_failure_reason": graph_builder.kahypar_last_failure_reason,
         "kahypar_cleanup_failed": bool(graph_builder.kahypar_cleanup_failed),
@@ -576,6 +601,7 @@ def _episode_diagnostics_payload(
     terminal: bool,
     env: Env,
     completed_dag_weight: float,
+    detach_critic_hgnn: bool,
 ) -> dict[str, Any]:
     """Episode-level reward component accumulation (diagnostics only).
 
@@ -588,6 +614,7 @@ def _episode_diagnostics_payload(
     }
     payload["episode_terminal_record"] = bool(terminal)
     payload["completed_dag_weight"] = float(completed_dag_weight)
+    payload["detach_critic_hgnn"] = bool(detach_critic_hgnn)
     if terminal:
         payload.update(
             {f"episode_{key}_total": float(value) for key, value in episode_component_totals.items()}

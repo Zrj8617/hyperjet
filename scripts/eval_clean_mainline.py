@@ -63,6 +63,7 @@ def build_eval_config(
 ) -> dict[str, Any]:
     controls = experiment_controls or {
         "completed_dag_weight": float(config.REWARD_COMPLETED_DAG_WEIGHT),
+        "detach_critic_hgnn": False,
     }
     return {
         "cli": _namespace_to_dict(args),
@@ -101,6 +102,7 @@ def initialize_eval_files(
 ) -> None:
     controls = experiment_controls or {
         "completed_dag_weight": float(config.REWARD_COMPLETED_DAG_WEIGHT),
+        "detach_critic_hgnn": False,
     }
     _write_json(run_dir / "config.json", build_eval_config(args, controls))
     _write_json(
@@ -113,6 +115,7 @@ def initialize_eval_files(
             "arrival_steps": int(args.arrival_steps),
             "max_drain_steps": int(args.max_drain_steps),
             "completed_dag_weight": float(controls["completed_dag_weight"]),
+            "detach_critic_hgnn": bool(controls["detach_critic_hgnn"]),
         },
     )
 
@@ -162,6 +165,7 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
                 max_drain_steps=int(args.max_drain_steps),
                 episode=episode,
                 freeze_movement=bool(args.freeze_movement),
+                detach_critic_hgnn=bool(experiment_controls["detach_critic_hgnn"]),
             )
             metrics_rows.append(episode_result)
             _write_jsonl(run_dir / "eval_metrics.jsonl", episode_result)
@@ -178,6 +182,7 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
             "deterministic": True,
             "movement_frozen": bool(args.freeze_movement),
             "completed_dag_weight": float(experiment_controls["completed_dag_weight"]),
+            "detach_critic_hgnn": bool(experiment_controls["detach_critic_hgnn"]),
             "episodes": int(args.episodes),
             "kahypar_circuit_open": bool(graph_builder.kahypar_circuit_open),
             "kahypar_last_failure_reason": graph_builder.kahypar_last_failure_reason,
@@ -199,6 +204,7 @@ def _run_eval_episode(
     max_drain_steps: int,
     episode: int,
     freeze_movement: bool = False,
+    detach_critic_hgnn: bool = False,
 ) -> dict[str, Any]:
     arrival_slots = 0
     drain_slots = 0
@@ -221,6 +227,7 @@ def _run_eval_episode(
             device=device,
             allow_dag_arrivals=True,
             freeze_movement=freeze_movement,
+            detach_critic_hgnn=detach_critic_hgnn,
         )
         arrival_slots += 1
         offloading_action_count += off_count
@@ -247,6 +254,7 @@ def _run_eval_episode(
             device=device,
             allow_dag_arrivals=False,
             freeze_movement=freeze_movement,
+            detach_critic_hgnn=detach_critic_hgnn,
         )
         drain_slots += 1
         offloading_action_count += off_count
@@ -332,6 +340,7 @@ def _eval_one_slot(
     device: Any,
     allow_dag_arrivals: bool,
     freeze_movement: bool = False,
+    detach_critic_hgnn: bool = False,
 ) -> tuple[bool, dict[str, Any], dict[str, int], int]:
     import torch
 
@@ -345,6 +354,7 @@ def _eval_one_slot(
             critic=modules.critic,
             movement_actor=modules.movement_actor,
             device=device,
+            detach_critic_hgnn=detach_critic_hgnn,
         )
     movement_actions = _select_deterministic_movement_actions(encoded, freeze_movement=freeze_movement)
     movement_records = [

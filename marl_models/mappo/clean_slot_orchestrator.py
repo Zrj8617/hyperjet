@@ -181,11 +181,21 @@ def encode_prepared_slot(
     movement_actor: Any | None = None,
     device: str | Any = "cpu",
     fallback_embedding_dim: int | None = None,
+    detach_critic_hgnn: bool = False,
 ) -> CleanEncodedSlotState:
     """Encode an already prepared slot with the current model parameters."""
     snapshot = prepared_state.graph_snapshot
     task_embeddings = _encode_task_embeddings(snapshot, hgnn=hgnn, device=device, fallback_dim=fallback_embedding_dim)
-    critic_global_input = _assemble_critic_input(task_embeddings, prepared_state.critic_non_graph_input, device=device)
+    critic_embeddings = (
+        task_embeddings.detach()
+        if bool(detach_critic_hgnn) and hasattr(task_embeddings, "detach")
+        else task_embeddings
+    )
+    critic_global_input = _assemble_critic_input(
+        critic_embeddings,
+        prepared_state.critic_non_graph_input,
+        device=device,
+    )
     value = _critic_value(critic, critic_global_input, device=device)
     movement_observation = build_clean_movement_observation(
         uavs=env.uavs,
