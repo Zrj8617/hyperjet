@@ -35,6 +35,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-name", type=str, default="eval")
     parser.add_argument("--deterministic", action="store_true", default=True)
     parser.add_argument("--no-render", action="store_true", default=True)
+    parser.add_argument(
+        "--freeze-movement",
+        action="store_true",
+        default=False,
+        help="Force every UAV to hover throughout arrival and drain evaluation. "
+        "Use this when evaluating checkpoints trained with --freeze-movement.",
+    )
     parser.add_argument("--task-embedding-dim", type=int, default=None)
     parser.add_argument("--hidden-dim", type=int, default=None)
     return parser
@@ -58,6 +65,7 @@ def build_eval_config(args: argparse.Namespace) -> dict[str, Any]:
             "drain_phase": "UE movement continues; DAG arrivals disabled; executor continues",
             "throughput_denominator": "total_executed_slots * TIME_SLOT_DURATION",
             "default_action": "masked_argmax_deterministic",
+            "movement_mode": "forced_hover" if bool(args.freeze_movement) else "masked_argmax_deterministic",
         },
         "clean_scene": {
             "AREA_WIDTH": config.AREA_WIDTH,
@@ -98,7 +106,7 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
 
     _set_seed(int(args.seed), torch=torch)
     device = torch.device(str(args.device))
-    checkpoint_payload = torch.load(Path(args.checkpoint), map_location="cpu")
+    checkpoint_payload = _load_trusted_checkpoint(torch, Path(args.checkpoint))
     module_dims = _module_dims_from_checkpoint(checkpoint_payload, args)
     modules = _build_modules(dims=module_dims, device=device)
     _load_module_state(modules, checkpoint_payload)
@@ -121,6 +129,7 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
             arrival_steps=int(args.arrival_steps),
             max_drain_steps=int(args.max_drain_steps),
             episode=episode,
+            freeze_movement=bool(args.freeze_movement),
         )
         metrics_rows.append(episode_result)
         _write_jsonl(run_dir / "eval_metrics.jsonl", episode_result)
@@ -133,6 +142,7 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
             "run_dir": str(run_dir),
             "checkpoint": str(args.checkpoint),
             "deterministic": True,
+            "movement_frozen": bool(args.freeze_movement),
             "episodes": int(args.episodes),
         }
     )
@@ -149,6 +159,7 @@ def _run_eval_episode(
     arrival_steps: int,
     max_drain_steps: int,
     episode: int,
+    freeze_movement: bool = False,
 ) -> dict[str, Any]:
     arrival_slots = 0
     drain_slots = 0
@@ -168,6 +179,7 @@ def _run_eval_episode(
             modules=modules,
             device=device,
             allow_dag_arrivals=True,
+            freeze_movement=freeze_movement,
         )
         arrival_slots += 1
         offloading_action_count += off_count
@@ -181,6 +193,8 @@ def _run_eval_episode(
         if done:
             break
 
+    arrival_snapshot = _snapshot_arrival_metrics(env=env, arrival_slots=arrival_slots)
+
     while drain_slots < max(int(max_drain_steps), 0) and _active_dag_count(env) > 0:
         done, info, movement_counts, off_count = _eval_one_slot(
             env=env,
@@ -188,6 +202,7 @@ def _run_eval_episode(
             modules=modules,
             device=device,
             allow_dag_arrivals=False,
+            freeze_movement=freeze_movement,
         )
         drain_slots += 1
         offloading_action_count += off_count
@@ -233,11 +248,13 @@ def _run_eval_episode(
         "Energy_per_completed_DAG": energy_per_completed,
         "total_executed_slots": total_slots,
         "arrival_slots_executed": int(arrival_slots),
+        **arrival_snapshot,
         "drain_slots_executed": int(drain_slots),
         "invalid_assignment_count": float(info_metrics.get("invalid_assignment_count", 0.0)),
         "invalid_assignment_rate": None if assignment_entries <= 0.0 else float(env.metrics.metrics.invalid_assignment_count / assignment_entries),
         "action_executed_rate": None if assignment_entries <= 0.0 else float(env.metrics.metrics.executed_action_count / assignment_entries),
         "movement_action_distribution": movement_distribution,
+        "movement_frozen": bool(freeze_movement),
         "offloading_action_count": int(offloading_action_count),
         "hover_action_ratio": info_metrics.get("hover_action_ratio"),
         "mean_uav_displacement_per_slot": info_metrics.get("mean_uav_displacement_per_slot"),
@@ -265,6 +282,7 @@ def _eval_one_slot(
     modules: CleanTrainingModules,
     device: Any,
     allow_dag_arrivals: bool,
+    freeze_movement: bool = False,
 ) -> tuple[bool, dict[str, Any], dict[str, int], int]:
     import torch
 
@@ -279,11 +297,7 @@ def _eval_one_slot(
             movement_actor=modules.movement_actor,
             device=device,
         )
-        selected_movement = torch.argmax(encoded.movement_logits, dim=-1)
-    movement_actions = {
-        int(uav_id): int(selected_movement[idx].detach().cpu().item())
-        for idx, uav_id in enumerate(encoded.movement_observation.uav_ids)
-    }
+    movement_actions = _select_deterministic_movement_actions(encoded, freeze_movement=freeze_movement)
     movement_records = [
         type("MovementEvalRecord", (), {"selected_action": action})()
         for action in movement_actions.values()
@@ -311,6 +325,7 @@ def _eval_one_slot(
         for action, ratio in movement_distribution.items()
     }
     info["movement_action_distribution"] = movement_distribution
+    info["movement_frozen"] = bool(freeze_movement)
     info["offloading_action_count"] = len(modules.offloading_actor.latest_records)
     info["kahypar_partition_status"] = str(getattr(prepared.graph_snapshot, "partition_status", "disabled"))
     return bool(done), info, movement_counts, len(modules.offloading_actor.latest_records)
@@ -368,6 +383,16 @@ def _load_module_state(modules: CleanTrainingModules, payload: dict[str, Any]) -
     modules.critic.load_state_dict(payload["critic"])
 
 
+def _load_trusted_checkpoint(torch: Any, checkpoint: Path) -> dict[str, Any]:
+    """Load a project-generated clean checkpoint across PyTorch versions."""
+    try:
+        return torch.load(checkpoint, map_location="cpu", weights_only=False)
+    except TypeError as exc:
+        if "weights_only" not in str(exc):
+            raise
+        return torch.load(checkpoint, map_location="cpu")
+
+
 def _module_dims_from_checkpoint(payload: dict[str, Any], args: argparse.Namespace) -> dict[str, int]:
     cli_config = payload.get("config", {}).get("cli", {}) if isinstance(payload.get("config"), dict) else {}
     task_embedding_dim = args.task_embedding_dim or cli_config.get("task_embedding_dim") or _infer_hgnn_output_dim(payload)
@@ -404,6 +429,21 @@ def _set_eval_mode(modules: CleanTrainingModules) -> None:
     modules.critic.eval()
 
 
+def _select_deterministic_movement_actions(encoded: Any, *, freeze_movement: bool) -> dict[int, int]:
+    uav_ids = encoded.movement_observation.uav_ids
+    if freeze_movement:
+        hover_action = int(config.CLEAN_MOVEMENT_ACTIONS.index(config.CLEAN_MOVEMENT_HOVER_ACTION))
+        return {int(uav_id): hover_action for uav_id in uav_ids}
+
+    import torch
+
+    selected_movement = torch.argmax(encoded.movement_logits, dim=-1)
+    return {
+        int(uav_id): int(selected_movement[idx].detach().cpu().item())
+        for idx, uav_id in enumerate(uav_ids)
+    }
+
+
 @contextmanager
 def _dag_arrival_enabled(enabled: bool):
     original = config.DAG_BASE_ARRIVAL_PROB
@@ -417,6 +457,24 @@ def _dag_arrival_enabled(enabled: bool):
 
 def _active_dag_count(env: Env) -> int:
     return sum(1 for job in env.task_manager.jobs.values() if not job.completed)
+
+
+def _active_task_count(env: Env) -> int:
+    return sum(1 for task in env.task_manager.tasks.values() if getattr(task, "state", None) != "COMPLETED")
+
+
+def _snapshot_arrival_metrics(*, env: Env, arrival_slots: int) -> dict[str, Any]:
+    arrival_time = float(arrival_slots) * float(config.TIME_SLOT_DURATION)
+    info_metrics = env.metrics.to_info(int(arrival_slots), total_time_seconds=arrival_time)
+    generated = float(info_metrics.get("generated_dag_count", 0.0))
+    completed = float(info_metrics.get("completed_dag_count", 0.0))
+    return {
+        "arrival_generated_DAG_count": generated,
+        "arrival_completed_DAG_count": completed,
+        "arrival_DAG_completion_rate": float(completed / max(generated, 1.0)),
+        "arrival_active_DAG_count": int(_active_dag_count(env)),
+        "arrival_active_task_count": int(_active_task_count(env)),
+    }
 
 
 def _evaluation_diagnostics(
@@ -549,6 +607,8 @@ def _aggregate_summary(aggregate: dict[str, Any], *, episode_count: int) -> dict
     rows = aggregate["episodes"]
     generated_total = float(sum(row["generated_DAG_count"] for row in rows))
     completed_total = float(sum(row["completed_DAG_count"] for row in rows))
+    arrival_generated_total = float(sum(row.get("arrival_generated_DAG_count", 0.0) for row in rows))
+    arrival_completed_total = float(sum(row.get("arrival_completed_DAG_count", 0.0) for row in rows))
     return {
         "generated_DAG_count": generated_total,
         "completed_DAG_count": completed_total,
@@ -559,6 +619,11 @@ def _aggregate_summary(aggregate: dict[str, Any], *, episode_count: int) -> dict
         "Energy_per_completed_DAG": None if completed_total <= 0.0 else _mean(row["Energy_per_completed_DAG"] for row in rows),
         "total_executed_slots": int(sum(row["total_executed_slots"] for row in rows)),
         "arrival_slots_executed": int(sum(row["arrival_slots_executed"] for row in rows)),
+        "arrival_generated_DAG_count": arrival_generated_total,
+        "arrival_completed_DAG_count": arrival_completed_total,
+        "arrival_DAG_completion_rate": float(arrival_completed_total / max(arrival_generated_total, 1.0)),
+        "arrival_active_DAG_count": int(sum(row.get("arrival_active_DAG_count", 0) for row in rows)),
+        "arrival_active_task_count": int(sum(row.get("arrival_active_task_count", 0) for row in rows)),
         "drain_slots_executed": int(sum(row["drain_slots_executed"] for row in rows)),
         "invalid_assignment_count": float(sum(row["invalid_assignment_count"] for row in rows)),
         "invalid_assignment_rate": _mean(row["invalid_assignment_rate"] for row in rows if row["invalid_assignment_rate"] is not None),
@@ -567,6 +632,7 @@ def _aggregate_summary(aggregate: dict[str, Any], *, episode_count: int) -> dict
             action: float(total) / max(float(episode_count), 1.0)
             for action, total in aggregate["movement_counts"].items()
         },
+        "movement_frozen": bool(rows) and all(bool(row.get("movement_frozen", False)) for row in rows),
         "offloading_action_count": int(sum(row["offloading_action_count"] for row in rows)),
         "final_active_DAG_count": int(sum(row.get("final_active_DAG_count", 0) for row in rows)),
         "final_active_task_count": int(sum(row.get("final_active_task_count", 0) for row in rows)),

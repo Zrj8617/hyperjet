@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import sys
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -25,11 +26,17 @@ REQUIRED_METRIC_FIELDS = [
     "Energy_per_completed_DAG",
     "total_executed_slots",
     "arrival_slots_executed",
+    "arrival_generated_DAG_count",
+    "arrival_completed_DAG_count",
+    "arrival_DAG_completion_rate",
+    "arrival_active_DAG_count",
+    "arrival_active_task_count",
     "drain_slots_executed",
     "invalid_assignment_count",
     "invalid_assignment_rate",
     "action_executed_rate",
     "movement_action_distribution",
+    "movement_frozen",
     "offloading_action_count",
     "final_active_DAG_count",
     "final_active_task_count",
@@ -72,12 +79,14 @@ def main() -> None:
             "--run-name",
             "eval_smoke",
             "--no-render",
+            "--freeze-movement",
         ]
     )
     _assert(args.arrival_steps == 3, "CLI should parse --arrival-steps.")
     _assert(args.max_drain_steps == 4, "CLI should parse --max-drain-steps.")
     _assert(args.deterministic is True, "deterministic evaluation should be default.")
     _assert(args.no_render is True, "evaluation should support no-render mode.")
+    _assert(args.freeze_movement is True, "evaluation should parse --freeze-movement.")
 
     config_payload = eval_clean_mainline.build_eval_config(args)
     _assert(
@@ -86,6 +95,7 @@ def main() -> None:
     )
     _assert("DAG arrivals disabled" in config_payload["protocol"]["drain_phase"], "drain protocol should disable DAG arrivals.")
     _assert(config_payload["protocol"]["default_action"] == "masked_argmax_deterministic", "default action should be deterministic masked argmax.")
+    _assert(config_payload["protocol"]["movement_mode"] == "forced_hover", "frozen eval config should record forced hover.")
 
     sample_summary = eval_clean_mainline._aggregate_summary(
         {
@@ -100,11 +110,17 @@ def main() -> None:
                     "Energy_per_completed_DAG": 3.0,
                     "total_executed_slots": 5,
                     "arrival_slots_executed": 3,
+                    "arrival_generated_DAG_count": 2.0,
+                    "arrival_completed_DAG_count": 1.0,
+                    "arrival_DAG_completion_rate": 0.5,
+                    "arrival_active_DAG_count": 1,
+                    "arrival_active_task_count": 2,
                     "drain_slots_executed": 2,
                     "invalid_assignment_count": 0.0,
                     "invalid_assignment_rate": 0.0,
                     "action_executed_rate": 1.0,
                     "movement_action_distribution": {"hover": 1.0},
+                    "movement_frozen": True,
                     "offloading_action_count": 1,
                     "final_active_DAG_count": 0,
                     "final_active_task_count": 0,
@@ -138,6 +154,88 @@ def main() -> None:
     _assert(sample_summary["total_executed_slots"] == 5, "summary should preserve total executed slots.")
     _assert(np.isclose(sample_summary["DAG_throughput"], 1.0 / 25.0), "throughput should reflect total executed time.")
     _assert(sample_summary["drain_end_reason"] == "all_completed", "summary should include drain end reason.")
+    _assert(sample_summary["arrival_DAG_completion_rate"] == 0.5, "summary should preserve arrival completion.")
+    _assert(sample_summary["movement_frozen"] is True, "summary should preserve frozen movement mode.")
+
+    weighted_rows = []
+    for generated, completed in [(2.0, 1.0), (8.0, 2.0)]:
+        row = dict(sample_summary)
+        row.update(
+            {
+                "arrival_generated_DAG_count": generated,
+                "arrival_completed_DAG_count": completed,
+                "arrival_DAG_completion_rate": completed / generated,
+            }
+        )
+        weighted_rows.append(row)
+    weighted_summary = eval_clean_mainline._aggregate_summary(
+        {"episodes": weighted_rows, "movement_counts": {"hover": 2.0}},
+        episode_count=2,
+    )
+    _assert(
+        np.isclose(weighted_summary["arrival_DAG_completion_rate"], 3.0 / 10.0),
+        "arrival completion should aggregate counts rather than average episode rates.",
+    )
+
+    class _FreezeProbe:
+        movement_observation = SimpleNamespace(uav_ids=[10, 11])
+
+        @property
+        def movement_logits(self):
+            raise AssertionError("frozen movement must not inspect movement logits")
+
+    frozen_actions = eval_clean_mainline._select_deterministic_movement_actions(
+        _FreezeProbe(),
+        freeze_movement=True,
+    )
+    _assert(frozen_actions == {10: 0, 11: 0}, "frozen evaluation should force the configured hover action.")
+
+    metrics_calls = []
+
+    class _ArrivalMetrics:
+        def to_info(self, slots, *, total_time_seconds):
+            metrics_calls.append((slots, total_time_seconds))
+            return {"generated_dag_count": 4.0, "completed_dag_count": 3.0}
+
+    snapshot_env = SimpleNamespace(
+        metrics=_ArrivalMetrics(),
+        task_manager=SimpleNamespace(
+            jobs={"done": SimpleNamespace(completed=True), "active": SimpleNamespace(completed=False)},
+            tasks={"done": SimpleNamespace(state="COMPLETED"), "active": SimpleNamespace(state="IN_SERVICE")},
+        ),
+    )
+    arrival_snapshot = eval_clean_mainline._snapshot_arrival_metrics(env=snapshot_env, arrival_slots=7)
+    _assert(arrival_snapshot["arrival_DAG_completion_rate"] == 0.75, "arrival snapshot completion mismatch.")
+    _assert(arrival_snapshot["arrival_active_DAG_count"] == 1, "arrival snapshot active DAG count mismatch.")
+    _assert(arrival_snapshot["arrival_active_task_count"] == 1, "arrival snapshot active task count mismatch.")
+    _assert(metrics_calls == [(7, 7.0 * eval_clean_mainline.config.TIME_SLOT_DURATION)], "arrival snapshot time boundary mismatch.")
+
+    class _ModernTorch:
+        calls = []
+
+        @classmethod
+        def load(cls, path, **kwargs):
+            cls.calls.append((path, kwargs))
+            return {"format": "modern"}
+
+    modern_payload = eval_clean_mainline._load_trusted_checkpoint(_ModernTorch, Path("trusted.pt"))
+    _assert(modern_payload == {"format": "modern"}, "trusted checkpoint payload mismatch.")
+    _assert(_ModernTorch.calls[0][1].get("weights_only") is False, "PyTorch 2.6 load should opt out of weights-only mode.")
+
+    class _LegacyTorch:
+        calls = []
+
+        @classmethod
+        def load(cls, path, **kwargs):
+            cls.calls.append((path, kwargs))
+            if "weights_only" in kwargs:
+                raise TypeError("load() got an unexpected keyword argument 'weights_only'")
+            return {"format": "legacy"}
+
+    legacy_payload = eval_clean_mainline._load_trusted_checkpoint(_LegacyTorch, Path("trusted.pt"))
+    _assert(legacy_payload == {"format": "legacy"}, "legacy checkpoint fallback payload mismatch.")
+    _assert(len(_LegacyTorch.calls) == 2, "legacy checkpoint load should retry exactly once.")
+    _assert("weights_only" not in _LegacyTorch.calls[1][1], "legacy retry should omit weights_only.")
 
     zero_completed_summary = eval_clean_mainline._aggregate_summary(
         {
@@ -152,11 +250,17 @@ def main() -> None:
                     "Energy_per_completed_DAG": None,
                     "total_executed_slots": 1500,
                     "arrival_slots_executed": 600,
+                    "arrival_generated_DAG_count": 180.0,
+                    "arrival_completed_DAG_count": 0.0,
+                    "arrival_DAG_completion_rate": 0.0,
+                    "arrival_active_DAG_count": 180,
+                    "arrival_active_task_count": 500,
                     "drain_slots_executed": 900,
                     "invalid_assignment_count": 0.0,
                     "invalid_assignment_rate": 0.0,
                     "action_executed_rate": 1.0,
                     "movement_action_distribution": {"hover": 0.0, "+x": 1.0},
+                    "movement_frozen": False,
                     "offloading_action_count": 465,
                     "final_active_DAG_count": 180,
                     "final_active_task_count": 500,
