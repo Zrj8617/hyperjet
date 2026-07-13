@@ -490,8 +490,10 @@ def _finish_collect_clean_slot(
         info["movement_action_distribution"] = _movement_action_distribution(movement_records)
     info["movement_frozen"] = bool(movement_frozen)
     info["offloading_action_count"] = len(offloading_records)
-    partition_status = str(getattr(encoded_state.prepared_state.graph_snapshot, "partition_status", "disabled"))
+    graph_snapshot = encoded_state.prepared_state.graph_snapshot
+    partition_status = str(getattr(graph_snapshot, "partition_status", "disabled"))
     info["kahypar_partition_status"] = partition_status
+    info["kahypar_partition_hyperedge_count"] = int(len(graph_snapshot.partition_hyperedges))
     if partition_status.startswith("degraded"):
         info["kahypar_degraded_label"] = str(config.KAHYPAR_DEGRADED_EXPERIMENT_LABEL)
     return slot_record, bool(done), info

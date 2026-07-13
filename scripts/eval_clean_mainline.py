@@ -187,6 +187,8 @@ def _run_eval_episode(
     assignment_buffer_entry_total = 0
     committed_assignment_total = 0
     kahypar_status_counts: dict[str, int] = {}
+    kahypar_partition_hyperedge_total = 0
+    kahypar_partition_nonzero_slot_count = 0
 
     for _ in range(max(int(arrival_steps), 0)):
         done, info, movement_counts, off_count = _eval_one_slot(
@@ -206,6 +208,9 @@ def _run_eval_episode(
         assignment_buffer_entry_total += int(info.get("assignment_buffer_entry_count", 0))
         committed_assignment_total += int(info.get("newly_assigned_tasks", 0))
         _count_kahypar_status(kahypar_status_counts, info)
+        partition_edge_count = int(info.get("kahypar_partition_hyperedge_count", 0))
+        kahypar_partition_hyperedge_total += partition_edge_count
+        kahypar_partition_nonzero_slot_count += int(partition_edge_count > 0)
         if done:
             break
 
@@ -229,6 +234,9 @@ def _run_eval_episode(
         assignment_buffer_entry_total += int(info.get("assignment_buffer_entry_count", 0))
         committed_assignment_total += int(info.get("newly_assigned_tasks", 0))
         _count_kahypar_status(kahypar_status_counts, info)
+        partition_edge_count = int(info.get("kahypar_partition_hyperedge_count", 0))
+        kahypar_partition_hyperedge_total += partition_edge_count
+        kahypar_partition_nonzero_slot_count += int(partition_edge_count > 0)
         if done:
             break
 
@@ -279,6 +287,8 @@ def _run_eval_episode(
             sum(count for status, count in kahypar_status_counts.items() if str(status).startswith("degraded"))
         ),
         "kahypar_success_slot_count": int(kahypar_status_counts.get("success", 0)),
+        "kahypar_partition_hyperedge_total": int(kahypar_partition_hyperedge_total),
+        "kahypar_partition_nonzero_slot_count": int(kahypar_partition_nonzero_slot_count),
         "kahypar_degraded_label": (
             str(config.KAHYPAR_DEGRADED_EXPERIMENT_LABEL)
             if any(str(status).startswith("degraded") for status in kahypar_status_counts)
@@ -344,6 +354,7 @@ def _eval_one_slot(
     info["movement_frozen"] = bool(freeze_movement)
     info["offloading_action_count"] = len(modules.offloading_actor.latest_records)
     info["kahypar_partition_status"] = str(getattr(prepared.graph_snapshot, "partition_status", "disabled"))
+    info["kahypar_partition_hyperedge_count"] = int(len(prepared.graph_snapshot.partition_hyperedges))
     return bool(done), info, movement_counts, len(modules.offloading_actor.latest_records)
 
 
@@ -681,6 +692,12 @@ def _aggregate_summary(aggregate: dict[str, Any], *, episode_count: int) -> dict
         ),
         "kahypar_degraded_slot_count": int(sum(int(row.get("kahypar_degraded_slot_count", 0)) for row in rows)),
         "kahypar_success_slot_count": int(sum(int(row.get("kahypar_success_slot_count", 0)) for row in rows)),
+        "kahypar_partition_hyperedge_total": int(
+            sum(int(row.get("kahypar_partition_hyperedge_total", 0)) for row in rows)
+        ),
+        "kahypar_partition_nonzero_slot_count": int(
+            sum(int(row.get("kahypar_partition_nonzero_slot_count", 0)) for row in rows)
+        ),
         "kahypar_degraded_label": (
             str(config.KAHYPAR_DEGRADED_EXPERIMENT_LABEL)
             if sum(int(row.get("kahypar_degraded_slot_count", 0)) for row in rows) > 0
