@@ -27,7 +27,9 @@ Add clean-mainline configuration values for:
 
 - the repository-relative KaHyPar INI path;
 - a deterministic KaHyPar seed of `0`;
-- a worker-response timeout of `10` seconds.
+- a worker-response timeout of `10` seconds;
+- terminate and kill join grace periods of `1` second each;
+- a circuit-breaker threshold of `3` consecutive failures.
 
 Resolve the INI path with a small, testable repository-root locator that walks
 upward from the module location until one directory contains both `config.py`
@@ -85,10 +87,28 @@ can terminate the worker, while the parent detects EOF or a non-live worker,
 discards it, and degrades the slot. The next partition attempt may lazily start
 a fresh worker; the failed slot is not retried immediately.
 
-The parent terminates and joins a timed-out or failed worker before dropping its
-handles. `CleanGraphBuilder.close()` performs an orderly shutdown and join;
-training and evaluation entry points call it from `finally`, with an `atexit`
-cleanup as a last-resort guard. Normal completion must leave no worker process.
+Worker cleanup is bounded and escalates. The parent first calls `terminate()`,
+then `join(1 second)`. If the process remains alive, it calls `kill()` and then
+`join(1 second)` again. It never performs an unbounded join. If the operating
+system still reports the process alive after SIGKILL, the builder records a
+cleanup failure, retains the process handle for the `atexit` guard, and fails
+the no-residual-process acceptance check rather than claiming successful
+cleanup.
+
+`CleanGraphBuilder.close()` performs an orderly shutdown with the same bounded
+escalation; training and evaluation entry points call it from `finally`, with an
+`atexit` cleanup as a last-resort guard. Normal completion must leave no worker
+process.
+
+Each builder counts consecutive worker, configuration, and transport failures.
+A successful response, including a successful empty result, resets the counter.
+After `3` consecutive failures, the builder opens a circuit breaker for the
+rest of its lifetime: later partition requests immediately return `None`
+without spawning another worker, preserve the normal `degraded_*` status, and
+emit one warning explaining that KaHyPar has been disabled for this builder.
+Episode-level `reset()` does not close the circuit; constructing a new builder
+starts with a closed circuit. This prevents a persistent deployment error from
+causing thousands of failed process launches.
 
 KaHyPar successfully returning blocks that all become singletons after
 filtering is not an execution failure. The worker returns an empty list, the
@@ -109,6 +129,9 @@ Extend clean graph smoke coverage with:
 - an invalid INI in a worker can make the native library exit while the parent
   survives, reports the existing degraded status, and can start a new worker on
   a later request;
+- an invalid partition count such as `k=0` is sent through the isolated worker
+  test path and, whether it raises or exits natively in the installed wheel,
+  leaves the parent alive and produces a degraded result;
 - a simulated unavailable KaHyPar path still reports the existing degraded
   status;
 - a successful all-singleton result is `success` with zero partition edges,
@@ -116,7 +139,12 @@ Extend clean graph smoke coverage with:
 - DAG, k-hop, and attribute hyperedges remain present and unchanged by the
   adapter;
 - orderly close, timeout cleanup, and worker-crash cleanup leave no child
-  process.
+  process;
+- a worker that ignores graceful termination is escalated to `kill()` without
+  an unbounded join;
+- three consecutive failures open the circuit breaker, later requests do not
+  spawn workers, and a successful response before the threshold resets the
+  failure count.
 
 On the installed CPython 3.13 manylinux wheel, the pre-implementation probe
 produced one canonical result across 20 repeated calls with seed `0`. This is
