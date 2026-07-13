@@ -30,7 +30,7 @@ class Env:
     paths are no longer part of this main environment entrypoint.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, completed_dag_weight: float | None = None) -> None:
         """初始化环境状态、任务管理器和指标组件。"""
         self._time_step: int = 0
         self.hotspot_center: np.ndarray | None = None
@@ -39,7 +39,9 @@ class Env:
         self._uavs: list[UAV] = []
         self._task_manager: DAGTaskManager = DAGTaskManager()
         self._executor: CleanTaskExecutor = CleanTaskExecutor()
-        self._metrics: CleanMetricsTracker = CleanMetricsTracker()
+        self._metrics: CleanMetricsTracker = CleanMetricsTracker(
+            completed_dag_weight=completed_dag_weight
+        )
         self._latest_info: dict[str, Any] = {}
         self._ue_service_positions: dict[int, np.ndarray] = {}
         self._uav_pre_move_positions: dict[int, np.ndarray] = {}

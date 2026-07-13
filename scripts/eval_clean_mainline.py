@@ -20,7 +20,7 @@ from environment.env import Env
 from environment.graph_builder import CleanGraphBuilder
 from marl_models.mappo.clean_slot_orchestrator import encode_prepared_slot, prepare_slot_state
 from marl_models.mappo.clean_trainer import CleanTrainingModules
-from scripts.train_clean_mainline import _movement_action_distribution
+from scripts.train_clean_mainline import checkpoint_experiment_controls, _movement_action_distribution
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -57,9 +57,16 @@ def create_eval_run_directory(args: argparse.Namespace) -> Path:
     return run_dir
 
 
-def build_eval_config(args: argparse.Namespace) -> dict[str, Any]:
+def build_eval_config(
+    args: argparse.Namespace,
+    experiment_controls: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    controls = experiment_controls or {
+        "completed_dag_weight": float(config.REWARD_COMPLETED_DAG_WEIGHT),
+    }
     return {
         "cli": _namespace_to_dict(args),
+        "checkpoint_experiment_controls": dict(controls),
         "protocol": {
             "arrival_phase": "normal UE movement and DAG arrivals",
             "drain_phase": "UE movement continues; DAG arrivals disabled; executor continues",
@@ -87,8 +94,15 @@ def build_eval_config(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def initialize_eval_files(run_dir: Path, args: argparse.Namespace) -> None:
-    _write_json(run_dir / "config.json", build_eval_config(args))
+def initialize_eval_files(
+    run_dir: Path,
+    args: argparse.Namespace,
+    experiment_controls: dict[str, Any] | None = None,
+) -> None:
+    controls = experiment_controls or {
+        "completed_dag_weight": float(config.REWARD_COMPLETED_DAG_WEIGHT),
+    }
+    _write_json(run_dir / "config.json", build_eval_config(args, controls))
     _write_json(
         run_dir / "eval_summary.json",
         {
@@ -98,12 +112,16 @@ def initialize_eval_files(run_dir: Path, args: argparse.Namespace) -> None:
             "deterministic": bool(args.deterministic),
             "arrival_steps": int(args.arrival_steps),
             "max_drain_steps": int(args.max_drain_steps),
+            "completed_dag_weight": float(controls["completed_dag_weight"]),
         },
     )
 
 
 def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
     run_dir = create_eval_run_directory(args)
+    # Preserve the entrypoint contract that even a failed checkpoint validation
+    # leaves an initialized run record. A valid checkpoint rewrites these files
+    # below with checkpoint-derived experiment controls.
     initialize_eval_files(run_dir, args)
     torch = _require_torch()
     if args.checkpoint is None:
@@ -116,6 +134,8 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
     _set_seed(int(args.seed), torch=torch)
     device = torch.device(str(args.device))
     checkpoint_payload = _load_trusted_checkpoint(torch, Path(args.checkpoint))
+    experiment_controls = checkpoint_experiment_controls(checkpoint_payload)
+    initialize_eval_files(run_dir, args, experiment_controls)
     module_dims = _module_dims_from_checkpoint(checkpoint_payload, args)
     modules = _build_modules(dims=module_dims, device=device)
     _load_module_state(modules, checkpoint_payload)
@@ -128,7 +148,9 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
         for episode in range(int(args.episodes)):
             episode_seed = int(args.seed) + episode
             _set_seed(episode_seed, torch=torch)
-            env = Env()
+            env = Env(
+                completed_dag_weight=float(experiment_controls["completed_dag_weight"])
+            )
             env.reset()
             graph_builder.reset()
             episode_result = _run_eval_episode(
@@ -155,6 +177,7 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
             "checkpoint": str(args.checkpoint),
             "deterministic": True,
             "movement_frozen": bool(args.freeze_movement),
+            "completed_dag_weight": float(experiment_controls["completed_dag_weight"]),
             "episodes": int(args.episodes),
             "kahypar_circuit_open": bool(graph_builder.kahypar_circuit_open),
             "kahypar_last_failure_reason": graph_builder.kahypar_last_failure_reason,

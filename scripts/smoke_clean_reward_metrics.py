@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -11,6 +12,14 @@ if str(ROOT) not in sys.path:
 
 import config
 from environment.env import Env
+from environment.metrics import CleanMetricsTracker
+from scripts.eval_clean_mainline import build_arg_parser as build_eval_arg_parser, build_eval_config
+from scripts.train_clean_mainline import (
+    build_arg_parser as build_train_arg_parser,
+    build_config_snapshot,
+    checkpoint_experiment_controls,
+    validate_resume_experiment_controls,
+)
 
 
 def _assert(condition: bool, message: str) -> None:
@@ -20,6 +29,8 @@ def _assert(condition: bool, message: str) -> None:
 
 def main() -> None:
     np.random.seed(13)
+    _check_completed_dag_weight_injection()
+    _check_reward_control_provenance()
     original_arrival_prob = config.DAG_BASE_ARRIVAL_PROB
     original_input_range = config.INPUT_DATA_SIZE_MB_RANGE
     original_output_range = config.OUTPUT_DATA_SIZE_MB_RANGE
@@ -112,6 +123,105 @@ def main() -> None:
         config.TASK_CONSTANT_RANGE = original_task_constant_range
 
     print("smoke_clean_reward_metrics passed")
+
+
+def _check_completed_dag_weight_injection() -> None:
+    baseline_config_weight = float(config.REWARD_COMPLETED_DAG_WEIGHT)
+
+    def _completed_dag_reward(weight: float):
+        job = SimpleNamespace(
+            completed=True,
+            return_complete_time=1.0,
+            completion_reward_settled=False,
+        )
+        task_manager = SimpleNamespace(
+            get_job=lambda dag_id: job if dag_id == "dag" else None,
+        )
+        execution_stats = SimpleNamespace(
+            reward_completed_task_ids=[],
+            reward_completed_dag_ids=["dag"],
+        )
+        tracker = CleanMetricsTracker(completed_dag_weight=weight)
+        tracker.reset([0])
+        reward = tracker.calculate_step_reward(task_manager, execution_stats)
+        tracker.reset([0])
+        _assert(
+            tracker.completed_dag_weight == weight,
+            "reset must preserve the environment-level completed-DAG weight.",
+        )
+        return reward
+
+    reward_w2 = _completed_dag_reward(2.0)
+    reward_w16 = _completed_dag_reward(16.0)
+    _assert(
+        reward_w16.completed_dag_bonus - reward_w2.completed_dag_bonus
+        == 14.0 * reward_w2.completed_dags,
+        "w16-w2 bonus difference should be 14 times the completed DAG count.",
+    )
+    for field in (
+        "time_penalty",
+        "energy_penalty",
+        "task_energy_penalty",
+        "movement_energy_penalty",
+        "movement_position_bonus",
+        "completed_tasks",
+        "completed_dags",
+    ):
+        _assert(
+            getattr(reward_w2, field) == getattr(reward_w16, field),
+            f"reward component {field} must not change with completed-DAG weight.",
+        )
+    _assert(
+        Env().metrics.completed_dag_weight == baseline_config_weight,
+        "default Env should retain the configured w_c baseline.",
+    )
+    _assert(
+        float(config.REWARD_COMPLETED_DAG_WEIGHT) == baseline_config_weight,
+        "run-level reward injection must not mutate the global config.",
+    )
+    for invalid in (-1.0, float("inf"), float("nan")):
+        try:
+            Env(completed_dag_weight=invalid)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"invalid completed-DAG weight should fail: {invalid!r}")
+
+
+def _check_reward_control_provenance() -> None:
+    train_args = build_train_arg_parser().parse_args(["--completed-dag-weight", "16"])
+    snapshot = build_config_snapshot(train_args)
+    _assert(
+        snapshot["cli"]["completed_dag_weight"] == 16.0,
+        "training CLI snapshot should record w_c=16.",
+    )
+    _assert(
+        snapshot["experiment_controls"]["completed_dag_weight"] == 16.0,
+        "training experiment controls should record w_c=16.",
+    )
+    payload = {"config": snapshot}
+    _assert(
+        checkpoint_experiment_controls(payload)["completed_dag_weight"] == 16.0,
+        "checkpoint control resolver should recover w_c=16.",
+    )
+    validate_resume_experiment_controls(train_args, payload)
+    mismatch_args = build_train_arg_parser().parse_args(["--completed-dag-weight", "2"])
+    try:
+        validate_resume_experiment_controls(mismatch_args, payload)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("resume should reject a completed-DAG weight mismatch.")
+    _assert(
+        checkpoint_experiment_controls({})["completed_dag_weight"]
+        == float(config.REWARD_COMPLETED_DAG_WEIGHT),
+        "legacy checkpoints should resolve to the configured w_c=2 baseline.",
+    )
+    eval_config = build_eval_config(build_eval_arg_parser().parse_args([]), {"completed_dag_weight": 16.0})
+    _assert(
+        eval_config["checkpoint_experiment_controls"]["completed_dag_weight"] == 16.0,
+        "evaluation provenance should report the checkpoint-derived reward weight.",
+    )
 
 
 if __name__ == "__main__":

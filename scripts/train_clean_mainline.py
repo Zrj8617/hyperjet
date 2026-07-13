@@ -4,6 +4,7 @@ import argparse
 from dataclasses import asdict
 from datetime import datetime
 import json
+import math
 from pathlib import Path
 import random
 import sys
@@ -39,6 +40,59 @@ from marl_models.mappo.clean_trainer import (
 )
 
 
+def _validated_completed_dag_weight(value: str | float) -> float:
+    resolved = float(value)
+    if not math.isfinite(resolved) or resolved < 0.0:
+        raise ValueError("completed-DAG weight must be finite and non-negative")
+    return resolved
+
+
+def _nonnegative_finite_float(value: str | float) -> float:
+    try:
+        return _validated_completed_dag_weight(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def _resolved_completed_dag_weight(args: argparse.Namespace) -> float:
+    return _validated_completed_dag_weight(
+        getattr(args, "completed_dag_weight", config.REWARD_COMPLETED_DAG_WEIGHT)
+    )
+
+
+def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
+    """Resolve experiment controls from new or legacy clean checkpoints."""
+    checkpoint_config = payload.get("config", {})
+    cli = checkpoint_config.get("cli", {}) if isinstance(checkpoint_config, dict) else {}
+    if not isinstance(cli, dict):
+        cli = {}
+    return {
+        "completed_dag_weight": _validated_completed_dag_weight(
+            cli.get("completed_dag_weight", config.REWARD_COMPLETED_DAG_WEIGHT)
+        ),
+    }
+
+
+def validate_resume_experiment_controls(
+    args: argparse.Namespace,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Reject a resume that would silently change its reward objective."""
+    saved = checkpoint_experiment_controls(payload)
+    requested_weight = _resolved_completed_dag_weight(args)
+    if not math.isclose(
+        requested_weight,
+        float(saved["completed_dag_weight"]),
+        rel_tol=0.0,
+        abs_tol=1e-12,
+    ):
+        raise ValueError(
+            "resume checkpoint completed-DAG weight mismatch: "
+            f"requested {requested_weight}, checkpoint {saved['completed_dag_weight']}"
+        )
+    return saved
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Train the HyperUAV clean mainline joint PPO skeleton.")
     parser.add_argument("--episodes", type=int, default=100)
@@ -51,6 +105,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--clip-ratio", type=float, default=0.2)
     parser.add_argument("--entropy-coef", type=float, default=0.01)
     parser.add_argument("--value-coef", type=float, default=0.5)
+    parser.add_argument(
+        "--completed-dag-weight",
+        type=_nonnegative_finite_float,
+        default=float(config.REWARD_COMPLETED_DAG_WEIGHT),
+        help="Run-level completed-DAG reward weight; the clean baseline remains 2.0.",
+    )
     parser.add_argument("--output-dir", type=Path, default=Path("logs") / "clean_mainline")
     parser.add_argument("--run-name", type=str, default="clean")
     parser.add_argument("--checkpoint-interval", type=int, default=10)
@@ -98,8 +158,12 @@ def create_run_directory(args: argparse.Namespace) -> Path:
 
 
 def build_config_snapshot(args: argparse.Namespace) -> dict[str, Any]:
+    completed_dag_weight = _resolved_completed_dag_weight(args)
     return {
         "cli": _namespace_to_dict(args),
+        "experiment_controls": {
+            "completed_dag_weight": completed_dag_weight,
+        },
         "clean_scene": {
             "AREA_WIDTH": config.AREA_WIDTH,
             "AREA_HEIGHT": config.AREA_HEIGHT,
@@ -141,6 +205,7 @@ def initialize_run_files(run_dir: Path, args: argparse.Namespace) -> None:
             "status": "initialized",
             "run_dir": str(run_dir),
             "torch_required_for_training": True,
+            "completed_dag_weight": _resolved_completed_dag_weight(args),
             "resume_semantics": "restart_from_new_episode_only",
         },
     )
@@ -148,6 +213,7 @@ def initialize_run_files(run_dir: Path, args: argparse.Namespace) -> None:
 
 def run_training(args: argparse.Namespace) -> dict[str, Any]:
     args = apply_smoke_overrides(args)
+    args.completed_dag_weight = _resolved_completed_dag_weight(args)
     run_dir = create_run_directory(args)
     initialize_run_files(run_dir, args)
 
@@ -161,7 +227,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     from marl_models.mappo.clean_ppo import CleanCentralizedCritic, clean_critic_input_dim
     from marl_models.mappo.clean_trainer import CleanPPOUpdater
 
-    env = Env()
+    env = Env(completed_dag_weight=float(args.completed_dag_weight))
     graph_builder = CleanGraphBuilder()
     env.reset()
     graph_builder.reset()
@@ -205,7 +271,9 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     latest_update_stats: CleanPPOUpdateStats | None = None
 
     if args.resume_checkpoint is not None:
-        payload = checkpoint_manager.load(modules=modules, optimizer=optimizer, path=args.resume_checkpoint)
+        payload = checkpoint_manager.read(args.resume_checkpoint)
+        validate_resume_experiment_controls(args, payload)
+        checkpoint_manager.restore(modules=modules, optimizer=optimizer, payload=payload)
         start_episode = int(payload.get("episode", -1)) + 1
         global_slot = int(payload.get("global_slot", 0))
         updater.update_step = int(payload.get("update_step", 0))
@@ -286,6 +354,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                             episode_component_totals=episode_component_totals,
                             terminal=bool(done or truncated),
                             env=env,
+                            completed_dag_weight=float(args.completed_dag_weight),
                         ),
                     )
                     checkpoint_manager.save(
@@ -339,6 +408,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                     "episode_reward": episode_reward,
                     "latest_info": _jsonable(last_info),
                     "latest_update": None if latest_update_stats is None else asdict(latest_update_stats),
+                    "completed_dag_weight": float(args.completed_dag_weight),
                     "resume_semantics": "restart_from_new_episode_only",
                 },
             )
@@ -350,6 +420,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         "run_dir": str(run_dir),
         "global_slot": global_slot,
         "latest_update": None if latest_update_stats is None else asdict(latest_update_stats),
+        "completed_dag_weight": float(args.completed_dag_weight),
         "kahypar_circuit_open": bool(graph_builder.kahypar_circuit_open),
         "kahypar_last_failure_reason": graph_builder.kahypar_last_failure_reason,
         "kahypar_cleanup_failed": bool(graph_builder.kahypar_cleanup_failed),
@@ -504,6 +575,7 @@ def _episode_diagnostics_payload(
     episode_component_totals: dict[str, float],
     terminal: bool,
     env: Env,
+    completed_dag_weight: float,
 ) -> dict[str, Any]:
     """Episode-level reward component accumulation (diagnostics only).
 
@@ -515,6 +587,7 @@ def _episode_diagnostics_payload(
         f"episode_{key}_so_far": float(value) for key, value in episode_component_totals.items()
     }
     payload["episode_terminal_record"] = bool(terminal)
+    payload["completed_dag_weight"] = float(completed_dag_weight)
     if terminal:
         payload.update(
             {f"episode_{key}_total": float(value) for key, value in episode_component_totals.items()}

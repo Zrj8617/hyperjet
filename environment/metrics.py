@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from typing import Any
 
 import numpy as np
@@ -54,8 +55,16 @@ class CleanEpisodeMetrics:
 
 
 class CleanMetricsTracker:
-    def __init__(self) -> None:
+    def __init__(self, completed_dag_weight: float | None = None) -> None:
         """创建空的回合指标，并准备 DAG 去重集合。"""
+        resolved_weight = (
+            float(config.REWARD_COMPLETED_DAG_WEIGHT)
+            if completed_dag_weight is None
+            else float(completed_dag_weight)
+        )
+        if not math.isfinite(resolved_weight) or resolved_weight < 0.0:
+            raise ValueError("completed_dag_weight must be finite and non-negative")
+        self.completed_dag_weight = resolved_weight
         self.metrics = CleanEpisodeMetrics()
         self._counted_dag_ids: set[str] = set()
 
@@ -116,7 +125,7 @@ class CleanMetricsTracker:
             movement_energy_slot
         )
         energy_penalty = task_energy_penalty + movement_energy_penalty
-        completed_dag_bonus = float(config.REWARD_COMPLETED_DAG_WEIGHT) * completed_dags
+        completed_dag_bonus = self.completed_dag_weight * completed_dags
         # 位置塑形默认关闭；开关关闭或权重为 0 时严格返回 0，不改变基线奖励。
         movement_position_bonus = 0.0
         if bool(getattr(config, "ENABLE_MOVEMENT_POSITION_SHAPING", False)):

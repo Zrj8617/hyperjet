@@ -140,9 +140,28 @@ class CleanCheckpointManager:
         optimizer: Any,
         path: str | Path,
     ) -> dict[str, Any]:
+        payload = self.read(path)
+        return self.restore(modules=modules, optimizer=optimizer, payload=payload)
+
+    def read(self, path: str | Path) -> dict[str, Any]:
+        """Read a trusted project checkpoint without mutating live training state."""
         if torch is None:
             raise ModuleNotFoundError("torch is required to load clean model checkpoints")
-        payload = torch.load(Path(path), map_location="cpu", weights_only=False)
+        try:
+            return torch.load(Path(path), map_location="cpu", weights_only=False)
+        except TypeError as exc:
+            if "weights_only" not in str(exc):
+                raise
+            return torch.load(Path(path), map_location="cpu")
+
+    def restore(
+        self,
+        *,
+        modules: CleanTrainingModules,
+        optimizer: Any,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Restore a previously validated checkpoint payload."""
         modules.hgnn.load_state_dict(payload["hgnn"])
         modules.movement_actor.load_state_dict(payload["movement_actor"])
         modules.offloading_actor.load_state_dict(payload["offloading_actor"])
