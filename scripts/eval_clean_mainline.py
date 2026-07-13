@@ -42,9 +42,31 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Force every UAV to hover throughout arrival and drain evaluation. "
         "Use this when evaluating checkpoints trained with --freeze-movement.",
     )
+    parser.add_argument(
+        "--freeze-ue-mobility",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Inherit UE mobility mode from the checkpoint; an explicit conflicting override is rejected.",
+    )
     parser.add_argument("--task-embedding-dim", type=int, default=None)
     parser.add_argument("--hidden-dim", type=int, default=None)
     return parser
+
+
+def _resolve_eval_ue_mobility(
+    args: argparse.Namespace,
+    experiment_controls: dict[str, Any],
+) -> bool:
+    checkpoint_freeze = experiment_controls.get("freeze_ue_mobility", False)
+    if not isinstance(checkpoint_freeze, bool):
+        raise ValueError("checkpoint freeze_ue_mobility must be boolean")
+    requested = getattr(args, "freeze_ue_mobility", None)
+    if requested is not None and bool(requested) != checkpoint_freeze:
+        raise ValueError(
+            "evaluation checkpoint UE mobility mismatch: "
+            f"requested freeze={bool(requested)}, checkpoint freeze={checkpoint_freeze}"
+        )
+    return checkpoint_freeze
 
 
 def create_eval_run_directory(args: argparse.Namespace) -> Path:
@@ -61,19 +83,36 @@ def build_eval_config(
     args: argparse.Namespace,
     experiment_controls: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    controls = experiment_controls or {
-        "completed_dag_weight": float(config.REWARD_COMPLETED_DAG_WEIGHT),
-        "detach_critic_hgnn": False,
-    }
+    if experiment_controls is None:
+        controls = {
+            "completed_dag_weight": float(config.REWARD_COMPLETED_DAG_WEIGHT),
+            "detach_critic_hgnn": False,
+            "freeze_ue_mobility": False,
+        }
+        requested = getattr(args, "freeze_ue_mobility", None)
+        freeze_ue_mobility = False if requested is None else bool(requested)
+        controls["freeze_ue_mobility"] = freeze_ue_mobility
+    else:
+        controls = experiment_controls
+        freeze_ue_mobility = _resolve_eval_ue_mobility(args, controls)
     return {
         "cli": _namespace_to_dict(args),
         "checkpoint_experiment_controls": dict(controls),
         "protocol": {
-            "arrival_phase": "normal UE movement and DAG arrivals",
-            "drain_phase": "UE movement continues; DAG arrivals disabled; executor continues",
+            "arrival_phase": (
+                "fixed episode-initial UE positions and DAG arrivals"
+                if freeze_ue_mobility
+                else "normal UE movement and DAG arrivals"
+            ),
+            "drain_phase": (
+                "UE positions remain fixed; DAG arrivals disabled; executor continues"
+                if freeze_ue_mobility
+                else "UE movement continues; DAG arrivals disabled; executor continues"
+            ),
             "throughput_denominator": "total_executed_slots * TIME_SLOT_DURATION",
             "default_action": "masked_argmax_deterministic",
             "movement_mode": "forced_hover" if bool(args.freeze_movement) else "masked_argmax_deterministic",
+            "ue_mobility_mode": "fixed" if freeze_ue_mobility else "moving",
         },
         "clean_scene": {
             "AREA_WIDTH": config.AREA_WIDTH,
@@ -100,11 +139,19 @@ def initialize_eval_files(
     args: argparse.Namespace,
     experiment_controls: dict[str, Any] | None = None,
 ) -> None:
-    controls = experiment_controls or {
-        "completed_dag_weight": float(config.REWARD_COMPLETED_DAG_WEIGHT),
-        "detach_critic_hgnn": False,
-    }
-    _write_json(run_dir / "config.json", build_eval_config(args, controls))
+    if experiment_controls is None:
+        controls = {
+            "completed_dag_weight": float(config.REWARD_COMPLETED_DAG_WEIGHT),
+            "detach_critic_hgnn": False,
+            "freeze_ue_mobility": False,
+        }
+        requested = getattr(args, "freeze_ue_mobility", None)
+        freeze_ue_mobility = False if requested is None else bool(requested)
+        controls["freeze_ue_mobility"] = freeze_ue_mobility
+    else:
+        controls = experiment_controls
+        freeze_ue_mobility = _resolve_eval_ue_mobility(args, controls)
+    _write_json(run_dir / "config.json", build_eval_config(args, experiment_controls))
     _write_json(
         run_dir / "eval_summary.json",
         {
@@ -116,6 +163,7 @@ def initialize_eval_files(
             "max_drain_steps": int(args.max_drain_steps),
             "completed_dag_weight": float(controls["completed_dag_weight"]),
             "detach_critic_hgnn": bool(controls["detach_critic_hgnn"]),
+            "freeze_ue_mobility": freeze_ue_mobility,
         },
     )
 
@@ -138,6 +186,7 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
     device = torch.device(str(args.device))
     checkpoint_payload = _load_trusted_checkpoint(torch, Path(args.checkpoint))
     experiment_controls = checkpoint_experiment_controls(checkpoint_payload)
+    freeze_ue_mobility = _resolve_eval_ue_mobility(args, experiment_controls)
     initialize_eval_files(run_dir, args, experiment_controls)
     module_dims = _module_dims_from_checkpoint(checkpoint_payload, args)
     modules = _build_modules(dims=module_dims, device=device)
@@ -152,7 +201,8 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
             episode_seed = int(args.seed) + episode
             _set_seed(episode_seed, torch=torch)
             env = Env(
-                completed_dag_weight=float(experiment_controls["completed_dag_weight"])
+                completed_dag_weight=float(experiment_controls["completed_dag_weight"]),
+                freeze_ue_mobility=freeze_ue_mobility,
             )
             env.reset()
             graph_builder.reset()
@@ -183,6 +233,7 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
             "movement_frozen": bool(args.freeze_movement),
             "completed_dag_weight": float(experiment_controls["completed_dag_weight"]),
             "detach_critic_hgnn": bool(experiment_controls["detach_critic_hgnn"]),
+            "freeze_ue_mobility": freeze_ue_mobility,
             "episodes": int(args.episodes),
             "kahypar_circuit_open": bool(graph_builder.kahypar_circuit_open),
             "kahypar_last_failure_reason": graph_builder.kahypar_last_failure_reason,
@@ -310,6 +361,8 @@ def _run_eval_episode(
         "action_executed_rate": None if assignment_entries <= 0.0 else float(env.metrics.metrics.executed_action_count / assignment_entries),
         "movement_action_distribution": movement_distribution,
         "movement_frozen": bool(freeze_movement),
+        "freeze_ue_mobility": bool(env.freeze_ue_mobility),
+        "initial_hotspot_ue_count": int(env.initial_hotspot_ue_count),
         "offloading_action_count": int(offloading_action_count),
         "hover_action_ratio": info_metrics.get("hover_action_ratio"),
         "mean_uav_displacement_per_slot": info_metrics.get("mean_uav_displacement_per_slot"),
@@ -693,6 +746,8 @@ def _aggregate_summary(aggregate: dict[str, Any], *, episode_count: int) -> dict
             for action, total in aggregate["movement_counts"].items()
         },
         "movement_frozen": bool(rows) and all(bool(row.get("movement_frozen", False)) for row in rows),
+        "freeze_ue_mobility": bool(rows) and all(bool(row.get("freeze_ue_mobility", False)) for row in rows),
+        "initial_hotspot_ue_count_mean": _mean(row.get("initial_hotspot_ue_count") for row in rows),
         "offloading_action_count": int(sum(row["offloading_action_count"] for row in rows)),
         "final_active_DAG_count": int(sum(row.get("final_active_DAG_count", 0) for row in rows)),
         "final_active_task_count": int(sum(row.get("final_active_task_count", 0) for row in rows)),

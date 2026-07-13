@@ -37,6 +37,8 @@ REQUIRED_METRIC_FIELDS = [
     "action_executed_rate",
     "movement_action_distribution",
     "movement_frozen",
+    "freeze_ue_mobility",
+    "initial_hotspot_ue_count_mean",
     "offloading_action_count",
     "final_active_DAG_count",
     "final_active_task_count",

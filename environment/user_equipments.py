@@ -22,7 +22,7 @@ class UE:
         self.service_waiting = False
         self.active_dag_id = None
 
-    def update_position(self) -> None:
+    def update_position(self, *, commit_position: bool = True) -> None:
         """按高斯—马尔可夫模型推进 UE 一个时隙的位置。
 
         正在等待服务的 UE 会主动降速；移动越过地图边界时采用镜像反弹。
@@ -42,7 +42,9 @@ class UE:
         effective_speed = walk_speed * speed_scale
         self.velocity = self._velocity_from_polar(speed=effective_speed)
         next_pos = self.pos[:2] + self.velocity * float(config.TIME_SLOT_DURATION)
-        self.pos[:2] = self._reflect_position(next_pos)
+        reflected_position = self._reflect_position(next_pos)
+        if bool(commit_position):
+            self.pos[:2] = reflected_position
         self.speed = walk_speed
 
     def is_inside_hotspot(self, hotspot_center: np.ndarray | None, hotspot_radius: float | None) -> bool:

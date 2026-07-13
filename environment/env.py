@@ -30,11 +30,19 @@ class Env:
     paths are no longer part of this main environment entrypoint.
     """
 
-    def __init__(self, completed_dag_weight: float | None = None) -> None:
+    def __init__(
+        self,
+        completed_dag_weight: float | None = None,
+        freeze_ue_mobility: bool = False,
+    ) -> None:
         """初始化环境状态、任务管理器和指标组件。"""
         self._time_step: int = 0
         self.hotspot_center: np.ndarray | None = None
         self.hotspot_radius: float = float(config.HOTSPOT_RADIUS)
+        if not isinstance(freeze_ue_mobility, bool):
+            raise ValueError("freeze_ue_mobility must be boolean")
+        self.freeze_ue_mobility: bool = freeze_ue_mobility
+        self._initial_hotspot_ue_count: int = 0
         self._ues: list[UE] = []
         self._uavs: list[UAV] = []
         self._task_manager: DAGTaskManager = DAGTaskManager()
@@ -90,6 +98,11 @@ class Env:
     def time_step(self) -> int:
         """返回当前时间步。"""
         return self._time_step
+
+    @property
+    def initial_hotspot_ue_count(self) -> int:
+        """Return the episode-initial number of UEs inside the static hotspot."""
+        return int(self._initial_hotspot_ue_count)
 
     @property
     def current_time_seconds(self) -> float:
@@ -157,6 +170,10 @@ class Env:
         # 重新创建本回合的无人机和用户，并同步重置任务、执行器与指标组件。
         self._uavs = self._init_uavs_uniform()
         self._ues = self._init_ues_uniform()
+        self._initial_hotspot_ue_count = sum(
+            int(ue.is_inside_hotspot(self.hotspot_center, self.hotspot_radius))
+            for ue in self._ues
+        )
         self._task_manager.reset()
         self._executor.reset(self._uavs)
         self._metrics.reset([uav.id for uav in self._uavs])
@@ -193,6 +210,8 @@ class Env:
             "service_waiting_ues": 0,
             "step_reward": 0.0,
             "episode_reward": 0.0,
+            "freeze_ue_mobility": bool(self.freeze_ue_mobility),
+            "initial_hotspot_ue_count": int(self._initial_hotspot_ue_count),
         }
         return self._get_obs()
 
@@ -224,7 +243,7 @@ class Env:
         previous_internal_state = f"x_{slot_index}^-"
         self._time_step += 1
         for ue in self._ues:
-            ue.update_position()
+            ue.update_position(commit_position=not self.freeze_ue_mobility)
         self._ue_service_positions = {int(ue.id): ue.pos[:2].copy() for ue in self._ues}
         self._slot_service_positions_frozen = True
 

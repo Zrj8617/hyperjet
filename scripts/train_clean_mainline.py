@@ -69,11 +69,15 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
     detach_critic_hgnn = cli.get("detach_critic_hgnn", False)
     if not isinstance(detach_critic_hgnn, bool):
         raise ValueError("checkpoint detach_critic_hgnn must be boolean")
+    freeze_ue_mobility = cli.get("freeze_ue_mobility", False)
+    if not isinstance(freeze_ue_mobility, bool):
+        raise ValueError("checkpoint freeze_ue_mobility must be boolean")
     return {
         "completed_dag_weight": _validated_completed_dag_weight(
             cli.get("completed_dag_weight", config.REWARD_COMPLETED_DAG_WEIGHT)
         ),
         "detach_critic_hgnn": detach_critic_hgnn,
+        "freeze_ue_mobility": freeze_ue_mobility,
     }
 
 
@@ -99,6 +103,12 @@ def validate_resume_experiment_controls(
         raise ValueError(
             "resume checkpoint critic-HGNN detach mismatch: "
             f"requested {requested_detach}, checkpoint {saved['detach_critic_hgnn']}"
+        )
+    requested_freeze_ue = bool(getattr(args, "freeze_ue_mobility", False))
+    if requested_freeze_ue != bool(saved["freeze_ue_mobility"]):
+        raise ValueError(
+            "resume checkpoint UE mobility mismatch: "
+            f"requested freeze={requested_freeze_ue}, checkpoint freeze={saved['freeze_ue_mobility']}"
         )
     return saved
 
@@ -126,6 +136,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="Block value-loss gradients from the critic into the shared HGNN.",
+    )
+    parser.add_argument(
+        "--freeze-ue-mobility",
+        action="store_true",
+        default=False,
+        help="Keep each UE at its episode-initial position while consuming the normal mobility RNG draws.",
     )
     parser.add_argument("--output-dir", type=Path, default=Path("logs") / "clean_mainline")
     parser.add_argument("--run-name", type=str, default="clean")
@@ -180,6 +196,7 @@ def build_config_snapshot(args: argparse.Namespace) -> dict[str, Any]:
         "experiment_controls": {
             "completed_dag_weight": completed_dag_weight,
             "detach_critic_hgnn": bool(getattr(args, "detach_critic_hgnn", False)),
+            "freeze_ue_mobility": bool(getattr(args, "freeze_ue_mobility", False)),
         },
         "clean_scene": {
             "AREA_WIDTH": config.AREA_WIDTH,
@@ -224,6 +241,7 @@ def initialize_run_files(run_dir: Path, args: argparse.Namespace) -> None:
             "torch_required_for_training": True,
             "completed_dag_weight": _resolved_completed_dag_weight(args),
             "detach_critic_hgnn": bool(getattr(args, "detach_critic_hgnn", False)),
+            "freeze_ue_mobility": bool(getattr(args, "freeze_ue_mobility", False)),
             "resume_semantics": "restart_from_new_episode_only",
         },
     )
@@ -245,7 +263,10 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     from marl_models.mappo.clean_ppo import CleanCentralizedCritic, clean_critic_input_dim
     from marl_models.mappo.clean_trainer import CleanPPOUpdater
 
-    env = Env(completed_dag_weight=float(args.completed_dag_weight))
+    env = Env(
+        completed_dag_weight=float(args.completed_dag_weight),
+        freeze_ue_mobility=bool(args.freeze_ue_mobility),
+    )
     graph_builder = CleanGraphBuilder()
     env.reset()
     graph_builder.reset()
@@ -377,6 +398,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                             env=env,
                             completed_dag_weight=float(args.completed_dag_weight),
                             detach_critic_hgnn=bool(args.detach_critic_hgnn),
+                            freeze_ue_mobility=bool(args.freeze_ue_mobility),
                         ),
                     )
                     checkpoint_manager.save(
@@ -433,6 +455,8 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                     "latest_update": None if latest_update_stats is None else asdict(latest_update_stats),
                     "completed_dag_weight": float(args.completed_dag_weight),
                     "detach_critic_hgnn": bool(args.detach_critic_hgnn),
+                    "freeze_ue_mobility": bool(args.freeze_ue_mobility),
+                    "initial_hotspot_ue_count": int(env.initial_hotspot_ue_count),
                     "resume_semantics": "restart_from_new_episode_only",
                 },
             )
@@ -446,6 +470,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         "latest_update": None if latest_update_stats is None else asdict(latest_update_stats),
         "completed_dag_weight": float(args.completed_dag_weight),
         "detach_critic_hgnn": bool(args.detach_critic_hgnn),
+        "freeze_ue_mobility": bool(args.freeze_ue_mobility),
         "kahypar_circuit_open": bool(graph_builder.kahypar_circuit_open),
         "kahypar_last_failure_reason": graph_builder.kahypar_last_failure_reason,
         "kahypar_cleanup_failed": bool(graph_builder.kahypar_cleanup_failed),
@@ -602,6 +627,7 @@ def _episode_diagnostics_payload(
     env: Env,
     completed_dag_weight: float,
     detach_critic_hgnn: bool,
+    freeze_ue_mobility: bool,
 ) -> dict[str, Any]:
     """Episode-level reward component accumulation (diagnostics only).
 
@@ -615,6 +641,8 @@ def _episode_diagnostics_payload(
     payload["episode_terminal_record"] = bool(terminal)
     payload["completed_dag_weight"] = float(completed_dag_weight)
     payload["detach_critic_hgnn"] = bool(detach_critic_hgnn)
+    payload["freeze_ue_mobility"] = bool(freeze_ue_mobility)
+    payload["initial_hotspot_ue_count"] = int(env.initial_hotspot_ue_count)
     if terminal:
         payload.update(
             {f"episode_{key}_total": float(value) for key, value in episode_component_totals.items()}
