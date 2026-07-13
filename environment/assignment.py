@@ -15,6 +15,7 @@ CLEAN_OFFLOADING_PAIR_FEATURE_DIM = 8
 
 @dataclass(slots=True)
 class CleanAssignmentEntry:
+    """保存一条任务到 UAV 的分配结果以及它的决策顺序。"""
     task_id: str
     uav_id: int
     decision_order: int
@@ -22,23 +23,28 @@ class CleanAssignmentEntry:
 
 @dataclass(slots=True)
 class CleanAssignmentBuffer:
+    """按策略决策顺序收集本时隙最终接受的任务分配。"""
     entries: list[CleanAssignmentEntry] = field(default_factory=list)
 
     def append(self, task_id: str, uav_id: int, decision_order: int) -> None:
+        """把一条分配记录追加到缓冲区。"""
         self.entries.append(
             CleanAssignmentEntry(task_id=str(task_id), uav_id=int(uav_id), decision_order=int(decision_order))
         )
 
     def to_assignment_dict(self) -> dict[str, int]:
+        """把缓冲区转换为“任务 ID 到 UAV ID”的普通字典。"""
         return {entry.task_id: entry.uav_id for entry in self.entries}
 
     @property
     def entry_count(self) -> int:
+        """返回当前已经接受的分配数量。"""
         return len(self.entries)
 
 
 @dataclass(slots=True)
 class TemporaryReservationState:
+    """模拟同一时隙内连续分配造成的队列和算力占用。"""
     queue_lengths: dict[int, int]
     available_times: dict[int, float] = field(default_factory=dict)
     queued_workloads: dict[int, float] = field(default_factory=dict)
@@ -47,8 +53,10 @@ class TemporaryReservationState:
 
     @classmethod
     def from_executor(cls, uavs: list[Any], executor: Any) -> "TemporaryReservationState":
+        """根据执行器当前队列创建一份可临时修改的资源快照。"""
         queues = getattr(executor, "uav_queues", {})
         records = getattr(executor, "task_records", {})
+        # 把队列中每条记录的预计计算时间换算为剩余运算量。
         queued_workloads: dict[int, float] = {}
         for uav in uavs:
             uav_id = int(uav.id)
@@ -71,6 +79,7 @@ class TemporaryReservationState:
         )
 
     def remaining_slots(self, uav_id: int) -> int:
+        """返回指定 UAV 队列还能接收多少个任务。"""
         used = int(self.queue_lengths.get(int(uav_id), 0))
         return max(int(config.CLEAN_MAX_QUEUE_PER_UAV) - used, 0)
 
@@ -81,6 +90,7 @@ class TemporaryReservationState:
         estimated_available_time: float | None = None,
         estimated_queued_workload: float = 0.0,
     ) -> None:
+        """预留一个队列位置，并同步累计预计可用时间和工作量。"""
         self.reserved_task_ids.add(str(task_id))
         key = int(uav_id)
         self.queue_lengths[key] = self.queue_lengths.get(key, 0) + 1
@@ -95,6 +105,7 @@ class TemporaryReservationState:
 
 @dataclass(slots=True)
 class OffloadingCandidateEstimate:
+    """保存某个任务—UAV 候选对的合法性、特征和预计完成信息。"""
     task_id: str
     uav_id: int
     legal: bool
@@ -105,6 +116,7 @@ class OffloadingCandidateEstimate:
 
 
 def freeze_ready_tasks(task_manager: DAGTaskManager) -> list[TaskNode]:
+    """按稳定顺序复制当前就绪任务，作为本时隙不可变的决策集合。"""
     return sorted(task_manager.get_ready_tasks(), key=lambda task: _ready_sort_key(task, task_manager))
 
 
@@ -117,6 +129,9 @@ def is_assignment_legal(
     service_positions: dict[int, Any] | None = None,
 ) -> bool:
     """Minimal shared clean assignment legality.
+
+    中文：检查任务是否就绪、UAV 是否有效、任务是否已占用，以及队列是否还有空位。
+    当前版本只执行这些硬约束，通信可达性等更细规则仍由后续版本补充。
 
     T7 should extend this helper with communication reachability, precise capacity,
     and pair-feature/executor estimator consistency.
@@ -140,6 +155,7 @@ def legal_candidate_uav_ids(
     executor: Any,
     service_positions: dict[int, Any] | None = None,
 ) -> list[int]:
+    """从给定 UAV 列表中筛出当前可以合法接收任务的候选 ID。"""
     valid_uav_ids = set(int(uav_id) for uav_id in uav_ids)
     return [
         int(uav_id)
@@ -161,6 +177,11 @@ def build_offloading_candidate_batch(
     ue_service_positions: dict[int, Any] | None = None,
     ues: list[Any] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, list[int], list[OffloadingCandidateEstimate]]:
+    """为一个任务构建卸载策略需要的完整候选批次。
+
+    每个候选行由任务嵌入、UAV 动态特征和任务—UAV 配对特征拼接而成，
+    同时返回合法掩码、候选 ID 和便于执行阶段复用的估计结果。
+    """
     dynamic_uav_features, pair_features, candidate_mask, candidate_uav_ids, estimates = build_offloading_candidate_components(
         task=task,
         uavs=uavs,
@@ -197,7 +218,11 @@ def build_offloading_candidate_components(
     ue_service_positions: dict[int, Any] | None = None,
     ues: list[Any] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[int], list[OffloadingCandidateEstimate]]:
-    """Build candidate dynamic non-graph inputs without task embeddings."""
+    """Build candidate dynamic non-graph inputs without task embeddings.
+
+    中文：按 UAV ID 排序，为每架 UAV 分别计算动态特征、配对特征和合法掩码，
+    这里不拼接 HGNN 产生的任务嵌入。
+    """
     ordered_uavs = sorted(uavs, key=lambda item: int(item.id))
     uav_map = {int(uav.id): uav for uav in ordered_uavs}
     valid_uav_ids = set(uav_map)
@@ -265,6 +290,10 @@ def estimate_offloading_candidate(
     ues: list[Any] | None = None,
     legal: bool = True,
 ) -> OffloadingCandidateEstimate:
+    """估算把任务交给指定 UAV 后的传输、排队、计算、回传时间和能耗。
+
+    候选不合法、DAG 不存在或前驱信息不完整时，会返回 `legal=False` 的零配对特征。
+    """
     uav = uav_map.get(int(uav_id))
     dynamic_features = _dynamic_uav_features(
         uav=uav,
@@ -281,6 +310,7 @@ def estimate_offloading_candidate(
     if job is None:
         return OffloadingCandidateEstimate(str(task.task_id), int(uav_id), False, dynamic_features, zero_pair)
 
+    # 入口任务从 UE 上传；非入口任务需要收齐所有前驱 UAV 的输出。
     transfer_time = 0.0
     communication_energy = 0.0
     predecessor_ready_time = float(current_time_seconds)
@@ -318,6 +348,7 @@ def estimate_offloading_candidate(
             communication_energy += parent_transfer_time * float(config.P_UAV_TX)
         predecessor_ready_time = max(parent_finish_times) if parent_finish_times else float(current_time_seconds)
 
+    # 真正开始计算要同时等待 UAV 空闲、前驱完成和所需数据传完。
     available_time = float(state_view.available_times.get(int(uav_id), getattr(executor, "uav_available_time", {}).get(int(uav_id), 0.0)))
     queue_waiting_time = max(available_time, predecessor_ready_time, float(current_time_seconds)) - float(current_time_seconds)
     transfer_ready_time = max(float(current_time_seconds), available_time, predecessor_ready_time) + transfer_time
@@ -325,6 +356,7 @@ def estimate_offloading_candidate(
     compute_energy = compute_time * float(config.P_UAV_COMPUTE)
     compute_finish_time = transfer_ready_time + compute_time
 
+    # 只有 DAG 的出口任务需要把最终结果下载回 UE。
     return_time = 0.0
     return_energy = 0.0
     if task.task_id in set(job.sink_task_ids):
@@ -359,12 +391,11 @@ def estimate_offloading_candidate(
 
 
 def _ready_sort_key(task: TaskNode, task_manager: DAGTaskManager) -> tuple[float, str, int, str]:
+    """生成稳定的就绪任务排序键，保证相同输入得到相同决策顺序。"""
     job = task_manager.get_job(task.dag_id)
     dag_arrival_time = float(job.arrival_time if job is not None else task.arrival_time)
-    # Spec ready-sort key: (dag_arrival_time, dag_id, topological_index, task_id).
-    # topological_index is now a real static field on TaskNode; fall back to the task_id
-    # numeric suffix only for legacy nodes that predate the field. Use an explicit None
-    # check so a valid topological_index == 0 (entry task) is not discarded.
+    # 优先按 DAG 到达时间、DAG ID、拓扑序号和任务 ID 排序；旧任务没有拓扑序号时
+    # 才退回到任务 ID 的数字后缀。显式判断 None，避免把合法的序号 0 当成缺失值。
     topological_index_value = getattr(task, "topological_index", None)
     topological_index = (
         int(topological_index_value)
@@ -382,6 +413,7 @@ def _dynamic_uav_features(
     current_time_seconds: float,
     uav_service_positions: dict[int, Any] | None,
 ) -> np.ndarray:
+    """把 UAV 位置、队列、空闲时间和工作量整理为 7 维归一化动态特征。"""
     if uav is None:
         service_pos = np.zeros((2,), dtype=np.float32)
     else:
@@ -409,10 +441,9 @@ def _dynamic_uav_features(
 
 
 def _normalize_pair_features(values: list[float]) -> np.ndarray:
-    # Column order: transfer_time, communication_energy, queue_waiting_time,
-    # compute_time, compute_energy, incremental_delay, return_time, return_energy.
-    # Scales come from config (single source of truth). Waiting/delay columns use
-    # the longer availability scale; link/compute columns the pair time scale.
+    """按配置中的统一尺度归一化 8 维任务—UAV 配对特征。"""
+    # 顺序依次是传输时间/能耗、排队时间、计算时间/能耗、增量时延、回传时间/能耗。
+    # 排队和总时延使用较长的可用时间尺度，其余时间列使用普通配对时间尺度。
     time_ref = max(float(config.CLEAN_NORM_PAIR_TIME_REF), 1.0)
     wait_ref = max(float(config.CLEAN_NORM_AVAIL_TIME_REF), 1.0)
     energy_ref = max(float(config.CLEAN_NORM_PAIR_ENERGY_REF), 1.0)
@@ -425,16 +456,19 @@ def _normalize_pair_features(values: list[float]) -> np.ndarray:
 
 
 def _clean_tx_seconds(data_size_mb: float, base_bandwidth_mbps: float, distance_m: float) -> float:
+    """调用 clean 通信模型计算指定数据量的传输秒数。"""
     return float(comm_model.clean_transmission_time_seconds(data_size_mb, base_bandwidth_mbps, distance_m))
 
 
 def _service_position(position_map: dict[int, Any] | None, entity_id: int, fallback: Any) -> Any:
+    """优先读取冻结的位置快照，缺失时使用实体当前坐标。"""
     if position_map is None:
         return fallback
     return position_map.get(int(entity_id), fallback)
 
 
 def _ue_service_position(job: Any, ues: list[Any] | None, ue_service_positions: dict[int, Any] | None) -> Any:
+    """依次从冻结快照、UE 对象和 DAG 源位置中取得服务坐标。"""
     if ue_service_positions is not None and int(job.ue_id) in ue_service_positions:
         return ue_service_positions[int(job.ue_id)]
     if ues is not None:
@@ -445,6 +479,7 @@ def _ue_service_position(job: Any, ues: list[Any] | None, ue_service_positions: 
 
 
 def _task_numeric_suffix(task_id: str) -> int:
+    """提取任务 ID 的数字后缀；没有数字时生成稳定的字符和值。"""
     suffix = str(task_id).rsplit("_", 1)[-1]
     if suffix.isdigit():
         return int(suffix)

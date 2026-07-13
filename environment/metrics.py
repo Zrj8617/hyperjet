@@ -11,6 +11,7 @@ from environment.dag_tasks import DAGTaskManager, TaskNode
 
 @dataclass(slots=True)
 class CleanStepReward:
+    """保存一个时隙的总奖励及各个奖励分量。"""
     reward_total: float = 0.0
     time_penalty: float = 0.0
     energy_penalty: float = 0.0
@@ -25,6 +26,7 @@ class CleanStepReward:
 
 @dataclass(slots=True)
 class CleanEpisodeMetrics:
+    """累计一个回合内的完成率、时延、能耗、队列和移动统计。"""
     episode_reward: float = 0.0
     completed_dag_count: int = 0
     generated_dag_count: int = 0
@@ -53,10 +55,12 @@ class CleanEpisodeMetrics:
 
 class CleanMetricsTracker:
     def __init__(self) -> None:
+        """创建空的回合指标，并准备 DAG 去重集合。"""
         self.metrics = CleanEpisodeMetrics()
         self._counted_dag_ids: set[str] = set()
 
     def reset(self, uav_ids: list[int]) -> None:
+        """开始新回合时清空统计，并为每架 UAV 建立独立累计项。"""
         self.metrics = CleanEpisodeMetrics(
             compute_time_by_uav={int(uav_id): 0.0 for uav_id in uav_ids},
             completed_workload_by_uav={int(uav_id): 0.0 for uav_id in uav_ids},
@@ -71,9 +75,15 @@ class CleanMetricsTracker:
         movement_energy_slot: float = 0.0,
         movement_position_signal: float = 0.0,
     ) -> CleanStepReward:
+        """根据本时隙刚完成的任务和 DAG 计算共享奖励。
+
+        每个任务和 DAG 只结算一次；奖励由时延惩罚、任务/移动能耗惩罚、
+        DAG 完成奖励以及可选的位置塑形奖励组成。
+        """
         time_cost = 0.0
         task_energy_cost = 0.0
         reward_completed_task_count = 0
+        # 只对本时隙首次进入奖励完成状态的任务结算，避免重复扣时延和能耗。
         for task_id in getattr(execution_stats, "reward_completed_task_ids", getattr(execution_stats, "completed_task_ids", [])):
             task = task_manager.get_task(task_id)
             if task is None or task.reward_settled or task.reward_completion_time is None:
@@ -90,6 +100,7 @@ class CleanMetricsTracker:
             task.reward_settled = True
             reward_completed_task_count += 1
 
+        # DAG 奖励要等出口结果真正返回 UE 后才结算。
         completed_dags = 0
         for dag_id in getattr(execution_stats, "reward_completed_dag_ids", getattr(execution_stats, "completed_dag_ids", [])):
             job = task_manager.get_job(dag_id)
@@ -106,9 +117,7 @@ class CleanMetricsTracker:
         )
         energy_penalty = task_energy_penalty + movement_energy_penalty
         completed_dag_bonus = float(config.REWARD_COMPLETED_DAG_WEIGHT) * completed_dags
-        # Optional movement position shaping. OFF by default: when the flag is off (or
-        # weight is 0) this term is exactly 0.0 and the clean spec baseline reward is
-        # unchanged. Turn on only for the "improved" ablation.
+        # 位置塑形默认关闭；开关关闭或权重为 0 时严格返回 0，不改变基线奖励。
         movement_position_bonus = 0.0
         if bool(getattr(config, "ENABLE_MOVEMENT_POSITION_SHAPING", False)):
             movement_position_bonus = float(
@@ -146,6 +155,10 @@ class CleanMetricsTracker:
         movement_action_count: int = 0,
         movement_displacement_total: float = 0.0,
     ) -> None:
+        """把一个时隙的执行结果累加到当前回合指标中。
+
+        除计数和能耗外，还会记录任务时延、DAG 流时间、UAV 工作量、队列长度和移动统计。
+        """
         self.metrics.episode_reward += float(step_reward.reward_total)
         self.metrics.generated_dag_count = max(
             int(self.metrics.generated_dag_count + int(created_dags)),
@@ -162,6 +175,7 @@ class CleanMetricsTracker:
         self.metrics.executed_action_count += int(getattr(execution_stats, "newly_assigned_tasks", 0))
         self.metrics.executed_slots = max(self.metrics.executed_slots, int(elapsed_steps))
 
+        # 保存任务级样本，回合结束时再计算平均值。
         for task_id in getattr(execution_stats, "reward_completed_task_ids", getattr(execution_stats, "completed_task_ids", [])):
             task = task_manager.get_task(task_id)
             if task is not None:
@@ -171,6 +185,7 @@ class CleanMetricsTracker:
                         self._task_incremental_delay(task, task_manager)
                     )
 
+        # 同一个 DAG 只记录一次从到达到最终回传完成的流时间。
         for dag_id in getattr(execution_stats, "completed_dag_ids", []):
             job = task_manager.get_job(dag_id)
             if job is None or job.return_complete_time is None or dag_id in self._counted_dag_ids:
@@ -202,9 +217,9 @@ class CleanMetricsTracker:
         self.metrics.movement_displacement_total += float(movement_displacement_total)
 
     def to_info(self, elapsed_steps: int, total_time_seconds: float) -> dict[str, float]:
+        """把当前累计值整理成训练和评估日志使用的指标字典。"""
         steps = max(int(elapsed_steps), 1)
-        # Phase 1: the slot->seconds conversion lives in the caller (env); metrics
-        # never multiplies slot counts by TIME_SLOT_DURATION itself.
+        # 时隙到秒的换算由 Env 统一完成，这里直接使用传入的物理时间，避免重复乘时隙长度。
         total_evaluation_time = max(float(total_time_seconds), float(config.TIME_SLOT_DURATION))
         num_uavs = max(int(config.NUM_UAVS), 1)
         compute_total = sum(self.metrics.compute_time_by_uav.values())
@@ -218,8 +233,7 @@ class CleanMetricsTracker:
         avg_flowtime = float(np.mean(self.metrics.dag_flowtimes)) if self.metrics.dag_flowtimes else 0.0
         completion_rate = float(completed / max(generated, 1))
         throughput = float(completed / total_evaluation_time)
-        # Spec: total_episode_energy = task energy actually consumed + movement energy
-        # actually consumed. Energy per completed DAG divides that combined numerator.
+        # 回合总能耗包含任务执行和 UAV 移动两部分，单 DAG 能耗用这个总量除以完成数。
         total_episode_energy = float(self.metrics.total_task_energy) + float(self.metrics.uav_movement_energy_total)
         energy_per_completed_dag = float(total_episode_energy / max(completed, 1))
         avg_critical_delay = (
@@ -273,6 +287,7 @@ class CleanMetricsTracker:
         }
 
     def _task_incremental_delay(self, task: TaskNode, task_manager: DAGTaskManager) -> float:
+        """计算任务相对 DAG 到达或最晚前驱完成时刻新增的等待与执行时延。"""
         if task.reward_completion_time is None:
             return 0.0
         if not task.predecessors:
@@ -288,20 +303,22 @@ class CleanMetricsTracker:
         return max(0.0, float(task.reward_completion_time - parent_reference))
 
     def _task_execution_delay(self, task: TaskNode) -> float:
+        """计算任务从就绪到奖励完成之间的实际执行时延。"""
         if task.reward_completion_time is None:
             return 0.0
         ready_time = task.ready_time if task.ready_time is not None else task.arrival_time
         return max(0.0, float(task.reward_completion_time - ready_time))
 
     def _norm_time(self, value: float) -> float:
-        # Phase 4 reward calibration: normalized time cost is capped at
-        # CLEAN_REWARD_TIME_CLIP so long-queue tail delays cannot dominate the
-        # step reward. Reward-only: raw delays and flowtime metrics stay unclipped.
+        """按参考时间归一化奖励时延，并截断过大的长尾值。"""
+        # 截断只影响奖励计算，日志中的原始任务时延和 DAG 流时间保持不变。
         normalized = max(float(value), 0.0) / max(float(config.CLEAN_REWARD_TIME_REF), 1.0)
         return min(normalized, float(getattr(config, "CLEAN_REWARD_TIME_CLIP", float("inf"))))
 
     def _norm_task_energy(self, value: float) -> float:
+        """把任务执行能耗换算为无量纲奖励成本。"""
         return max(float(value), 0.0) / max(float(config.CLEAN_REWARD_TASK_ENERGY_REF), 1.0)
 
     def _norm_move_energy(self, value: float) -> float:
+        """把本时隙 UAV 移动能耗换算为无量纲奖励成本。"""
         return max(float(value), 0.0) / max(float(config.CLEAN_REWARD_MOVE_ENERGY_REF), 1.0)

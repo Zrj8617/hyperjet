@@ -665,6 +665,7 @@ class Env:
         return float(covered) / float(counted)
 
     def _movement_delta(self, action: int | str) -> np.ndarray:
+        """把悬停或四个方向的离散动作换成本时隙实际移动的二维距离。"""
         step_distance = float(config.CLEAN_UAV_MOVEMENT_SPEED) * float(config.TIME_SLOT_DURATION)
         if isinstance(action, str):
             action_name = action
@@ -682,6 +683,7 @@ class Env:
         return np.zeros((2,), dtype=np.float32)
 
     def _inside_map(self, position: np.ndarray) -> bool:
+        """判断二维位置是否仍在包含边界的矩形地图内。"""
         return (
             0.0 <= float(position[0]) <= float(config.AREA_WIDTH)
             and 0.0 <= float(position[1]) <= float(config.AREA_HEIGHT)

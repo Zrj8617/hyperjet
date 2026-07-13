@@ -1,4 +1,4 @@
-# 导入数值计算库numpy
+# NumPy 除了提供数组，也负责按固定种子生成场景中的随机参数。
 import numpy as np
 
 # ===================== 训练参数设置 =====================
@@ -9,35 +9,38 @@ SEED: int = 42
 # 设置numpy库的随机种子
 np.random.seed(SEED)
 
-# ===================== zrj_3 clean mainline: ENV =====================
-# Clean mainline canonical environment parameters. Deprecated aliases may remain
-# below only to keep old imports from crashing.
+# ===================== zrj_3 clean 主线：环境规模 =====================
+# 地图单位是米；一个回合包含 EPISODE_LENGTH 个时隙，每个时隙持续 TIME_SLOT_DURATION 秒。
 AREA_WIDTH: int = 500
 AREA_HEIGHT: int = 500
 NUM_UAVS: int = 5
 NUM_UES: int = 60
 EPISODE_LENGTH: int = 500
 TIME_SLOT_DURATION: float = 5.0
-# Deprecated alias used by old training loops; clean mainline uses EPISODE_LENGTH.
+# 旧训练入口仍读取这个名字；clean 主线直接使用 EPISODE_LENGTH。
 STEPS_PER_EPISODE: int = EPISODE_LENGTH
 
-# ===================== zrj_3 clean mainline: HOTSPOT =====================
+# ===================== zrj_3 clean 主线：热点与任务到达 =====================
+# 热点内 UE 的 DAG 到达概率为“基础概率 × 热点倍率”。
 HOTSPOT_RADIUS: float = 150.0
 DAG_BASE_ARRIVAL_PROB: float = 0.0145
 DAG_HOTSPOT_ARRIVAL_MULTIPLIER: float = 2.0
 
-# ===================== zrj_3 clean mainline: UE_MOBILITY =====================
+# ===================== zrj_3 clean 主线：UE 移动 =====================
+# 等待 DAG 服务的 UE 会把正常步行速度乘以下面的降速比例。
 UE_WALK_SPEED_MEAN: float = 1.2
 UE_SERVICE_WAITING_SPEED_SCALE: float = 0.2
 
-# ===================== zrj_3 clean mainline: DAG =====================
+# ===================== zrj_3 clean 主线：DAG 结构 =====================
+# 控制每个 DAG 的任务数、层数和单任务最大父节点数；BASE_UNIT_BYTES 用于估算运算量。
 DAG_MIN_TASKS: int = 5
 DAG_MAX_TASKS: int = 8
 DAG_MAX_LEVELS: int = 4
 DAG_MAX_PARENTS: int = 3
 BASE_UNIT_BYTES: int = 10 * 1024
 
-# ===================== zrj_3 clean mainline: TASK_ATTRIBUTES =====================
+# ===================== zrj_3 clean 主线：任务属性 =====================
+# 每个任务会在这些范围内随机采样输入、输出、常数和复杂度类型。
 INPUT_DATA_SIZE_MB_RANGE: tuple[float, float] = (0.75, 14.0)
 OUTPUT_DATA_SIZE_MB_RANGE: tuple[float, float] = (0.6, 10.5)
 TASK_CONSTANT_RANGE: tuple[int, int] = (6, 60)
@@ -47,14 +50,14 @@ TASK_COMPLEXITY_PROBS: dict[str, float] = {
     "nlog2n": 0.1,
 }
 
-# ===================== zrj_3 clean mainline: COMM =====================
+# ===================== zrj_3 clean 主线：链路带宽 =====================
+# 创建 DAG 时按 BANDWIDTH_LEVEL_PROBS 选一档基础上下行带宽，单位为 Mbps。
 BASE_UPLOAD_BANDWIDTH_MBPS: list[float] = [20.0, 50.0, 100.0]
 BASE_DOWNLOAD_BANDWIDTH_MBPS: list[float] = [50.0, 100.0, 200.0]
 BANDWIDTH_LEVEL_PROBS: list[float] = [0.3, 0.5, 0.2]
 
-# ===================== zrj_3 clean mainline: ENERGY =====================
-# Initial defaults reuse nearby legacy transmit assumptions where possible.
-# These are first-version configurable power knobs and should be calibrated later.
+# ===================== zrj_3 clean 主线：算力、能耗与队列 =====================
+# 功率单位为瓦特，计算速率单位为每秒运算次数；这些值直接影响完成时间和能耗奖励。
 P_UAV_COMPUTE: float = 50.0
 P_UE_TX: float = 0.5
 P_UAV_TX: float = 0.5
@@ -62,17 +65,16 @@ CLEAN_POWER_MOVE: float = 100.0
 UAV_COMPUTE_RATE_OPS_PER_SEC: float = 1_000_000.0
 CLEAN_MAX_QUEUE_PER_UAV: int = 16
 
-# ===================== zrj_3 clean mainline: MOVEMENT =====================
+# ===================== zrj_3 clean 主线：UAV 移动 =====================
+# 每个时隙从悬停和四个平面方向中选一个动作，实际距离=速度×时隙秒数。
 CLEAN_MOVEMENT_ACTIONS: tuple[str, ...] = ("hover", "+x", "-x", "+y", "-y")
 CLEAN_MOVEMENT_ACTION_DIM: int = len(CLEAN_MOVEMENT_ACTIONS)
 CLEAN_MOVEMENT_HOVER_ACTION: str = "hover"
 CLEAN_UAV_MOVEMENT_SPEED: float = 15.0
 
-# ===================== zrj_3 clean mainline: FEATURE NORMALIZATION =====================
-# Single source of truth for clean observation/feature normalization scales.
-# Feature builders must reference these constants; inline scales like
-# `EPISODE_LENGTH * TIME_SLOT_DURATION` are forbidden in feature code (they
-# crushed pair features to ~1e-3 and blinded the offloading actor).
+# ===================== zrj_3 clean 主线：特征归一化 =====================
+# 所有特征构建器都从这里读取统一参考尺度，不能在函数里临时写一个更大的分母，
+# 否则候选特征会被压得接近 0，卸载策略就看不出候选间的差别。
 CLEAN_NORM_PAIR_TIME_REF: float = 4.0 * TIME_SLOT_DURATION  # link/compute time scale (s)
 CLEAN_NORM_AVAIL_TIME_REF: float = 8.0 * TIME_SLOT_DURATION  # queue-wait / availability scale (s)
 CLEAN_NORM_PAIR_ENERGY_REF: float = P_UAV_COMPUTE * TIME_SLOT_DURATION  # per-task energy scale (J)
@@ -81,19 +83,14 @@ CLEAN_NORM_QUEUE_WORKLOAD_REF: float = (
 )  # per-UAV queued ops scale
 CLEAN_NORM_ACTIVE_TASK_REF: float = float(NUM_UES * DAG_MAX_TASKS)  # max possible active tasks
 
-# ===================== zrj_3 clean mainline: GRAPH =====================
-# CLEAN ABLATION NOTE:
-# The clean-mainline hypergraph (environment/graph_builder.py -> CleanGraphBuilder)
-# reads ONLY the four ENABLE_* flags below to switch its four hyperedge types:
+# ===================== zrj_3 clean 主线：超图 =====================
+# CleanGraphBuilder 只读取下面四个 ENABLE_* 开关来控制四类超边：
 #   E_DAG   <- ENABLE_DAG_DEPENDENCY_EDGES
 #   E_khop  <- ENABLE_KHOP_DEPENDENCY_HYPEREDGES
 #   E_attr  <- ENABLE_ATTRIBUTE_HYPEREDGES
 #   E_part  <- ENABLE_KAHYPAR_PARTITION_HYPEREDGES
-# For clean ablations (e.g. "only E_DAG", "E_DAG + E_attr") flip ONLY these ENABLE_*
-# flags. The legacy `USE_*` hyperedge switches further below (USE_ATTRIBUTE_HYPEREDGES,
-# USE_CRITICAL_HYPEREDGES, USE_RESOURCE_COMPETITION_HYPEREDGES, ...) belong to the old
-# pipeline and are NOT read by CleanGraphBuilder; editing them has no effect on the
-# clean mainline. Do not use USE_* for clean ablation.
+# 做 clean 消融实验时只改这些开关。文件后面的旧 `USE_*` 超边开关属于旧管线，
+# 改它们不会影响 clean 主线。
 ENABLE_DAG_DEPENDENCY_EDGES: bool = True
 ENABLE_KHOP_DEPENDENCY_HYPEREDGES: bool = True
 ENABLE_ATTRIBUTE_HYPEREDGES: bool = True
@@ -104,44 +101,26 @@ ENABLE_KAHYPAR_PARTITION_HYPEREDGES: bool = True
 KAHYPAR_PARTITION_UPDATE_INTERVAL: int = 5
 KAHYPAR_DEGRADED_EXPERIMENT_LABEL: str = "no-KaHyPar / degraded"
 
-# ===================== zrj_3 clean mainline: REWARD =====================
+# ===================== zrj_3 clean 主线：奖励 =====================
+# 时间和能耗权重越大，惩罚越重；完成 DAG 权重越大，完成奖励越高。
 REWARD_TIME_WEIGHT: float = 1.0
 REWARD_ENERGY_WEIGHT: float = 0.1
 REWARD_MOVEMENT_ENERGY_WEIGHT: float = 0.05
 REWARD_COMPLETED_DAG_WEIGHT: float = 2.0
 CRITICAL_TASK_WEIGHT: float = 1.0
 NONCRITICAL_TASK_WEIGHT: float = 0.5
-# Phase 4 reward calibration (P1). Basis: P0 200-slot baselines and the quick-RL
-# time-penalty distribution. Under the Phase 3 load, random-policy per-task
-# incremental delay is queue-dominated (mean ~100 s, avg task service ~15 s);
-# with the old T_ref = TIME_SLOT_DURATION (5 s) the per-slot time penalty
-# averaged -57 with tails to -335, drowning the DAG bonus (~+0.8) and blowing
-# critic targets to |V|~4e3 (pre-clip grad norms ~1e5-1e6, so the global 0.5
-# grad clip crushed actor updates). T_ref = 60 s + a per-task cap of 10
-# normalized units bounds the tail and brings step rewards to ~O(1) so the
-# actor/critic gradients share a sane scale. Raw delays/flowtime in metrics
-# are NOT clipped; the cap applies to the reward's norm_time only.
+# 时间参考值和截断上限只用于奖励归一化，避免长队列产生的极端时延压过 DAG 完成奖励。
+# 指标日志仍保留原始时延和流时间，不会被截断。
 CLEAN_REWARD_TIME_REF: float = 60.0
 CLEAN_REWARD_TIME_CLIP: float = 10.0
 CLEAN_REWARD_TASK_ENERGY_REF: float = P_UAV_COMPUTE * TIME_SLOT_DURATION
 CLEAN_REWARD_MOVE_ENERGY_REF: float = NUM_UAVS * CLEAN_POWER_MOVE * TIME_SLOT_DURATION
 
-# --- Optional movement position shaping (OFF by default) ---------------------
-# The clean spec reward gives movement only a shared slot-level advantage plus a
-# move-energy penalty (no positive positioning signal). To study whether an extra
-# positioning signal helps WITHOUT changing the clean baseline, this optional term
-# rewards covering current ready-task demand origins with UAV service positions.
-# Keep it OFF for the spec baseline; turn it ON for the "improved" ablation only.
-#   baseline: ENABLE_MOVEMENT_POSITION_SHAPING = False
-#   improved: ENABLE_MOVEMENT_POSITION_SHAPING = True, REWARD_MOVEMENT_POSITION_WEIGHT > 0
+# --- 可选的位置塑形奖励（基线默认关闭） ---------------------
+# 打开后，UAV 覆盖更多就绪任务源位置会得到额外奖励。基线实验保持 False；
+# 只有改进消融实验才打开，并把 REWARD_MOVEMENT_POSITION_WEIGHT 设为正数。
 ENABLE_MOVEMENT_POSITION_SHAPING: bool = False
 REWARD_MOVEMENT_POSITION_WEIGHT: float = 0.0
-
-# ===================== zrj_3 clean mainline: PROFILING =====================
-ENABLE_CLEAN_PROFILING: bool = False
-
-# ===================== zrj_3 clean mainline: QOS =====================
-ENABLE_DEADLINE_QOS_EVAL: bool = False
 
 # 日志记录频率（单位：回合）
 LOG_FREQ: int = 1
@@ -243,18 +222,8 @@ DAG_TASK_UAV_MAX_DISTANCE: float = 220.0
 DAG_MAX_QUEUE_PER_UAV: int = 8
 # critical hyperedge使用的slack阈值
 DAG_CRITICAL_SLACK_THRESHOLD: int = 8
-# 高风险DAG评估阈值：按DAG内最紧原始deadline offset粗分高风险任务流
-DAG_HIGH_RISK_DEADLINE_THRESHOLD: int = DAG_CRITICAL_SLACK_THRESHOLD * 2
 # critical hyperedge单条最多任务数，避免全局urgent大超边过平滑
 DAG_CRITICAL_MAX_SIZE: int = 8
-# critical support超边：每步最多选择的高风险DAG数量
-DAG_CRITICAL_SUPPORT_TOP_DAGS: int = 3
-# critical support超边：每条边最多选择的紧急ready任务数
-DAG_CRITICAL_SUPPORT_TOP_TASKS: int = 5
-# critical support超边：每条边最多选择的UAV总数，包含anchor与support
-DAG_CRITICAL_SUPPORT_MAX_UAVS: int = 3
-# critical support超边：每个anchor最多选择的通信支持UAV数量
-DAG_CRITICAL_SUPPORT_MAX_NEIGHBORS: int = 2
 # 任务属性超边：每簇最多任务数
 DAG_ATTRIBUTE_TOP_M_TASKS: int = 5
 # 任务属性超边：按属性邻域构造时保留的簇数
@@ -294,8 +263,6 @@ STAGE_B_FEASIBLE_EDGE_REWARD: float = 0.1
 STAGE_B_PROGRESS_REWARD: float = 0.3
 STAGE_B_LOCAL_FINISH_REWARD: float = 0.0
 STAGE_B_LOCAL_ON_TIME_FINISH_REWARD: float = 0.0
-STAGE_B_DAG_SUCCESS_DELTA_REWARD: float = 0.05
-STAGE_B_DAG_FAILURE_DELTA_PENALTY: float = 0.03
 STAGE_B_MOVE_ENERGY_PENALTY: float = 0.2
 STAGE_B_COLLISION_PENALTY: float = 1.5
 STAGE_B_BOUNDARY_PENALTY: float = 1.5
@@ -320,8 +287,6 @@ USE_SCORE_AGREEMENT_ONLY: bool = False
 SELECTIVE_HGNN_SLACK_THRESHOLD: int = DAG_CRITICAL_SLACK_THRESHOLD
 # selective scoring上下文风险窗口：critical/successor信号只在DAG slack进入该窗口时触发
 SELECTIVE_HGNN_CONTEXT_SLACK_MULTIPLIER: float = 2.0
-# selective scoring每步最多交给HGNN打分的ready task数；其余ready task回退fallback
-SELECTIVE_HGNN_MAX_TASKS_PER_STEP: int = 40
 # selective scoring高风险判据：候选UAV数量稀缺阈值
 SELECTIVE_HGNN_CANDIDATE_THRESHOLD: int = 2
 # selective scoring高风险判据：所属DAG已接近闭环的完成比例阈值
@@ -384,24 +349,13 @@ SCORE_RANKING_MARGIN: float = 0.05
 SCORE_RANKING_TOP1_WEIGHT: float = 0.2
 SCORE_SOFT_TARGET_TAU: float = 0.2
 SCORE_BOUNDED_RANKING_FINISH_TOLERANCE: float = 0.1
-# Stage A teacher目标：从纯planned_finish扩展到轻量DAG-aware utility。
-# 分数仍然越小越好；权重以TIME_SLOT_DURATION量级为基准，避免一次性偏离EFT teacher过大。
-USE_DAG_AWARE_TEACHER_SCORE: bool = True
-DAG_TEACHER_SUCCESSOR_COMPUTE_BONUS: float = 2.0
-DAG_TEACHER_CRITICAL_COMPUTE_BONUS: float = 4.0
-DAG_TEACHER_PARENT_LOCALITY_BONUS: float = 1.0
-DAG_TEACHER_URGENCY_WEIGHT: float = 0.3
-DAG_TEACHER_COMPLETION_WEIGHT: float = 0.2
-
 # ===================== Assignment-only RL 参数 =====================
 # 最小化任务卸载RL分支：默认关闭，不影响原supervised score-head主路径
 USE_RL_ASSIGNMENT: bool = False
 RL_ASSIGNMENT_USE_HGNN_ENCODER: bool = True
 RL_ASSIGNMENT_TRAIN_ENCODER: bool = False
 RL_ASSIGNMENT_LOAD_ENCODER_CHECKPOINT: bool = True
-RL_ASSIGNMENT_USE_RUNTIME_GUARD: bool = False
 RL_ASSIGNMENT_GAMMA: float = 0.99
-RL_ASSIGNMENT_GAE_LAMBDA: float = 0.95
 RL_ASSIGNMENT_CLIP_EPS: float = 0.2
 RL_ASSIGNMENT_ENTROPY_COEF: float = 0.01
 RL_ASSIGNMENT_VALUE_COEF: float = 0.5

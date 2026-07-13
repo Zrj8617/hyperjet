@@ -11,6 +11,7 @@ from environment.dag_tasks import DAGTaskManager, TaskNode
 
 @dataclass(slots=True)
 class CleanScheduledTask:
+    """保存一个已调度任务从上传、计算到回传的完整时间和能耗记录。"""
     task_id: str
     uav_id: int
     assignment_time: float
@@ -32,6 +33,7 @@ class CleanScheduledTask:
 
 @dataclass(slots=True)
 class CleanExecutionStepStats:
+    """汇总一个时隙内新分配、完成任务、完成 DAG 和能耗等结果。"""
     newly_assigned_tasks: int = 0
     invalid_assignments: int = 0
     completed_tasks: int = 0
@@ -51,23 +53,29 @@ class CleanExecutionStepStats:
 class CleanTaskExecutor:
     """Strict clean-mainline task executor.
 
+    中文：严格执行调用方给出的任务—UAV 分配，不会在内部偷偷换成另一架 UAV；
+    同时维护各 UAV 队列、可用时间和任务执行记录。
+
     The executor schedules exactly the task-UAV pairs it is given and does not
     substitute a different UAV.
     """
 
     def __init__(self) -> None:
+        """创建空的 UAV 队列、可用时间表和任务记录表。"""
         self.uav_available_time: dict[int, float] = {}
         self.uav_queues: dict[int, list[str]] = {}
         self.task_records: dict[str, CleanScheduledTask] = {}
         self.latest_stats: CleanExecutionStepStats = CleanExecutionStepStats()
 
     def reset(self, uavs: list[Any]) -> None:
+        """开始新回合时清空记录，并为每架 UAV 建立空队列。"""
         self.uav_available_time = {int(uav.id): 0.0 for uav in uavs}
         self.uav_queues = {int(uav.id): [] for uav in uavs}
         self.task_records.clear()
         self.latest_stats = CleanExecutionStepStats()
 
     def is_task_scheduled(self, task_id: str) -> bool:
+        """判断任务是否已经进入调度且尚未完成。"""
         record = self.task_records.get(str(task_id))
         return bool(record is not None and not record.completed)
 
@@ -81,11 +89,17 @@ class CleanTaskExecutor:
         uav_service_positions: dict[int, Any] | None = None,
         ue_service_positions: dict[int, Any] | None = None,
     ) -> CleanExecutionStepStats:
+        """校验并接收本时隙的任务分配，生成预计执行记录。
+
+        非法 UAV、非就绪任务、重复调度或队列已满都会计为无效分配；合法任务会立即
+        写入 UAV 队列并更新该 UAV 的预计可用时间。
+        """
         self.latest_stats = CleanExecutionStepStats()
         assignment_items = _assignment_items(assignments)
         if not assignment_items:
             return self.latest_stats
 
+        # 用临时预留状态逐条处理，保证同一批后续任务能看到前面任务占用的队列位置。
         uav_map = {int(uav.id): uav for uav in uavs}
         reservation = TemporaryReservationState.from_executor(uavs, self)
         valid_uav_ids = set(uav_map)
@@ -108,6 +122,7 @@ class CleanTaskExecutor:
                 continue
             assert task is not None
 
+            # 根据上传、前驱转发、排队和计算耗时生成完整执行时间线。
             record = self._build_schedule_record(
                 task=task,
                 task_manager=task_manager,
@@ -140,6 +155,10 @@ class CleanTaskExecutor:
         uav_service_positions: dict[int, Any] | None = None,
         ue_service_positions: dict[int, Any] | None = None,
     ) -> CleanExecutionStepStats:
+        """把所有已调度任务推进到当前时隙末，并结算已经完成的记录。
+
+        普通任务计算结束即完成；DAG 出口任务还要等结果回传 UE 后才算完成。
+        """
         step_end = float(current_time_seconds) + float(config.TIME_SLOT_DURATION)
         uav_map = {int(uav.id): uav for uav in uavs}
 
@@ -185,6 +204,10 @@ class CleanTaskExecutor:
         uav_service_positions: dict[int, Any] | None = None,
         ue_service_positions: dict[int, Any] | None = None,
     ) -> CleanScheduledTask | None:
+        """为一个合法任务构造上传、转发、排队、计算和回传时间线。
+
+        DAG、前驱任务或前驱 UAV 信息缺失时返回 `None`，调用方会把该分配记为无效。
+        """
         job = task_manager.get_job(task.dag_id)
         if job is None:
             return None
@@ -195,6 +218,7 @@ class CleanTaskExecutor:
         inter_transfer_energy = 0.0
         predecessor_ready_time = assignment_time
 
+        # 入口任务从 UE 上传输入；其他任务要从不同 UAV 上收齐所有前驱输出。
         if not task.predecessors:
             ue_source_pos = _service_position(ue_service_positions, int(job.ue_id), job.source_pos)
             uav_pos = _service_position(uav_service_positions, int(uav.id), getattr(uav, "pos"))
@@ -236,6 +260,7 @@ class CleanTaskExecutor:
             predecessor_ready_time = max(parent_finish_times) if parent_finish_times else assignment_time
             communication_energy += inter_transfer_energy
 
+        # 任务开始计算前，要同时等 UAV 空闲、前驱完成和数据传输完成。
         transfer_ready_time = (
             max(
                 assignment_time,
@@ -286,6 +311,10 @@ class CleanTaskExecutor:
         uav_service_positions: dict[int, Any] | None = None,
         ue_service_positions: dict[int, Any] | None = None,
     ) -> None:
+        """在出口任务计算完成后启动结果回传，并更新最终完成时间。
+
+        计算完成只进入 returning 状态，必须等回传结束后才能发放任务和 DAG 奖励。
+        """
         if record.return_started or record.compute_finish_time > step_end:
             return
         uav = uav_map.get(record.uav_id)
@@ -310,8 +339,7 @@ class CleanTaskExecutor:
         record.total_energy = record.communication_energy + record.compute_energy + record.return_energy
         record.finish_time = record.compute_finish_time + record.return_time
         record.return_started = True
-        # Sink compute is finished, but the task is not reward-completed or DAG-complete
-        # until the return finishes.
+        # 出口任务此时只是算完，结果尚未回到 UE，因此不能提前结算任务或 DAG 奖励。
         task_manager.mark_task_returning(task.task_id, record.compute_finish_time)
         self.uav_available_time[record.uav_id] = max(
             float(self.uav_available_time.get(record.uav_id, 0.0)),
@@ -324,6 +352,7 @@ class CleanTaskExecutor:
         task: TaskNode,
         task_manager: DAGTaskManager,
     ) -> None:
+        """结算一条完成记录，移出队列并累计任务、能耗和 DAG 完成统计。"""
         if record.completed:
             return
         task.assigned_uav = record.uav_id
@@ -342,6 +371,7 @@ class CleanTaskExecutor:
         if task.task_id in queue:
             queue.remove(task.task_id)
 
+        # 任务统计和能耗只在这里统一结算一次。
         self.latest_stats.completed_tasks += 1
         self.latest_stats.completed_task_ids.append(task.task_id)
         self.latest_stats.reward_completed_task_ids.append(task.task_id)
@@ -369,17 +399,20 @@ PhaseOneTaskExecutor = CleanTaskExecutor
 
 
 def _clean_tx_seconds(data_size_mb: float, base_bandwidth_mbps: float, distance_m: float) -> float:
+    """通过 clean 通信模型计算数据传输时间。"""
     fn = getattr(comm_model, "clean_" + "transmission" + "_time_seconds")
     return float(fn(data_size_mb, base_bandwidth_mbps, distance_m))
 
 
 def _service_position(position_map: dict[int, Any] | None, entity_id: int, fallback: Any) -> Any:
+    """优先返回冻结的位置快照，没有快照时使用实体当前坐标。"""
     if position_map is None:
         return fallback
     return position_map.get(int(entity_id), fallback)
 
 
 def _assignment_items(assignments: dict[str, int] | CleanAssignmentBuffer | None) -> list[tuple[str, Any]]:
+    """把字典或分配缓冲区统一转换为可遍历的任务—UAV 列表。"""
     if assignments is None:
         return []
     if isinstance(assignments, CleanAssignmentBuffer):

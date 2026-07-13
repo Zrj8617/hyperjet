@@ -11,6 +11,7 @@ from environment.dag_tasks import DAGTaskManager, TaskNode
 
 @dataclass(slots=True)
 class CleanGraphSnapshot:
+    """保存一个时隙的活动任务、特征、四类超边和关联矩阵。"""
     current_time_step: int
     active_task_ids: list[str]
     ready_task_ids: list[str]
@@ -34,10 +35,12 @@ class CleanGraphSnapshot:
 
     @property
     def task_ids(self) -> list[str]:
+        """返回图中活动任务 ID 的副本。"""
         return list(self.active_task_ids)
 
     @property
     def hyperedges(self) -> list[list[int]]:
+        """按 DAG、K 跳、属性和分区的顺序合并全部超边。"""
         return [
             *self.dag_hyperedges,
             *self.khop_hyperedges,
@@ -47,9 +50,14 @@ class CleanGraphSnapshot:
 
 
 class CleanGraphBuilder:
-    """Clean mainline graph snapshot builder for zrj_3."""
+    """Clean mainline graph snapshot builder for zrj_3.
+
+    中文：把当前活动任务整理成 HGNN 使用的快照，并按配置构建 DAG、K 跳、
+    属性聚类和 KaHyPar 分区四类超边；更新较慢的超边会复用缓存。
+    """
 
     def __init__(self) -> None:
+        """初始化属性聚类、分区结果和最近更新时间等缓存状态。"""
         self._cached_attribute_groups_global: list[list[str]] = []
         self._last_attribute_update_step: int | None = None
         self._last_attribute_task_ids: tuple[str, ...] = ()
@@ -60,6 +68,7 @@ class CleanGraphBuilder:
         self._last_seen_dag_arrival_version: int = 0
 
     def reset(self) -> None:
+        """清空所有超边缓存和更新时间，供新回合重新建图。"""
         self._cached_attribute_groups_global = []
         self._last_attribute_update_step = None
         self._last_attribute_task_ids = ()
@@ -71,18 +80,22 @@ class CleanGraphBuilder:
 
     @property
     def last_attribute_update_step(self) -> int | None:
+        """返回最近一次重算属性超边的时隙。"""
         return self._last_attribute_update_step
 
     @property
     def last_partition_update_step(self) -> int | None:
+        """返回最近一次成功更新 KaHyPar 分区的时隙。"""
         return self._last_partition_update_step
 
     @property
     def last_partition_attempt_step(self) -> int | None:
+        """返回最近一次尝试运行 KaHyPar 的时隙，无论是否成功。"""
         return self._last_partition_attempt_step
 
     @property
     def last_partition_status(self) -> str:
+        """返回最近一次分区处理的成功、缓存或降级状态。"""
         return self._last_partition_status
 
     def build(
@@ -96,6 +109,11 @@ class CleanGraphBuilder:
         dag_arrival_version: int | None = None,
         force_hypergraph_update: bool = False,
     ) -> CleanGraphSnapshot:
+        """根据当前任务状态构建一个可直接送入 HGNN 的图快照。
+
+        新 DAG 到达或版本变化时会强制刷新慢速超边；冻结的就绪任务列表优先于
+        任务管理器的实时结果，保证建图和策略决策使用同一批任务。
+        """
         del uavs, executor
         current_arrival_version = (
             int(task_manager.dag_arrival_version)
@@ -104,6 +122,7 @@ class CleanGraphBuilder:
         )
         version_changed = current_arrival_version > self._last_seen_dag_arrival_version
         force_update = bool(force_hypergraph_update or new_dag_arrived or version_changed)
+        # 先固定节点顺序和双向索引，后续所有超边都只引用这一套局部编号。
         active_tasks = sorted(task_manager.get_active_tasks(), key=lambda task: _stable_task_key(task.task_id))
         active_task_ids = [task.task_id for task in active_tasks]
         task_id_to_idx = {task_id: idx for idx, task_id in enumerate(active_task_ids)}
@@ -120,6 +139,7 @@ class CleanGraphBuilder:
         ready_id_set = set(ready_task_ids)
         pending_task_ids = [task_id for task_id in active_task_ids if task_id not in ready_id_set]
 
+        # 四类超边分开构建，便于做消融实验并记录各自的更新状态。
         task_features = self._build_task_features(active_tasks, task_manager, ready_id_set)
         dag_hyperedges = self._build_dag_hyperedges(active_tasks, task_id_to_idx)
         khop_hyperedges = self._build_khop_hyperedges(task_manager, task_id_to_idx)
@@ -139,6 +159,7 @@ class CleanGraphBuilder:
             force_update=attribute_updated,
         )
         self._last_seen_dag_arrival_version = max(self._last_seen_dag_arrival_version, current_arrival_version)
+        # 最后把全部超边合并成节点—超边关联矩阵，作为 HGNN 的结构输入。
         incidence_matrix = self._build_incidence_matrix(
             node_count=len(active_task_ids),
             hyperedges=[*dag_hyperedges, *khop_hyperedges, *attribute_hyperedges, *partition_hyperedges],
@@ -166,6 +187,10 @@ class CleanGraphBuilder:
         task_manager: DAGTaskManager,
         ready_task_ids: set[str],
     ) -> np.ndarray:
+        """把活动任务转换为 12 维归一化特征。
+
+        特征包含上下行带宽、数据量、运算量、层级、入口/出口标记、依赖数和就绪状态。
+        """
         if not active_tasks:
             return np.zeros((0, 12), dtype=np.float32)
 
@@ -206,6 +231,7 @@ class CleanGraphBuilder:
         return np.stack(rows, axis=0).astype(np.float32)
 
     def _build_uav_features(self, uavs: list[Any], executor: Any | None) -> np.ndarray:
+        """把 UAV 位置、剩余能量、队列长度和算力可用性整理成 5 维特征。"""
         if not uavs:
             return np.zeros((0, 5), dtype=np.float32)
         max_queue = max(float(getattr(config, "CLEAN_MAX_QUEUE_PER_UAV", 1)), 1.0)
@@ -235,6 +261,7 @@ class CleanGraphBuilder:
         active_tasks: list[TaskNode],
         task_id_to_idx: dict[str, int],
     ) -> list[list[int]]:
+        """为每条直接父子依赖建立一条二节点 DAG 超边。"""
         if not config.ENABLE_DAG_DEPENDENCY_EDGES:
             return []
         hyperedges: list[list[int]] = []
@@ -250,6 +277,7 @@ class CleanGraphBuilder:
         task_manager: DAGTaskManager,
         task_id_to_idx: dict[str, int],
     ) -> list[list[int]]:
+        """把 DAG 创建时预计算的 K 跳依赖组映射到当前活动节点并去重。"""
         if not config.ENABLE_KHOP_DEPENDENCY_HYPEREDGES:
             return []
         dedup: set[tuple[int, ...]] = set()
@@ -271,6 +299,10 @@ class CleanGraphBuilder:
         current_time_step: int,
         force_update: bool,
     ) -> tuple[list[list[int]], bool]:
+        """按任务属性聚类生成超边，并按间隔或新任务到达决定是否重算。
+
+        不需要重算时复用全局任务 ID 缓存，再映射到当前图中的局部节点编号。
+        """
         if not config.ENABLE_ATTRIBUTE_HYPEREDGES or len(active_tasks) < 2:
             self._cached_attribute_groups_global = []
             self._last_attribute_task_ids = tuple(task.task_id for task in active_tasks)
@@ -287,6 +319,7 @@ class CleanGraphBuilder:
             or has_new_active_task
         )
         if should_update:
+            # 对带宽、数据量和运算量做确定性聚类，至少两个任务的簇才形成超边。
             vectors = self._build_attribute_vectors(active_tasks, task_manager)
             cluster_num = min(int(config.ATTRIBUTE_HYPEREDGE_CLUSTER_NUM), len(active_tasks))
             labels = _deterministic_kmeans(_normalize_columns(vectors), cluster_num)
@@ -315,6 +348,11 @@ class CleanGraphBuilder:
         current_time_step: int,
         force_update: bool,
     ) -> list[list[int]]:
+        """基于 K 跳和属性超边运行 KaHyPar，生成任务分区超边。
+
+        只在更新间隔、新任务或上游属性超边变化时重算；KaHyPar 不可用或失败时
+        复用上次成功缓存，没有缓存则安全返回空分区边。
+        """
         if not config.ENABLE_KAHYPAR_PARTITION_HYPEREDGES or len(active_task_ids) < 2:
             self._last_partition_status = "disabled"
             return []
@@ -325,8 +363,7 @@ class CleanGraphBuilder:
         ]
         valid_base_hyperedges = [edge for edge in valid_base_hyperedges if len(edge) >= 2]
         if not valid_base_hyperedges:
-            # No information to partition on. Keep any previous cache untouched; do
-            # not report KaHyPar success or clear cached groups with an empty result.
+            # 没有可用基础超边时保留旧缓存，不能把“没有输入”误报成一次成功分区。
             self._last_partition_status = "no_base_hyperedges"
             return self._remap_global_groups(self._cached_partition_groups_global, task_id_to_idx)
 
@@ -351,8 +388,7 @@ class CleanGraphBuilder:
                 self._last_partition_update_step = current_time_step
                 self._last_partition_status = "success"
             else:
-                # Engineering degrade: KaHyPar unavailable or failed. Reuse cache if any,
-                # otherwise emit no partition edges this slot (never silently "success").
+                # KaHyPar 不可用或执行失败时优先复用缓存；没有缓存则明确标记无缓存降级。
                 self._last_partition_status = (
                     "degraded_cache"
                     if self._cached_partition_groups_global
@@ -368,6 +404,10 @@ class CleanGraphBuilder:
         node_count: int,
         base_hyperedges: list[list[int]],
     ) -> list[list[int]] | None:
+        """调用可选的 KaHyPar 库对基础超图进行分区。
+
+        依赖缺失、输入无效、API 不兼容或原生库报错时统一返回 `None`，由上层执行降级。
+        """
         if node_count < 2 or not base_hyperedges:
             return None
         try:
@@ -376,6 +416,7 @@ class CleanGraphBuilder:
             return None
 
         try:
+            # 先清洗节点编号，再转换为 KaHyPar 所需的压缩超边索引和 pin 数组。
             cleaned_edges = [
                 sorted({int(idx) for idx in edge if 0 <= int(idx) < node_count})
                 for edge in base_hyperedges
@@ -437,6 +478,7 @@ class CleanGraphBuilder:
         groups_global: list[list[str]],
         task_id_to_idx: dict[str, int],
     ) -> list[list[int]]:
+        """把缓存中的全局任务 ID 分组映射到当前局部编号，并过滤重复或单节点组。"""
         dedup: set[tuple[int, ...]] = set()
         output: list[list[int]] = []
         for group_global in groups_global:
@@ -448,6 +490,7 @@ class CleanGraphBuilder:
         return output
 
     def _build_incidence_matrix(self, node_count: int, hyperedges: list[list[int]]) -> np.ndarray:
+        """构建形状为“节点数 × 超边数”的 0/1 关联矩阵。"""
         if node_count <= 0 or not hyperedges:
             return np.zeros((max(node_count, 0), 0), dtype=np.float32)
         incidence = np.zeros((node_count, len(hyperedges)), dtype=np.float32)
@@ -462,6 +505,7 @@ class CleanGraphBuilder:
         active_tasks: list[TaskNode],
         task_manager: DAGTaskManager,
     ) -> np.ndarray:
+        """提取用于属性聚类的带宽、输入输出数据量和运算量原始向量。"""
         rows: list[list[float]] = []
         for task in active_tasks:
             job = task_manager.get_job(task.dag_id)
@@ -484,6 +528,7 @@ class CleanGraphBuilder:
         uav_id_to_idx: dict[int, int],
         executor: Any | None,
     ) -> np.ndarray:
+        """枚举所有就绪且未调度任务与 UAV 的候选配对索引。"""
         pairs: list[tuple[int, int]] = []
         for task in active_tasks:
             if not task.is_ready:
@@ -499,6 +544,7 @@ class CleanGraphBuilder:
 
 
 def _normalize_columns(values: np.ndarray) -> np.ndarray:
+    """逐列执行最小—最大归一化，常数列安全地映射为 0。"""
     if values.size == 0:
         return values.astype(np.float64)
     mins = values.min(axis=0)
@@ -508,6 +554,7 @@ def _normalize_columns(values: np.ndarray) -> np.ndarray:
 
 
 def _deterministic_kmeans(values: np.ndarray, cluster_num: int, max_iter: int = 25) -> np.ndarray:
+    """运行固定初始中心的简化 K-Means，保证相同输入得到相同分组。"""
     n = int(values.shape[0])
     k = min(max(int(cluster_num), 1), n)
     if n == 0:
@@ -532,6 +579,7 @@ def _deterministic_kmeans(values: np.ndarray, cluster_num: int, max_iter: int = 
 
 
 def _stable_task_key(task_id: str) -> tuple[int, str]:
+    """用任务 ID 的数字后缀生成稳定排序键。"""
     suffix = task_id.rsplit("_", 1)[-1]
     if suffix.isdigit():
         return int(suffix), task_id

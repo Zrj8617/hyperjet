@@ -33,6 +33,7 @@ TASK_STATE_WAITING = TASK_STATE_WAITING_DEPENDENCY
 
 @dataclass(slots=True)
 class TaskNode:
+    """保存一个 DAG 子任务的依赖关系、运行状态、时间戳和能耗。"""
     task_id: str
     dag_id: str
     ue_id: int
@@ -71,37 +72,53 @@ class TaskNode:
 
     @property
     def input_size(self) -> int:
-        """Deprecated byte-size alias for old modules."""
+        """Deprecated byte-size alias for old modules.
+
+        中文：旧模块使用的字节单位输入大小；clean 主线直接使用 MB 字段。
+        """
         return int(round(self.input_data_size_mb * 1024 * 1024))
 
     @property
     def output_size(self) -> int:
-        """Deprecated byte-size alias for old modules."""
+        """Deprecated byte-size alias for old modules.
+
+        中文：旧模块使用的字节单位输出大小；clean 主线直接使用 MB 字段。
+        """
         return int(round(self.output_data_size_mb * 1024 * 1024))
 
     @property
     def cpu_cycles(self) -> float:
-        """Deprecated compute alias; clean mainline uses num_operation."""
+        """Deprecated compute alias; clean mainline uses num_operation.
+
+        中文：旧代码的计算量别名，数值与 `num_operation` 相同。
+        """
         return float(self.num_operation)
 
     @property
     def is_ready(self) -> bool:
+        """判断任务是否已经满足依赖且尚未分配。"""
         return self.state == TASK_STATE_READY
 
     @property
     def is_terminal(self) -> bool:
+        """判断任务是否已经完成，或进入旧版丢弃终态。"""
         return self.state in {TASK_STATE_COMPLETED, TASK_STATE_DROPPED}
 
     @property
     def is_computation_finished(self) -> bool:
+        """判断任务计算是否结束，包括正在回传结果的出口任务。"""
         return self.state in {TASK_STATE_RETURNING, TASK_STATE_COMPLETED}
 
     @property
     def is_fully_completed(self) -> bool:
+        """判断任务是否连同必要的结果回传一起全部完成。"""
         return self.state == TASK_STATE_COMPLETED
 
     def remaining_slack(self, current_time_step: float) -> float:
-        """Deprecated compatibility helper. Clean mainline does not use slack."""
+        """Deprecated compatibility helper. Clean mainline does not use slack.
+
+        中文：旧截止期逻辑的剩余宽裕时间；没有截止期时返回无穷大。
+        """
         if self.deadline is None:
             return float("inf")
         return float(self.deadline - current_time_step)
@@ -109,6 +126,7 @@ class TaskNode:
 
 @dataclass(slots=True)
 class DAGJob:
+    """保存一个 UE 产生的完整 DAG 及其入口位置、带宽和完成状态。"""
     dag_id: str
     ue_id: int
     arrival_time: float
@@ -126,6 +144,9 @@ class DAGJob:
 class DAGTaskManager:
     """Clean mainline DAG generator and task-state manager for zrj_3.
 
+    中文：负责生成 DAG、维护任务依赖和状态转换，并统计 DAG 是否真正完成。
+    所有任务时间戳都使用秒，时隙编号只在 Env 中统一换算一次。
+
     Time semantics (Phase 1): every physical timestamp stored on TaskNode /
     DAGJob (arrival_time, ready_time, start_time, finish_time,
     compute_finish_time, reward_completion_time, return_complete_time, and the
@@ -135,6 +156,7 @@ class DAGTaskManager:
     """
 
     def __init__(self) -> None:
+        """创建空的 DAG、任务和 UE 索引，并初始化编号和版本计数器。"""
         self._jobs: dict[str, DAGJob] = {}
         self._tasks: dict[str, TaskNode] = {}
         self._tasks_by_ue: dict[int, list[str]] = {}
@@ -146,21 +168,26 @@ class DAGTaskManager:
 
     @property
     def jobs(self) -> dict[str, DAGJob]:
+        """返回当前保存的全部 DAG。"""
         return self._jobs
 
     @property
     def tasks(self) -> dict[str, TaskNode]:
+        """返回当前保存的全部任务节点。"""
         return self._tasks
 
     @property
     def dag_arrival_version(self) -> int:
+        """返回 DAG 到达版本；每创建一个新 DAG 就递增一次。"""
         return self._dag_arrival_version
 
     @property
     def last_created_dag_ids(self) -> list[str]:
+        """返回最近一次到达检查中新建的 DAG ID 副本。"""
         return list(self._last_created_dag_ids)
 
     def reset(self) -> None:
+        """清空全部 DAG、任务、索引和版本号，开始一个新回合。"""
         self._jobs.clear()
         self._tasks.clear()
         self._tasks_by_ue.clear()
@@ -178,6 +205,9 @@ class DAGTaskManager:
         current_time_step: float | None = None,
     ) -> DAGJob:
         """Create one clean-mainline DAG for a UE.
+
+        中文：为指定 UE 随机生成一个分层 DAG，采样任务属性和链路带宽，
+        建立依赖、k 跳超边和关键路径；同一 UE 同时只能有一个活动 DAG。
 
         A UE may have at most one active DAG. `source_pos` is copied and remains
         fixed for the DAG lifetime.
@@ -197,6 +227,7 @@ class DAGTaskManager:
             np.random.choice(config.BASE_DOWNLOAD_BANDWIDTH_MBPS, p=config.BANDWIDTH_LEVEL_PROBS)
         )
 
+        # 先确定每层任务数，再逐层创建节点，保证层序天然是合法拓扑序。
         level_sizes = self._sample_level_sizes()
         task_ids: list[str] = []
         levels: list[list[str]] = []
@@ -220,9 +251,7 @@ class DAGTaskManager:
             levels.append(level_task_ids)
 
         self._connect_levels(levels)
-        # Assign static topological_index in level-major creation order. Because levels
-        # only depend on earlier levels, this ordering is a valid topological order and
-        # gives the spec ready-sort key a real topological_index (not a task_id proxy).
+        # 按层序写入静态拓扑编号，后续就绪任务排序不再依赖任务 ID 猜测顺序。
         for topological_index, task_id in enumerate(task_ids):
             self._tasks[task_id].topological_index = int(topological_index)
         sink_task_ids = [task_id for task_id in task_ids if not self._tasks[task_id].successors]
@@ -241,12 +270,16 @@ class DAGTaskManager:
         self._jobs[dag_id] = job
         self._dag_arrival_version += 1
         self._last_created_dag_ids = [dag_id]
+        # DAG 登记完成后立即刷新入口任务，并标出按计算量估计的关键路径。
         self._refresh_ready_states()
         self._mark_critical_path(dag_id)
         return job
 
     def observe_time_step(self, ues: list[Any], current_time_step: int) -> None:
         """Compatibility arrival hook.
+
+        中文：旧调用入口会在每个时刻为没有活动 DAG 的 UE 采样一次基础到达概率；
+        clean Env 已自行处理热点到达，这里主要用于兼容旧脚本。
 
         Phase 1 does not implement hotspot logic. This method uses the clean
         base arrival probability and skips UEs that already have an active DAG.
@@ -271,6 +304,7 @@ class DAGTaskManager:
         self._refresh_ready_states()
 
     def get_active_tasks(self) -> list[TaskNode]:
+        """返回所有尚未完成或丢弃的活动任务。"""
         return [
             task
             for task in self._tasks.values()
@@ -278,38 +312,49 @@ class DAGTaskManager:
         ]
 
     def get_all_non_returned_tasks(self) -> list[TaskNode]:
-        """Compatibility view for old callers that still expect finished tasks before return."""
+        """Compatibility view for old callers that still expect finished tasks before return.
+
+        中文：兼容旧调用，返回尚未进入最终完成状态的任务。
+        """
         return [task for task in self._tasks.values() if task.state not in {TASK_STATE_COMPLETED, TASK_STATE_DROPPED}]
 
     def get_ready_tasks(self) -> list[TaskNode]:
+        """返回依赖已满足、等待分配的任务。"""
         return [task for task in self._tasks.values() if task.state == TASK_STATE_READY]
 
     def refresh_ready_states(self) -> None:
+        """公开触发一次任务依赖检查和就绪状态刷新。"""
         self._refresh_ready_states()
 
     def get_tasks_for_ue(self, ue_id: int) -> list[TaskNode]:
+        """返回指定 UE 历史上创建的全部任务。"""
         task_ids = self._tasks_by_ue.get(ue_id, [])
         return [self._tasks[task_id] for task_id in task_ids]
 
     def get_job(self, dag_id: str) -> DAGJob | None:
+        """按 ID 查找 DAG，不存在时返回 `None`。"""
         return self._jobs.get(dag_id)
 
     def get_task(self, task_id: str) -> TaskNode | None:
+        """按 ID 查找任务，不存在时返回 `None`。"""
         return self._tasks.get(task_id)
 
     def get_active_job_for_ue(self, ue_id: int) -> DAGJob | None:
+        """查找 UE 当前尚未完成的 DAG。"""
         for job in self._jobs.values():
             if job.ue_id == ue_id and not job.completed:
                 return job
         return None
 
     def get_job_tasks(self, dag_id: str) -> list[TaskNode]:
+        """按 DAG 中记录的顺序返回其仍然存在的任务节点。"""
         job = self._jobs.get(dag_id)
         if job is None:
             return []
         return [self._tasks[task_id] for task_id in job.task_ids if task_id in self._tasks]
 
     def mark_task_queued(self, task_id: str, uav_id: int, current_time_step: float) -> None:
+        """把就绪任务标为已进入指定 UAV 队列，并记录入队时间。"""
         task = self._tasks[task_id]
         if task.state != TASK_STATE_READY:
             raise ValueError(f"Task {task_id} is not ready and cannot be queued.")
@@ -319,6 +364,7 @@ class DAGTaskManager:
         task.enqueue_time = float(current_time_step)
 
     def mark_task_running(self, task_id: str, current_time_step: float) -> None:
+        """把可启动任务标为计算中，并记录实际开始时间。"""
         task = self._tasks[task_id]
         if task.state not in {TASK_STATE_READY, TASK_STATE_IN_SERVICE}:
             raise ValueError(f"Task {task_id} is not queueable and cannot start.")
@@ -327,6 +373,7 @@ class DAGTaskManager:
         task.start_time = float(current_time_step)
 
     def mark_task_finished(self, task_id: str, current_time_step: float) -> None:
+        """完成普通任务并刷新其后继任务的就绪状态。"""
         task = self._tasks[task_id]
         task.state = TASK_STATE_COMPLETED
         task.service_phase = None
@@ -337,6 +384,7 @@ class DAGTaskManager:
         self._refresh_ready_states()
 
     def mark_task_returning(self, task_id: str, current_time_step: float) -> None:
+        """把出口任务标为结果回传中；此时计算已完成但奖励尚未结算。"""
         task = self._tasks[task_id]
         if task.state == TASK_STATE_COMPLETED:
             return
@@ -347,6 +395,7 @@ class DAGTaskManager:
         task.total_energy = task.compute_energy + task.communication_energy + task.return_energy
 
     def mark_task_returned(self, task_id: str, current_time_step: float) -> None:
+        """标记出口结果已回到 UE，并尝试完成整个 DAG。"""
         task = self._tasks[task_id]
         task.state = TASK_STATE_COMPLETED
         task.service_phase = None
@@ -356,10 +405,14 @@ class DAGTaskManager:
         self.mark_dag_completed_if_ready(task.dag_id, current_time_step)
 
     def mark_task_dropped(self, task_id: str) -> None:
-        # Deprecated compatibility method. Clean mainline does not deadline-drop tasks.
+        """兼容旧逻辑，把任务标成丢弃；clean 主线不会调用该方法。"""
         self._tasks[task_id].state = TASK_STATE_DROPPED
 
     def mark_dag_completed_if_ready(self, dag_id: str, current_time_step: float | None = None) -> bool:
+        """检查 DAG 是否全部完成，并记录最终结果返回 UE 的时间。
+
+        所有非出口任务要计算完成，所有出口任务还要完成回传；首次完成返回 `True`。
+        """
         job = self._jobs.get(dag_id)
         if job is None or job.completed:
             return False
@@ -383,6 +436,7 @@ class DAGTaskManager:
         return False
 
     def get_job_summary(self) -> dict[str, float]:
+        """汇总当前全部 DAG 的完成数、任务数、关键路径、流时间和能耗。"""
         total_jobs = len(self._jobs)
         completed_jobs = sum(1 for job in self._jobs.values() if job.completed)
         incomplete_jobs = total_jobs - completed_jobs
@@ -426,6 +480,7 @@ class DAGTaskManager:
         }
 
     def get_dag_completion_ratio(self, dag_id: str) -> float:
+        """返回指定 DAG 中已完成任务所占的比例。"""
         job_tasks = self.get_job_tasks(dag_id)
         if not job_tasks:
             return 0.0
@@ -433,10 +488,14 @@ class DAGTaskManager:
         return float(done / max(len(job_tasks), 1))
 
     def get_dag_remaining_slack(self, dag_id: str, current_time_step: float) -> float:
-        """Deprecated compatibility helper. Clean mainline does not use deadline/slack."""
+        """Deprecated compatibility helper. Clean mainline does not use deadline/slack.
+
+        中文：旧截止期接口的占位实现，clean 主线始终返回无穷大。
+        """
         return float("inf")
 
     def get_descendant_count(self, task_id: str) -> int:
+        """遍历任务后继关系，统计不重复的所有下游任务数量。"""
         if task_id not in self._tasks:
             return 0
         visited: set[str] = set()
@@ -452,15 +511,21 @@ class DAGTaskManager:
         return len(visited)
 
     def is_critical_path_task(self, task_id: str) -> bool:
+        """判断指定任务是否位于该 DAG 的关键路径上。"""
         task = self._tasks.get(task_id)
         return bool(task is not None and task.is_critical_path)
 
     def is_high_risk_job(self, dag_id: str) -> bool:
-        """Deprecated compatibility helper. Deadline risk is not a clean-mainline concept."""
+        """Deprecated compatibility helper. Deadline risk is not a clean-mainline concept.
+
+        中文：旧高风险 DAG 接口的占位实现，clean 主线固定返回 `False`。
+        """
         return False
 
     def build_task_features(self, current_time_step: float) -> dict[str, np.ndarray]:
         """Compatibility feature builder.
+
+        中文：为旧模块生成稳定的任务特征字典，不包含 clean 主线已移除的截止期和任务类型语义。
 
         Phase 1 does not implement clean graph construction. This returns a
         stable numeric vector without deadline/task_type semantics so old imports
@@ -498,11 +563,17 @@ class DAGTaskManager:
         return features
 
     def _create_job_for_ue(self, ue_id: int, source_pos: np.ndarray, current_time_step: int) -> None:
-        """Deprecated wrapper for old callers."""
+        """Deprecated wrapper for old callers.
+
+        中文：旧调用名的薄封装，实际工作交给 `create_dag_for_ue`。
+        """
         self.create_dag_for_ue(ue_id=ue_id, source_pos=source_pos, current_time_step=current_time_step)
 
     def _spawn_new_jobs(self, ues: list[Any], current_time_step: int) -> None:
-        """Deprecated wrapper used by old observe paths."""
+        """Deprecated wrapper used by old observe paths.
+
+        中文：旧观测路径按基础概率为没有活动 DAG 的 UE 创建任务。
+        """
         for ue in ues:
             ue_id = int(getattr(ue, "id"))
             if self._ue_has_active_dag(ue_id):
@@ -512,20 +583,28 @@ class DAGTaskManager:
                 self.create_dag_for_ue(ue_id=ue_id, source_pos=pos, current_time_step=current_time_step)
 
     def _get_ue_arrival_prob(self, ue: Any) -> float:
-        """Deprecated compatibility helper. Hotspot region logic is not implemented in Phase 1."""
+        """Deprecated compatibility helper. Hotspot region logic is not implemented in Phase 1.
+
+        中文：旧接口只返回基础 DAG 到达概率，不处理热点倍率。
+        """
         return float(np.clip(config.DAG_BASE_ARRIVAL_PROB, 0.0, 1.0))
 
     def _drop_overdue_tasks(self, current_time_step: int) -> None:
-        """Deprecated no-op. Clean mainline does not deadline-drop tasks."""
+        """Deprecated no-op. Clean mainline does not deadline-drop tasks.
+
+        中文：兼容旧调用的空操作，clean 主线不会因超时直接丢弃任务。
+        """
         return
 
     def _ue_has_active_dag(self, ue_id: int) -> bool:
+        """判断 UE 是否已经有一个尚未完成的 DAG。"""
         for job in self._jobs.values():
             if job.ue_id == ue_id and not job.completed:
                 return True
         return False
 
     def _sample_level_sizes(self) -> list[int]:
+        """随机决定 DAG 的层数以及每一层包含的任务数。"""
         num_tasks = int(np.random.randint(config.DAG_MIN_TASKS, config.DAG_MAX_TASKS + 1))
         max_levels = min(int(config.DAG_MAX_LEVELS), num_tasks)
         level_count = int(np.random.randint(2, max_levels + 1))
@@ -543,6 +622,7 @@ class DAGTaskManager:
         source_pos: np.ndarray,
         arrival_time: float,
     ) -> TaskNode:
+        """随机采样数据量、复杂度和常数，创建一个尚未连接依赖的任务节点。"""
         input_mb = float(np.random.uniform(*config.INPUT_DATA_SIZE_MB_RANGE))
         output_mb = float(np.random.uniform(*config.OUTPUT_DATA_SIZE_MB_RANGE))
         task_constant = int(np.random.randint(config.TASK_CONSTANT_RANGE[0], config.TASK_CONSTANT_RANGE[1] + 1))
@@ -565,6 +645,7 @@ class DAGTaskManager:
         )
 
     def _calculate_num_operation(self, input_data_size_mb: float, task_complexity: str, task_constant: int) -> float:
+        """根据输入规模和复杂度类型估算任务需要的运算次数。"""
         input_data_size_bytes = float(input_data_size_mb) * 1024.0 * 1024.0
         n = input_data_size_bytes / float(config.BASE_UNIT_BYTES)
         log_n = math.log2(max(n, 2.0))
@@ -579,6 +660,7 @@ class DAGTaskManager:
         return float(complexity_value * int(task_constant))
 
     def _connect_levels(self, levels: list[list[str]]) -> None:
+        """为每个非首层任务随机选择前面层中的父任务，保证图保持无环。"""
         for level_idx in range(1, len(levels)):
             parent_candidates = [task_id for previous in levels[:level_idx] for task_id in previous]
             for task_id in levels[level_idx]:
@@ -590,6 +672,7 @@ class DAGTaskManager:
                     self._tasks[parent_id].successors.append(task_id)
 
     def _precompute_khop_hyperedges(self, task_ids: list[str]) -> list[list[str]]:
+        """从每个任务出发收集最多 K 跳可达节点，并去重形成依赖超边。"""
         if not config.ENABLE_KHOP_DEPENDENCY_HYPEREDGES:
             return []
         max_hops = max(int(config.KHOP_K), 0)
@@ -626,6 +709,7 @@ class DAGTaskManager:
         return output
 
     def _refresh_ready_states(self) -> None:
+        """根据前驱完成情况刷新所有未执行任务的等待或就绪状态。"""
         for task in self._tasks.values():
             if task.state in {TASK_STATE_COMPLETED, TASK_STATE_RETURNING, TASK_STATE_IN_SERVICE, TASK_STATE_DROPPED}:
                 continue
@@ -650,6 +734,7 @@ class DAGTaskManager:
                 task.service_phase = None
 
     def _mark_critical_path(self, dag_id: str) -> None:
+        """按累计运算量找出 DAG 的最长路径，并标记路径上的任务。"""
         job_tasks = self.get_job_tasks(dag_id)
         if not job_tasks:
             return
@@ -677,7 +762,10 @@ class DAGTaskManager:
 
 
 def _stable_sort_value(value: str) -> int:
-    """Return a deterministic numeric tie-breaker for ids like task_12."""
+    """Return a deterministic numeric tie-breaker for ids like task_12.
+
+    中文：优先取 ID 的数字后缀；没有数字时用字符和值生成稳定排序数。
+    """
     suffix = value.rsplit("_", 1)[-1]
     if suffix.isdigit():
         return int(suffix)
