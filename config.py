@@ -100,6 +100,13 @@ KHOP_K: int = 2
 ENABLE_KAHYPAR_PARTITION_HYPEREDGES: bool = True
 KAHYPAR_PARTITION_UPDATE_INTERVAL: int = 5
 KAHYPAR_DEGRADED_EXPERIMENT_LABEL: str = "no-KaHyPar / degraded"
+KAHYPAR_INI_RELATIVE_PATH: str = "third_party/kahypar/cut_rKaHyPar_sea20.ini"
+KAHYPAR_SEED: int = 0
+KAHYPAR_EPSILON: float = 0.03
+KAHYPAR_WORKER_TIMEOUT_SECONDS: float = 10.0
+KAHYPAR_WORKER_TERMINATE_GRACE_SECONDS: float = 1.0
+KAHYPAR_WORKER_KILL_GRACE_SECONDS: float = 1.0
+KAHYPAR_MAX_CONSECUTIVE_FAILURES: int = 3
 
 # ===================== zrj_3 clean 主线：奖励 =====================
 # 时间和能耗权重越大，惩罚越重；完成 DAG 权重越大，完成奖励越高。

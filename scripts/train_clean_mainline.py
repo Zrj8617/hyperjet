@@ -120,6 +120,15 @@ def build_config_snapshot(args: argparse.Namespace) -> dict[str, Any]:
             "UAV_COMPUTE_RATE_OPS_PER_SEC": config.UAV_COMPUTE_RATE_OPS_PER_SEC,
             "CLEAN_MAX_QUEUE_PER_UAV": config.CLEAN_MAX_QUEUE_PER_UAV,
         },
+        "kahypar": {
+            "enabled": bool(config.ENABLE_KAHYPAR_PARTITION_HYPEREDGES),
+            "package_version_required": "1.3.7",
+            "ini_relative_path": str(config.KAHYPAR_INI_RELATIVE_PATH),
+            "seed": int(config.KAHYPAR_SEED),
+            "epsilon": float(config.KAHYPAR_EPSILON),
+            "worker_timeout_seconds": float(config.KAHYPAR_WORKER_TIMEOUT_SECONDS),
+            "max_consecutive_failures": int(config.KAHYPAR_MAX_CONSECUTIVE_FAILURES),
+        },
         "resume_semantics": "checkpoint restore starts from a new episode; mid-episode exact resume is unsupported",
     }
 
@@ -335,11 +344,16 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             )
     finally:
         progress.close()
+        graph_builder.close()
 
     return {
         "run_dir": str(run_dir),
         "global_slot": global_slot,
         "latest_update": None if latest_update_stats is None else asdict(latest_update_stats),
+        "kahypar_circuit_open": bool(graph_builder.kahypar_circuit_open),
+        "kahypar_last_failure_reason": graph_builder.kahypar_last_failure_reason,
+        "kahypar_cleanup_failed": bool(graph_builder.kahypar_cleanup_failed),
+        "kahypar_worker_alive_after_close": bool(graph_builder.kahypar_worker_alive),
     }
 
 

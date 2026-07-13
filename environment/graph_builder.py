@@ -7,6 +7,7 @@ import numpy as np
 
 import config
 from environment.dag_tasks import DAGTaskManager, TaskNode
+from environment.kahypar_worker import KaHyParWorkerClient, resolve_repository_resource
 
 
 @dataclass(slots=True)
@@ -66,6 +67,12 @@ class CleanGraphBuilder:
         self._last_partition_attempt_step: int | None = None
         self._last_partition_status: str = "disabled"
         self._last_seen_dag_arrival_version: int = 0
+        self._kahypar_client = KaHyParWorkerClient(
+            response_timeout_seconds=float(config.KAHYPAR_WORKER_TIMEOUT_SECONDS),
+            terminate_grace_seconds=float(config.KAHYPAR_WORKER_TERMINATE_GRACE_SECONDS),
+            kill_grace_seconds=float(config.KAHYPAR_WORKER_KILL_GRACE_SECONDS),
+            max_consecutive_failures=int(config.KAHYPAR_MAX_CONSECUTIVE_FAILURES),
+        )
 
     def reset(self) -> None:
         """清空所有超边缓存和更新时间，供新回合重新建图。"""
@@ -77,6 +84,10 @@ class CleanGraphBuilder:
         self._last_partition_attempt_step = None
         self._last_partition_status = "disabled"
         self._last_seen_dag_arrival_version = 0
+
+    def close(self) -> None:
+        """关闭持久 KaHyPar worker，并执行有界的 terminate/kill 清理。"""
+        self._kahypar_client.close()
 
     @property
     def last_attribute_update_step(self) -> int | None:
@@ -97,6 +108,28 @@ class CleanGraphBuilder:
     def last_partition_status(self) -> str:
         """返回最近一次分区处理的成功、缓存或降级状态。"""
         return self._last_partition_status
+
+    @property
+    def kahypar_circuit_open(self) -> bool:
+        """返回本 builder 是否已因连续失败而熔断 KaHyPar。"""
+        return self._kahypar_client.circuit_open
+
+    @property
+    def kahypar_last_failure_reason(self) -> str | None:
+        """返回最近一次 KaHyPar 配置、worker 或协议失败原因。"""
+        return self._kahypar_client.last_failure_reason
+
+    @property
+    def kahypar_worker_pid(self) -> int | None:
+        return self._kahypar_client.worker_pid
+
+    @property
+    def kahypar_worker_alive(self) -> bool:
+        return self._kahypar_client.worker_alive
+
+    @property
+    def kahypar_cleanup_failed(self) -> bool:
+        return self._kahypar_client.cleanup_failed
 
     def build(
         self,
@@ -404,74 +437,34 @@ class CleanGraphBuilder:
         node_count: int,
         base_hyperedges: list[list[int]],
     ) -> list[list[int]] | None:
-        """调用可选的 KaHyPar 库对基础超图进行分区。
-
-        依赖缺失、输入无效、API 不兼容或原生库报错时统一返回 `None`，由上层执行降级。
-        """
+        """通过持久隔离 worker 调用 KaHyPar；失败统一返回 `None`。"""
         if node_count < 2 or not base_hyperedges:
             return None
-        try:
-            import kahypar  # type: ignore
-        except Exception:
+        cleaned_edges = [
+            sorted({int(idx) for idx in edge if 0 <= int(idx) < node_count})
+            for edge in base_hyperedges
+        ]
+        cleaned_edges = [edge for edge in cleaned_edges if len(edge) >= 2]
+        if not cleaned_edges:
             return None
 
         try:
-            # 先清洗节点编号，再转换为 KaHyPar 所需的压缩超边索引和 pin 数组。
-            cleaned_edges = [
-                sorted({int(idx) for idx in edge if 0 <= int(idx) < node_count})
-                for edge in base_hyperedges
-            ]
-            cleaned_edges = [edge for edge in cleaned_edges if len(edge) >= 2]
-            if not cleaned_edges:
-                return None
-
-            hyperedge_indices = [0]
-            pins: list[int] = []
-            for edge in cleaned_edges:
-                pins.extend(edge)
-                hyperedge_indices.append(len(pins))
-
-            partition_count = min(max(2, int(config.ATTRIBUTE_HYPEREDGE_CLUSTER_NUM)), node_count)
-            context = kahypar.Context()
-            if hasattr(context, "setK"):
-                context.setK(partition_count)
-            if hasattr(context, "setEpsilon"):
-                context.setEpsilon(0.03)
-            if hasattr(context, "suppressOutput"):
-                context.suppressOutput(True)
-
-            try:
-                hypergraph = kahypar.Hypergraph(
-                    node_count,
-                    len(cleaned_edges),
-                    hyperedge_indices,
-                    pins,
-                    partition_count,
-                    [1] * len(cleaned_edges),
-                    [1] * node_count,
-                )
-            except TypeError:
-                hypergraph = kahypar.Hypergraph(
-                    node_count,
-                    len(cleaned_edges),
-                    hyperedge_indices,
-                    pins,
-                    partition_count,
-                )
-
-            kahypar.partition(hypergraph, context)
-            groups_by_block: dict[int, list[int]] = {}
-            for node_idx in range(node_count):
-                if hasattr(hypergraph, "blockID"):
-                    block_id = int(hypergraph.blockID(node_idx))
-                elif hasattr(hypergraph, "block_id"):
-                    block_id = int(hypergraph.block_id(node_idx))
-                else:
-                    return None
-                groups_by_block.setdefault(block_id, []).append(node_idx)
-            return [group for group in groups_by_block.values() if len(group) >= 2]
-        except Exception:
+            ini_path = resolve_repository_resource(config.KAHYPAR_INI_RELATIVE_PATH)
+        except (FileNotFoundError, ValueError, OSError) as exc:
+            self._kahypar_client.note_failure(
+                f"KaHyPar INI resolution failed: {type(exc).__name__}: {exc}"
+            )
             return None
+
+        partition_count = min(max(2, int(config.ATTRIBUTE_HYPEREDGE_CLUSTER_NUM)), node_count)
+        return self._kahypar_client.partition(
+            node_count=node_count,
+            base_hyperedges=cleaned_edges,
+            partition_count=partition_count,
+            epsilon=float(config.KAHYPAR_EPSILON),
+            seed=int(config.KAHYPAR_SEED),
+            ini_path=ini_path,
+        )
 
     def _remap_global_groups(
         self,

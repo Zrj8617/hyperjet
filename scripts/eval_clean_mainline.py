@@ -75,6 +75,15 @@ def build_eval_config(args: argparse.Namespace) -> dict[str, Any]:
             "TIME_SLOT_DURATION": config.TIME_SLOT_DURATION,
             "HOTSPOT_RADIUS": config.HOTSPOT_RADIUS,
         },
+        "kahypar": {
+            "enabled": bool(config.ENABLE_KAHYPAR_PARTITION_HYPEREDGES),
+            "package_version_required": "1.3.7",
+            "ini_relative_path": str(config.KAHYPAR_INI_RELATIVE_PATH),
+            "seed": int(config.KAHYPAR_SEED),
+            "epsilon": float(config.KAHYPAR_EPSILON),
+            "worker_timeout_seconds": float(config.KAHYPAR_WORKER_TIMEOUT_SECONDS),
+            "max_consecutive_failures": int(config.KAHYPAR_MAX_CONSECUTIVE_FAILURES),
+        },
     }
 
 
@@ -114,26 +123,29 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
 
     metrics_rows: list[dict[str, Any]] = []
     aggregate = _empty_aggregate()
-    for episode in range(int(args.episodes)):
-        episode_seed = int(args.seed) + episode
-        _set_seed(episode_seed, torch=torch)
-        env = Env()
-        graph_builder = CleanGraphBuilder()
-        env.reset()
-        graph_builder.reset()
-        episode_result = _run_eval_episode(
-            env=env,
-            graph_builder=graph_builder,
-            modules=modules,
-            device=device,
-            arrival_steps=int(args.arrival_steps),
-            max_drain_steps=int(args.max_drain_steps),
-            episode=episode,
-            freeze_movement=bool(args.freeze_movement),
-        )
-        metrics_rows.append(episode_result)
-        _write_jsonl(run_dir / "eval_metrics.jsonl", episode_result)
-        _update_aggregate(aggregate, episode_result)
+    graph_builder = CleanGraphBuilder()
+    try:
+        for episode in range(int(args.episodes)):
+            episode_seed = int(args.seed) + episode
+            _set_seed(episode_seed, torch=torch)
+            env = Env()
+            env.reset()
+            graph_builder.reset()
+            episode_result = _run_eval_episode(
+                env=env,
+                graph_builder=graph_builder,
+                modules=modules,
+                device=device,
+                arrival_steps=int(args.arrival_steps),
+                max_drain_steps=int(args.max_drain_steps),
+                episode=episode,
+                freeze_movement=bool(args.freeze_movement),
+            )
+            metrics_rows.append(episode_result)
+            _write_jsonl(run_dir / "eval_metrics.jsonl", episode_result)
+            _update_aggregate(aggregate, episode_result)
+    finally:
+        graph_builder.close()
 
     summary = _aggregate_summary(aggregate, episode_count=int(args.episodes))
     summary.update(
@@ -144,6 +156,10 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
             "deterministic": True,
             "movement_frozen": bool(args.freeze_movement),
             "episodes": int(args.episodes),
+            "kahypar_circuit_open": bool(graph_builder.kahypar_circuit_open),
+            "kahypar_last_failure_reason": graph_builder.kahypar_last_failure_reason,
+            "kahypar_cleanup_failed": bool(graph_builder.kahypar_cleanup_failed),
+            "kahypar_worker_alive_after_close": bool(graph_builder.kahypar_worker_alive),
         }
     )
     _write_json(run_dir / "eval_summary.json", summary)
