@@ -6,6 +6,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 import random
+import subprocess
 import sys
 from typing import Any
 
@@ -20,6 +21,14 @@ from environment.env import Env
 from environment.graph_builder import CleanGraphBuilder
 from marl_models.mappo.clean_slot_orchestrator import encode_prepared_slot, prepare_slot_state
 from marl_models.mappo.clean_trainer import CleanTrainingModules
+from scripts.offloading_policy_gate import (
+    OFFLOADING_GATE_SCHEMA_VERSION,
+    OFFLOADING_POLICIES,
+    RANDOM_HASH_VERSION,
+    finalize_decision_realizations,
+    select_eval_offloading_actions,
+    summarize_offloading_decisions,
+)
 from scripts.train_clean_mainline import checkpoint_experiment_controls, _movement_action_distribution
 
 
@@ -33,6 +42,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", type=str, default="cuda" if _torch_cuda_available() else "cpu")
     parser.add_argument("--output-dir", type=Path, default=Path("logs") / "clean_eval")
     parser.add_argument("--run-name", type=str, default="eval")
+    parser.add_argument(
+        "--offloading-policy",
+        choices=OFFLOADING_POLICIES,
+        default="actor_argmax",
+        help="Evaluation-only offloading selector; actor_argmax preserves the legacy default.",
+    )
     parser.add_argument("--deterministic", action="store_true", default=True)
     parser.add_argument("--no-render", action="store_true", default=True)
     parser.add_argument(
@@ -111,6 +126,14 @@ def build_eval_config(
             ),
             "throughput_denominator": "total_executed_slots * TIME_SLOT_DURATION",
             "default_action": "masked_argmax_deterministic",
+            "offloading_policy": str(args.offloading_policy),
+            "offloading_gate_schema_version": int(OFFLOADING_GATE_SCHEMA_VERSION),
+            "random_hash_version": RANDOM_HASH_VERSION if str(args.offloading_policy) == "random_hash" else None,
+            "estimator_error_convention": "realized_final_finish_time - selected_estimated_finish",
+            "closed_loop_pairing": (
+                "shared seeds pair initial random conditions only; different offloading choices may change "
+                "later arrivals, queues, movement observations, and trajectories"
+            ),
             "movement_mode": "forced_hover" if bool(args.freeze_movement) else "masked_argmax_deterministic",
             "ue_mobility_mode": "fixed" if freeze_ue_mobility else "moving",
         },
@@ -152,6 +175,7 @@ def initialize_eval_files(
         controls = experiment_controls
         freeze_ue_mobility = _resolve_eval_ue_mobility(args, controls)
     _write_json(run_dir / "config.json", build_eval_config(args, experiment_controls))
+    (run_dir / "offloading_decisions.jsonl").touch(exist_ok=True)
     _write_json(
         run_dir / "eval_summary.json",
         {
@@ -164,6 +188,8 @@ def initialize_eval_files(
             "completed_dag_weight": float(controls["completed_dag_weight"]),
             "detach_critic_hgnn": bool(controls["detach_critic_hgnn"]),
             "freeze_ue_mobility": freeze_ue_mobility,
+            "offloading_policy": str(args.offloading_policy),
+            "git_commit": _git_commit(),
         },
     )
 
@@ -186,6 +212,7 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
     device = torch.device(str(args.device))
     checkpoint_payload = _load_trusted_checkpoint(torch, Path(args.checkpoint))
     experiment_controls = checkpoint_experiment_controls(checkpoint_payload)
+    checkpoint_model_seed = _checkpoint_model_seed(checkpoint_payload)
     freeze_ue_mobility = _resolve_eval_ue_mobility(args, experiment_controls)
     initialize_eval_files(run_dir, args, experiment_controls)
     module_dims = _module_dims_from_checkpoint(checkpoint_payload, args)
@@ -214,11 +241,19 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
                 arrival_steps=int(args.arrival_steps),
                 max_drain_steps=int(args.max_drain_steps),
                 episode=episode,
+                environment_seed=episode_seed,
+                offloading_policy=str(args.offloading_policy),
+                checkpoint_path=str(Path(args.checkpoint)),
+                checkpoint_model_seed=checkpoint_model_seed,
+                completed_dag_weight=float(experiment_controls["completed_dag_weight"]),
                 freeze_movement=bool(args.freeze_movement),
                 detach_critic_hgnn=bool(experiment_controls["detach_critic_hgnn"]),
             )
+            episode_decisions = episode_result.pop("_offloading_decisions")
             metrics_rows.append(episode_result)
             _write_jsonl(run_dir / "eval_metrics.jsonl", episode_result)
+            for decision in episode_decisions:
+                _write_jsonl(run_dir / "offloading_decisions.jsonl", decision)
             _update_aggregate(aggregate, episode_result)
     finally:
         graph_builder.close()
@@ -229,7 +264,11 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
             "status": "completed",
             "run_dir": str(run_dir),
             "checkpoint": str(args.checkpoint),
+            "checkpoint_model_seed": checkpoint_model_seed,
             "deterministic": True,
+            "offloading_policy": str(args.offloading_policy),
+            "offloading_gate_schema_version": int(OFFLOADING_GATE_SCHEMA_VERSION),
+            "git_commit": _git_commit(),
             "movement_frozen": bool(args.freeze_movement),
             "completed_dag_weight": float(experiment_controls["completed_dag_weight"]),
             "detach_critic_hgnn": bool(experiment_controls["detach_critic_hgnn"]),
@@ -254,6 +293,11 @@ def _run_eval_episode(
     arrival_steps: int,
     max_drain_steps: int,
     episode: int,
+    environment_seed: int,
+    offloading_policy: str,
+    checkpoint_path: str,
+    checkpoint_model_seed: int | None,
+    completed_dag_weight: float,
     freeze_movement: bool = False,
     detach_critic_hgnn: bool = False,
 ) -> dict[str, Any]:
@@ -269,19 +313,27 @@ def _run_eval_episode(
     kahypar_status_counts: dict[str, int] = {}
     kahypar_partition_hyperedge_total = 0
     kahypar_partition_nonzero_slot_count = 0
+    offloading_decisions: list[dict[str, Any]] = []
 
     for _ in range(max(int(arrival_steps), 0)):
-        done, info, movement_counts, off_count = _eval_one_slot(
+        done, info, movement_counts, off_count, slot_decisions = _eval_one_slot(
             env=env,
             graph_builder=graph_builder,
             modules=modules,
             device=device,
             allow_dag_arrivals=True,
+            offloading_policy=offloading_policy,
+            environment_seed=environment_seed,
+            episode=episode,
+            slot=arrival_slots,
+            checkpoint_path=checkpoint_path,
+            checkpoint_model_seed=checkpoint_model_seed,
             freeze_movement=freeze_movement,
             detach_critic_hgnn=detach_critic_hgnn,
         )
         arrival_slots += 1
         offloading_action_count += off_count
+        offloading_decisions.extend(slot_decisions)
         _merge_counts(movement_action_counts, movement_counts)
         last_info = info
         ready_task_counts.append(int(info.get("frozen_ready_task_count", 0)))
@@ -298,17 +350,24 @@ def _run_eval_episode(
     arrival_snapshot = _snapshot_arrival_metrics(env=env, arrival_slots=arrival_slots)
 
     while drain_slots < max(int(max_drain_steps), 0) and _active_dag_count(env) > 0:
-        done, info, movement_counts, off_count = _eval_one_slot(
+        done, info, movement_counts, off_count, slot_decisions = _eval_one_slot(
             env=env,
             graph_builder=graph_builder,
             modules=modules,
             device=device,
             allow_dag_arrivals=False,
+            offloading_policy=offloading_policy,
+            environment_seed=environment_seed,
+            episode=episode,
+            slot=arrival_slots + drain_slots,
+            checkpoint_path=checkpoint_path,
+            checkpoint_model_seed=checkpoint_model_seed,
             freeze_movement=freeze_movement,
             detach_critic_hgnn=detach_critic_hgnn,
         )
         drain_slots += 1
         offloading_action_count += off_count
+        offloading_decisions.extend(slot_decisions)
         _merge_counts(movement_action_counts, movement_counts)
         last_info = info
         ready_task_counts.append(int(info.get("frozen_ready_task_count", 0)))
@@ -341,12 +400,25 @@ def _run_eval_episode(
     )
     average_flowtime = None if completed <= 0.0 else float(info_metrics.get("average_dag_flowtime", 0.0))
     energy_per_completed = None if completed <= 0.0 else float(info_metrics.get("energy_per_completed_dag", 0.0))
+    finalize_decision_realizations(offloading_decisions, env=env)
+    offloading_summary = summarize_offloading_decisions(offloading_decisions)
+    dag_flowtime_samples = [float(value) for value in env.metrics.metrics.dag_flowtimes]
     return {
         "episode": int(episode),
+        "environment_seed": int(environment_seed),
+        "checkpoint_path": str(checkpoint_path),
+        "checkpoint_model_seed": checkpoint_model_seed,
+        "offloading_policy": str(offloading_policy),
+        "offloading_gate_schema_version": int(OFFLOADING_GATE_SCHEMA_VERSION),
+        "git_commit": _git_commit(),
+        "completed_dag_weight": float(completed_dag_weight),
+        "detach_critic_hgnn": bool(detach_critic_hgnn),
         "generated_DAG_count": generated,
         "completed_DAG_count": completed,
         "DAG_completion_rate": float(completed / max(generated, 1.0)),
         "Average_DAG_flowtime": average_flowtime,
+        "Median_DAG_flowtime": _percentile(dag_flowtime_samples, 50.0),
+        "P90_DAG_flowtime": _percentile(dag_flowtime_samples, 90.0),
         "DAG_throughput": float(completed / max(total_time, float(config.TIME_SLOT_DURATION))),
         "Average_critical_path_task_completion_delay": float(
             info_metrics.get("average_critical_path_task_completion_delay", 0.0)
@@ -380,6 +452,13 @@ def _run_eval_episode(
         ),
         "total_evaluation_time": total_time,
         "active_dag_count_after_eval": int(_active_dag_count(env)),
+        "arrival_backlog_DAG_count": int(arrival_snapshot["arrival_active_DAG_count"]),
+        "arrival_backlog_task_count": int(arrival_snapshot["arrival_active_task_count"]),
+        "final_backlog_DAG_count": int(_active_dag_count(env)),
+        "final_backlog_task_count": int(_active_task_count(env)),
+        **offloading_summary,
+        "_dag_flowtime_samples": dag_flowtime_samples,
+        "_offloading_decisions": offloading_decisions,
         **diagnostics,
         "last_info": _jsonable(last_info),
     }
@@ -392,9 +471,15 @@ def _eval_one_slot(
     modules: CleanTrainingModules,
     device: Any,
     allow_dag_arrivals: bool,
+    offloading_policy: str,
+    environment_seed: int,
+    episode: int,
+    slot: int,
+    checkpoint_path: str,
+    checkpoint_model_seed: int | None,
     freeze_movement: bool = False,
     detach_critic_hgnn: bool = False,
-) -> tuple[bool, dict[str, Any], dict[str, int], int]:
+) -> tuple[bool, dict[str, Any], dict[str, int], int, list[dict[str, Any]]]:
     import torch
 
     with _dag_arrival_enabled(allow_dag_arrivals):
@@ -417,7 +502,9 @@ def _eval_one_slot(
     env.apply_movement(movement_actions)
     ready_tasks = [env.task_manager.get_task(task_id) for task_id in prepared.frozen_ready_task_ids]
     ready_tasks = [task for task in ready_tasks if task is not None and task.is_ready]
-    assignment_buffer = modules.offloading_actor.act(
+    assignment_buffer, offloading_decisions = select_eval_offloading_actions(
+        policy=offloading_policy,
+        offloading_actor=modules.offloading_actor,
         frozen_ready_tasks=ready_tasks,
         task_embeddings=encoded.task_embeddings.detach(),
         graph_snapshot=prepared.graph_snapshot,
@@ -425,10 +512,14 @@ def _eval_one_slot(
         uavs=env.uavs,
         executor=env.executor,
         current_time_seconds=env.current_time_seconds,
+        environment_seed=environment_seed,
+        episode=episode,
+        slot=slot,
+        checkpoint_path=checkpoint_path,
+        checkpoint_model_seed=checkpoint_model_seed,
         uav_service_positions=env.uav_service_positions,
         ue_service_positions=env.ue_service_positions,
         ues=env.ues,
-        deterministic=True,
     )
     _, _, done, info = env.commit_and_advance(assignment_buffer=assignment_buffer)
     movement_distribution = _movement_action_distribution(movement_records)
@@ -438,10 +529,10 @@ def _eval_one_slot(
     }
     info["movement_action_distribution"] = movement_distribution
     info["movement_frozen"] = bool(freeze_movement)
-    info["offloading_action_count"] = len(modules.offloading_actor.latest_records)
+    info["offloading_action_count"] = len(offloading_decisions)
     info["kahypar_partition_status"] = str(getattr(prepared.graph_snapshot, "partition_status", "disabled"))
     info["kahypar_partition_hyperedge_count"] = int(len(prepared.graph_snapshot.partition_hyperedges))
-    return bool(done), info, movement_counts, len(modules.offloading_actor.latest_records)
+    return bool(done), info, movement_counts, len(offloading_decisions), offloading_decisions
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -722,11 +813,20 @@ def _aggregate_summary(aggregate: dict[str, Any], *, episode_count: int) -> dict
     completed_total = float(sum(row["completed_DAG_count"] for row in rows))
     arrival_generated_total = float(sum(row.get("arrival_generated_DAG_count", 0.0) for row in rows))
     arrival_completed_total = float(sum(row.get("arrival_completed_DAG_count", 0.0) for row in rows))
+    flowtime_samples = _flatten_samples(rows, "_dag_flowtime_samples")
+    estimator_errors = _flatten_samples(rows, "_estimator_error_samples")
+    regret_samples = _flatten_samples(rows, "_selected_estimated_regret_samples")
+    entropy_samples = _flatten_samples(rows, "_actor_entropy_samples")
+    margin_samples = _flatten_samples(rows, "_actor_margin_samples")
+    agreement_count = int(sum(row.get("actor_greedy_agreement_count", 0) for row in rows))
+    agreement_total = int(sum(row.get("actor_greedy_comparison_count", 0) for row in rows))
     return {
         "generated_DAG_count": generated_total,
         "completed_DAG_count": completed_total,
         "DAG_completion_rate": _mean(row["DAG_completion_rate"] for row in rows),
         "Average_DAG_flowtime": None if completed_total <= 0.0 else _mean(row["Average_DAG_flowtime"] for row in rows),
+        "Median_DAG_flowtime": _percentile(flowtime_samples, 50.0),
+        "P90_DAG_flowtime": _percentile(flowtime_samples, 90.0),
         "DAG_throughput": _mean(row["DAG_throughput"] for row in rows),
         "Average_critical_path_task_completion_delay": _mean(row["Average_critical_path_task_completion_delay"] for row in rows),
         "Energy_per_completed_DAG": None if completed_total <= 0.0 else _mean(row["Energy_per_completed_DAG"] for row in rows),
@@ -749,6 +849,38 @@ def _aggregate_summary(aggregate: dict[str, Any], *, episode_count: int) -> dict
         "freeze_ue_mobility": bool(rows) and all(bool(row.get("freeze_ue_mobility", False)) for row in rows),
         "initial_hotspot_ue_count_mean": _mean(row.get("initial_hotspot_ue_count") for row in rows),
         "offloading_action_count": int(sum(row["offloading_action_count"] for row in rows)),
+        "offloading_policy": _common_value(row.get("offloading_policy") for row in rows),
+        "offloading_gate_schema_version": int(OFFLOADING_GATE_SCHEMA_VERSION),
+        "valid_candidate_count_distribution": _sum_count_dicts(
+            row.get("valid_candidate_count_distribution", {}) for row in rows
+        ),
+        "actor_normalized_entropy_mean": _mean(entropy_samples),
+        "actor_entropy_sample_count": int(len(entropy_samples)),
+        "actor_top1_top2_margin_mean": _mean(margin_samples),
+        "actor_margin_sample_count": int(len(margin_samples)),
+        "actor_greedy_agreement_rate": (
+            float(agreement_count / agreement_total) if agreement_total > 0 else None
+        ),
+        "actor_greedy_agreement_count": agreement_count,
+        "actor_greedy_comparison_count": agreement_total,
+        "selected_estimated_regret_mean": _mean(regret_samples),
+        "selected_estimated_regret_p90": _percentile(regret_samples, 90.0),
+        "estimator_calibration_count": int(len(estimator_errors)),
+        "estimator_calibration_mae": _mean(abs(value) for value in estimator_errors),
+        "estimator_calibration_bias": _mean(estimator_errors),
+        "estimator_calibration_p90_abs_error": _percentile(
+            [abs(value) for value in estimator_errors], 90.0
+        ),
+        "realized_cross_uav_transfer_time": float(
+            sum(float(row.get("realized_cross_uav_transfer_time", 0.0)) for row in rows)
+        ),
+        "realized_queue_resource_wait": float(
+            sum(float(row.get("realized_queue_resource_wait", 0.0)) for row in rows)
+        ),
+        "arrival_backlog_DAG_count": int(sum(row.get("arrival_backlog_DAG_count", 0) for row in rows)),
+        "arrival_backlog_task_count": int(sum(row.get("arrival_backlog_task_count", 0) for row in rows)),
+        "final_backlog_DAG_count": int(sum(row.get("final_backlog_DAG_count", 0) for row in rows)),
+        "final_backlog_task_count": int(sum(row.get("final_backlog_task_count", 0) for row in rows)),
         "final_active_DAG_count": int(sum(row.get("final_active_DAG_count", 0) for row in rows)),
         "final_active_task_count": int(sum(row.get("final_active_task_count", 0) for row in rows)),
         "task_lifecycle_counts": _sum_count_dicts(row.get("task_lifecycle_counts", {}) for row in rows),
@@ -797,6 +929,22 @@ def _aggregate_summary(aggregate: dict[str, Any], *, episode_count: int) -> dict
 def _mean(values: Any) -> float | None:
     values_list = [float(value) for value in values if value is not None]
     return float(np.mean(values_list)) if values_list else None
+
+
+def _percentile(values: Any, percentile: float) -> float | None:
+    values_list = [float(value) for value in values if value is not None]
+    return float(np.percentile(np.asarray(values_list, dtype=np.float64), percentile)) if values_list else None
+
+
+def _flatten_samples(rows: list[dict[str, Any]], key: str) -> list[float]:
+    return [float(value) for row in rows for value in row.get(key, [])]
+
+
+def _common_value(values: Any) -> Any:
+    resolved = [value for value in values if value is not None]
+    if not resolved:
+        return None
+    return resolved[0] if all(value == resolved[0] for value in resolved) else "mixed"
 
 
 def _sum_count_dicts(dicts: Any) -> dict[str, int]:
@@ -873,6 +1021,31 @@ def _set_seed(seed: int, *, torch: Any) -> None:
 
 def _namespace_to_dict(args: argparse.Namespace) -> dict[str, Any]:
     return {key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()}
+
+
+def _checkpoint_model_seed(payload: dict[str, Any]) -> int | None:
+    checkpoint_config = payload.get("config", {})
+    cli = checkpoint_config.get("cli", {}) if isinstance(checkpoint_config, dict) else {}
+    seed = cli.get("seed") if isinstance(cli, dict) else None
+    try:
+        return None if seed is None else int(seed)
+    except (TypeError, ValueError):
+        return None
+
+
+def _git_commit() -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    value = result.stdout.strip()
+    return value or None
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:

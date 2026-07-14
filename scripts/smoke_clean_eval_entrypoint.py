@@ -21,6 +21,8 @@ REQUIRED_METRIC_FIELDS = [
     "completed_DAG_count",
     "DAG_completion_rate",
     "Average_DAG_flowtime",
+    "Median_DAG_flowtime",
+    "P90_DAG_flowtime",
     "DAG_throughput",
     "Average_critical_path_task_completion_delay",
     "Energy_per_completed_DAG",
@@ -40,6 +42,22 @@ REQUIRED_METRIC_FIELDS = [
     "freeze_ue_mobility",
     "initial_hotspot_ue_count_mean",
     "offloading_action_count",
+    "offloading_policy",
+    "valid_candidate_count_distribution",
+    "actor_normalized_entropy_mean",
+    "actor_top1_top2_margin_mean",
+    "actor_greedy_agreement_rate",
+    "selected_estimated_regret_mean",
+    "estimator_calibration_count",
+    "estimator_calibration_mae",
+    "estimator_calibration_bias",
+    "estimator_calibration_p90_abs_error",
+    "realized_cross_uav_transfer_time",
+    "realized_queue_resource_wait",
+    "arrival_backlog_DAG_count",
+    "arrival_backlog_task_count",
+    "final_backlog_DAG_count",
+    "final_backlog_task_count",
     "final_active_DAG_count",
     "final_active_task_count",
     "task_lifecycle_counts",
@@ -89,6 +107,7 @@ def main() -> None:
     _assert(args.deterministic is True, "deterministic evaluation should be default.")
     _assert(args.no_render is True, "evaluation should support no-render mode.")
     _assert(args.freeze_movement is True, "evaluation should parse --freeze-movement.")
+    _assert(args.offloading_policy == "actor_argmax", "evaluation should default to actor_argmax.")
 
     config_payload = eval_clean_mainline.build_eval_config(args)
     _assert(
@@ -97,6 +116,8 @@ def main() -> None:
     )
     _assert("DAG arrivals disabled" in config_payload["protocol"]["drain_phase"], "drain protocol should disable DAG arrivals.")
     _assert(config_payload["protocol"]["default_action"] == "masked_argmax_deterministic", "default action should be deterministic masked argmax.")
+    _assert(config_payload["protocol"]["offloading_policy"] == "actor_argmax", "config should record the offloading policy.")
+    _assert("initial random conditions only" in config_payload["protocol"]["closed_loop_pairing"], "config should record the pairing limitation.")
     _assert(config_payload["protocol"]["movement_mode"] == "forced_hover", "frozen eval config should record forced hover.")
 
     sample_summary = eval_clean_mainline._aggregate_summary(
@@ -299,7 +320,7 @@ def main() -> None:
     source = (ROOT / "scripts" / "eval_clean_mainline.py").read_text(encoding="utf-8")
     for token in ["clean_" + "mappo", "clean_assignment_" + "policy", "train_clean_assignment_" + "mappo"]:
         _assert(token not in source, f"eval entrypoint should not reference legacy clean token: {token}")
-    for token in ["torch.argmax", "deterministic=True", "_dag_arrival_enabled(allow_dag_arrivals)"]:
+    for token in ["torch.argmax", "select_eval_offloading_actions", "_dag_arrival_enabled(allow_dag_arrivals)"]:
         _assert(token in source, f"eval entrypoint missing deterministic/drain implementation token: {token}")
 
     with _workspace_temp_dir("eval") as tmp_dir:
@@ -325,6 +346,7 @@ def main() -> None:
         latest = sorted(run_dirs)[-1]
         _assert((latest / "config.json").is_file(), "eval setup should write config.json.")
         _assert((latest / "eval_summary.json").is_file(), "eval setup should write eval_summary.json.")
+        _assert((latest / "offloading_decisions.jsonl").is_file(), "eval setup should initialize decision JSONL.")
         summary_payload = json.loads((latest / "eval_summary.json").read_text(encoding="utf-8"))
         _assert(summary_payload["torch_required_for_evaluation"] is True, "summary should mark torch as required.")
 
