@@ -202,6 +202,7 @@ def _plot_train(
             {
                 "policy_loss": _sum_series(rows, ["ppo_movement_loss", "ppo_offloading_loss"]),
                 "value_loss": _series(rows, "ppo_value_loss"),
+                "offloading_action_value_loss": _series(rows, "ppo_offloading_action_value_loss"),
                 "movement_entropy": _series(rows, "ppo_movement_entropy"),
                 "offloading_entropy": _series(rows, "ppo_offloading_entropy"),
             },

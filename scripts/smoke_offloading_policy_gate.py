@@ -265,7 +265,14 @@ def _test_full_eval_entrypoint(torch) -> None:
             "hidden_dim": 16,
         }
         torch.manual_seed(4242)
-        modules = eval_clean_mainline._build_modules(dims=dims, device=torch.device("cpu"))
+        modules = eval_clean_mainline._build_modules(
+            dims=dims,
+            experiment_controls={
+                "offloading_counterfactual_coef": 0.0,
+                "offloading_action_value_loss_coef": 0.0,
+            },
+            device=torch.device("cpu"),
+        )
         torch.save(
             {
                 "hgnn": modules.hgnn.state_dict(),

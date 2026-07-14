@@ -103,6 +103,8 @@ def build_eval_config(
             "completed_dag_weight": float(config.REWARD_COMPLETED_DAG_WEIGHT),
             "detach_critic_hgnn": False,
             "freeze_ue_mobility": False,
+            "offloading_counterfactual_coef": 0.0,
+            "offloading_action_value_loss_coef": 0.0,
         }
         requested = getattr(args, "freeze_ue_mobility", None)
         freeze_ue_mobility = False if requested is None else bool(requested)
@@ -167,6 +169,8 @@ def initialize_eval_files(
             "completed_dag_weight": float(config.REWARD_COMPLETED_DAG_WEIGHT),
             "detach_critic_hgnn": False,
             "freeze_ue_mobility": False,
+            "offloading_counterfactual_coef": 0.0,
+            "offloading_action_value_loss_coef": 0.0,
         }
         requested = getattr(args, "freeze_ue_mobility", None)
         freeze_ue_mobility = False if requested is None else bool(requested)
@@ -188,6 +192,8 @@ def initialize_eval_files(
             "completed_dag_weight": float(controls["completed_dag_weight"]),
             "detach_critic_hgnn": bool(controls["detach_critic_hgnn"]),
             "freeze_ue_mobility": freeze_ue_mobility,
+            "offloading_counterfactual_coef": float(controls["offloading_counterfactual_coef"]),
+            "offloading_action_value_loss_coef": float(controls["offloading_action_value_loss_coef"]),
             "offloading_policy": str(args.offloading_policy),
             "git_commit": _git_commit(),
         },
@@ -216,7 +222,7 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
     freeze_ue_mobility = _resolve_eval_ue_mobility(args, experiment_controls)
     initialize_eval_files(run_dir, args, experiment_controls)
     module_dims = _module_dims_from_checkpoint(checkpoint_payload, args)
-    modules = _build_modules(dims=module_dims, device=device)
+    modules = _build_modules(dims=module_dims, experiment_controls=experiment_controls, device=device)
     _load_module_state(modules, checkpoint_payload)
     _set_eval_mode(modules)
 
@@ -248,6 +254,12 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
                 completed_dag_weight=float(experiment_controls["completed_dag_weight"]),
                 freeze_movement=bool(args.freeze_movement),
                 detach_critic_hgnn=bool(experiment_controls["detach_critic_hgnn"]),
+                offloading_counterfactual_coef=float(
+                    experiment_controls["offloading_counterfactual_coef"]
+                ),
+                offloading_action_value_loss_coef=float(
+                    experiment_controls["offloading_action_value_loss_coef"]
+                ),
             )
             episode_decisions = episode_result.pop("_offloading_decisions")
             metrics_rows.append(episode_result)
@@ -273,6 +285,12 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
             "completed_dag_weight": float(experiment_controls["completed_dag_weight"]),
             "detach_critic_hgnn": bool(experiment_controls["detach_critic_hgnn"]),
             "freeze_ue_mobility": freeze_ue_mobility,
+            "offloading_counterfactual_coef": float(
+                experiment_controls["offloading_counterfactual_coef"]
+            ),
+            "offloading_action_value_loss_coef": float(
+                experiment_controls["offloading_action_value_loss_coef"]
+            ),
             "episodes": int(args.episodes),
             "kahypar_circuit_open": bool(graph_builder.kahypar_circuit_open),
             "kahypar_last_failure_reason": graph_builder.kahypar_last_failure_reason,
@@ -300,6 +318,8 @@ def _run_eval_episode(
     completed_dag_weight: float,
     freeze_movement: bool = False,
     detach_critic_hgnn: bool = False,
+    offloading_counterfactual_coef: float = 0.0,
+    offloading_action_value_loss_coef: float = 0.0,
 ) -> dict[str, Any]:
     arrival_slots = 0
     drain_slots = 0
@@ -413,6 +433,8 @@ def _run_eval_episode(
         "git_commit": _git_commit(),
         "completed_dag_weight": float(completed_dag_weight),
         "detach_critic_hgnn": bool(detach_critic_hgnn),
+        "offloading_counterfactual_coef": float(offloading_counterfactual_coef),
+        "offloading_action_value_loss_coef": float(offloading_action_value_loss_coef),
         "generated_DAG_count": generated,
         "completed_DAG_count": completed,
         "DAG_completion_rate": float(completed / max(generated, 1.0)),
@@ -552,12 +574,24 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _build_modules(*, dims: dict[str, int], device: Any) -> CleanTrainingModules:
+def _build_modules(
+    *,
+    dims: dict[str, int],
+    experiment_controls: dict[str, Any],
+    device: Any,
+) -> CleanTrainingModules:
     from marl_models.hgnn import CleanIncidenceHGNN
     from marl_models.mappo.clean_movement_actor import CleanMovementActor
     from marl_models.mappo.clean_offloading_actor import CleanOffloadingActor
+    from marl_models.mappo.clean_offloading_action_value import CleanOffloadingActionValueCritic
     from marl_models.mappo.clean_ppo import CleanCentralizedCritic, clean_critic_input_dim
 
+    critic_input_dim = clean_critic_input_dim(int(dims["task_embedding_dim"]), config.NUM_UAVS)
+    offloading_actor = CleanOffloadingActor(
+        task_embedding_dim=int(dims["task_embedding_dim"]),
+        hidden_dim=int(dims["hidden_dim"]),
+    ).to(device)
+    action_value_enabled = float(experiment_controls.get("offloading_counterfactual_coef", 0.0)) > 0.0
     modules = CleanTrainingModules(
         hgnn=CleanIncidenceHGNN(
             task_feature_dim=int(dims["task_feature_dim"]),
@@ -568,14 +602,19 @@ def _build_modules(*, dims: dict[str, int], device: Any) -> CleanTrainingModules
             task_embedding_dim=int(dims["task_embedding_dim"]),
             hidden_dim=int(dims["hidden_dim"]),
         ).to(device),
-        offloading_actor=CleanOffloadingActor(
-            task_embedding_dim=int(dims["task_embedding_dim"]),
-            hidden_dim=int(dims["hidden_dim"]),
-        ).to(device),
+        offloading_actor=offloading_actor,
         critic=CleanCentralizedCritic(
-            input_dim=clean_critic_input_dim(int(dims["task_embedding_dim"]), config.NUM_UAVS),
+            input_dim=critic_input_dim,
             hidden_dim=int(dims["hidden_dim"]),
         ).to(device),
+        offloading_action_value_critic=(
+            CleanOffloadingActionValueCritic(
+                input_dim=int(offloading_actor.candidate_feature_dim) + int(critic_input_dim),
+                hidden_dim=int(dims["hidden_dim"]),
+            ).to(device)
+            if action_value_enabled
+            else None
+        ),
     )
     return modules
 
@@ -585,6 +624,13 @@ def _load_module_state(modules: CleanTrainingModules, payload: dict[str, Any]) -
     modules.movement_actor.load_state_dict(payload["movement_actor"])
     modules.offloading_actor.load_state_dict(payload["offloading_actor"])
     modules.critic.load_state_dict(payload["critic"])
+    action_value_state = payload.get("offloading_action_value_critic")
+    if modules.offloading_action_value_critic is None and action_value_state is not None:
+        raise ValueError("checkpoint action-value critic is enabled but eval controls disabled it")
+    if modules.offloading_action_value_critic is not None and action_value_state is None:
+        raise ValueError("enabled checkpoint is missing offloading action-value critic state")
+    if modules.offloading_action_value_critic is not None:
+        modules.offloading_action_value_critic.load_state_dict(action_value_state)
 
 
 def _load_trusted_checkpoint(torch: Any, checkpoint: Path) -> dict[str, Any]:
@@ -631,6 +677,8 @@ def _set_eval_mode(modules: CleanTrainingModules) -> None:
     modules.movement_actor.eval()
     modules.offloading_actor.eval()
     modules.critic.eval()
+    if modules.offloading_action_value_critic is not None:
+        modules.offloading_action_value_critic.eval()
 
 
 def _select_deterministic_movement_actions(encoded: Any, *, freeze_movement: bool) -> dict[int, int]:

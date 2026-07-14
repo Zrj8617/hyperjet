@@ -134,10 +134,16 @@ def main() -> int:
         records=[record], returns=returns, advantages=advantages
     )
     for name in default_loss:
-        _assert(
-            torch.equal(default_loss[name], shared_loss[name]),
-            f"explicit shared mode should match the default for {name}.",
-        )
+        if isinstance(default_loss[name], torch.Tensor):
+            _assert(
+                torch.equal(default_loss[name], shared_loss[name]),
+                f"explicit shared mode should match the default for {name}.",
+            )
+        else:
+            _assert(
+                default_loss[name] == shared_loss[name],
+                f"explicit shared diagnostics should match the default for {name}.",
+            )
 
     shared_value_hgnn = _grad_norm(
         shared_loss["value_loss"], modules.hgnn.parameters(), torch

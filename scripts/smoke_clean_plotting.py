@@ -38,6 +38,7 @@ def main() -> None:
         "Energy_per_completed_DAG",
         "invalid_assignment_rate",
         "ppo_value_loss",
+        "ppo_offloading_action_value_loss",
     ]:
         _assert(token in source, f"clean plotting source should reference clean metric: {token}")
 
@@ -99,6 +100,7 @@ def _fake_train_rows() -> list[dict[str, object]]:
                 "ppo_movement_loss": 0.1 * idx,
                 "ppo_offloading_loss": 0.2 * idx,
                 "ppo_value_loss": 0.3 * idx,
+                "ppo_offloading_action_value_loss": 0.04 * idx,
                 "ppo_movement_entropy": 0.01 * idx,
                 "ppo_offloading_entropy": 0.02 * idx,
             }

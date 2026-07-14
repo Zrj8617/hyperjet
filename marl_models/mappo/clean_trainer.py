@@ -18,9 +18,15 @@ from marl_models.mappo.clean_slot_orchestrator import (
 try:
     import torch
     from torch.distributions import Categorical
+    from marl_models.mappo.clean_offloading_action_value import (
+        masked_counterfactual_value,
+        normalize_counterfactual_values,
+    )
 except ModuleNotFoundError:
     torch = None
     Categorical = None
+    masked_counterfactual_value = None
+    normalize_counterfactual_values = None
 
 
 @dataclass(slots=True)
@@ -36,6 +42,8 @@ class CleanPPOUpdateConfig:
     # Experimental boundary: the critic head still trains, but its value loss
     # cannot update the shared HGNN when this is enabled.
     detach_critic_hgnn: bool = False
+    offloading_counterfactual_coef: float = 0.0
+    offloading_action_value_loss_coef: float = 0.0
     # Diagnostics-only: every N-th update, decompose the HGNN gradient into its
     # actor-loss and value-loss components via torch.autograd.grad (never
     # touches .grad). 0 disables the decomposition.
@@ -57,6 +65,7 @@ class CleanPPOUpdateStats:
     grad_norm: float
     hgnn_grad_norm: float
     update_step: int
+    offloading_action_value_loss: float = 0.0
     # Value/return scale diagnostics (Phase 4 P0): computed from the pre-update
     # GAE returns and value predictions of the rollout being consumed.
     returns_mean: float = 0.0
@@ -75,6 +84,7 @@ class CleanTrainingModules:
     movement_actor: Any
     offloading_actor: Any
     critic: Any
+    offloading_action_value_critic: Any | None = None
 
 
 class CleanJSONLLogger:
@@ -132,6 +142,8 @@ class CleanCheckpointManager:
             "resume_semantics": "restart_from_new_episode_only",
             "safe_boundary": True,
         }
+        if modules.offloading_action_value_critic is not None:
+            payload["offloading_action_value_critic"] = modules.offloading_action_value_critic.state_dict()
         path = self.checkpoint_dir / filename
         torch.save(payload, path)
         return path
@@ -165,10 +177,17 @@ class CleanCheckpointManager:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         """Restore a previously validated checkpoint payload."""
+        action_value_state = payload.get("offloading_action_value_critic")
+        if modules.offloading_action_value_critic is None and action_value_state is not None:
+            raise ValueError("checkpoint contains an enabled offloading action-value critic, but the live run disabled it")
+        if modules.offloading_action_value_critic is not None and action_value_state is None:
+            raise ValueError("enabled offloading action-value critic state is missing from checkpoint")
         modules.hgnn.load_state_dict(payload["hgnn"])
         modules.movement_actor.load_state_dict(payload["movement_actor"])
         modules.offloading_actor.load_state_dict(payload["offloading_actor"])
         modules.critic.load_state_dict(payload["critic"])
+        if modules.offloading_action_value_critic is not None:
+            modules.offloading_action_value_critic.load_state_dict(action_value_state)
         optimizer.load_state_dict(payload["optimizer"])
         _set_rng_state(payload.get("rng_state", {}))
         return payload
@@ -192,6 +211,7 @@ class CleanPPOUpdater:
         self.config = config or CleanPPOUpdateConfig()
         self.device = device
         self.update_step = 0
+        _validate_action_value_configuration(self.config, self.modules)
 
     def update(self, buffer: CleanSlotRolloutBuffer) -> CleanPPOUpdateStats:
         if not buffer.closed:
@@ -232,6 +252,7 @@ class CleanPPOUpdater:
         decompose_due = decompose_interval > 0 and (self.update_step % decompose_interval == 0)
         for epoch_index in range(max(int(self.config.ppo_epochs), 1)):
             loss_parts = self._loss(records=records, returns=returns, advantages=advantages)
+            diagnostics.update(loss_parts.get("action_value_diagnostics", {}))
             if decompose_due and epoch_index == 0:
                 # torch.autograd.grad reads the live graph without writing .grad,
                 # so this is behavior-neutral for the optimizer step below.
@@ -242,6 +263,11 @@ class CleanPPOUpdater:
                         config=self.config,
                     )
                 )
+            if epoch_index == 0 and self.modules.offloading_action_value_critic is not None:
+                diagnostics["offloading_action_value_hgnn_grad_norm"] = _loss_to_module_grad_norm(
+                    loss_parts["offloading_action_value_loss"],
+                    self.modules.hgnn,
+                )
             self.optimizer.zero_grad(set_to_none=True)
             loss_parts["total_loss"].backward()
             pre_clip = {
@@ -249,6 +275,9 @@ class CleanPPOUpdater:
                 "grad_pre_clip_offloading": _module_grad_norm(self.modules.offloading_actor),
                 "grad_pre_clip_critic": _module_grad_norm(self.modules.critic),
                 "grad_pre_clip_hgnn": _module_grad_norm(self.modules.hgnn),
+                "grad_pre_clip_offloading_action_value": _module_grad_norm(
+                    self.modules.offloading_action_value_critic
+                ),
             }
             grad_norm = torch.nn.utils.clip_grad_norm_(
                 _unique_parameters(
@@ -257,6 +286,7 @@ class CleanPPOUpdater:
                         self.modules.movement_actor,
                         self.modules.offloading_actor,
                         self.modules.critic,
+                        self.modules.offloading_action_value_critic,
                     ]
                 ),
                 float(self.config.max_grad_norm),
@@ -266,6 +296,9 @@ class CleanPPOUpdater:
                 "grad_post_clip_offloading": _module_grad_norm(self.modules.offloading_actor),
                 "grad_post_clip_critic": _module_grad_norm(self.modules.critic),
                 "grad_post_clip_hgnn": _module_grad_norm(self.modules.hgnn),
+                "grad_post_clip_offloading_action_value": _module_grad_norm(
+                    self.modules.offloading_action_value_critic
+                ),
             }
             diagnostics.update(pre_clip)
             diagnostics.update(post_clip)
@@ -296,9 +329,14 @@ class CleanPPOUpdater:
     ) -> dict[str, Any]:
         per_slot_move_losses: list[Any] = []
         per_slot_move_entropies: list[Any] = []
-        per_slot_off_losses: list[Any] = []
-        per_slot_off_entropies: list[Any] = []
         value_losses: list[Any] = []
+        offloading_items: list[dict[str, Any]] = []
+        action_value_losses_by_slot: dict[int, list[Any]] = {}
+        action_value_targets: list[Any] = []
+        selected_action_values: list[Any] = []
+        legal_q_spreads: list[Any] = []
+        raw_counterfactual_values: list[Any] = []
+        action_value_enabled = self.modules.offloading_action_value_critic is not None
 
         for slot_idx, record in enumerate(records):
             task_features_np = np.asarray(record.graph_snapshot.task_features, dtype=np.float32).copy()
@@ -343,34 +381,106 @@ class CleanPPOUpdater:
                 per_slot_move_losses.append(torch.stack(move_losses).mean())
                 per_slot_move_entropies.append(torch.stack(move_entropies).mean())
 
-            off_losses: list[Any] = []
-            off_entropies: list[Any] = []
             for offloading_record in record.offloading_records:
                 task_idx = int(offloading_record.task_local_index)
                 if task_idx < 0 or task_idx >= int(task_embeddings.shape[0]):
-                    continue
+                    raise ValueError(
+                        f"offloading task index {task_idx} is outside the slot embedding range "
+                        f"[0, {int(task_embeddings.shape[0])})"
+                    )
                 task_embedding = task_embeddings[task_idx].reshape(1, -1)
                 dynamic_features = torch.as_tensor(offloading_record.dynamic_uav_features, dtype=torch.float32, device=self.device)
                 pair_features = torch.as_tensor(offloading_record.pair_features, dtype=torch.float32, device=self.device)
+                if dynamic_features.dim() != 2 or pair_features.dim() != 2:
+                    raise ValueError("offloading dynamic and pair features must be 2D")
+                if dynamic_features.shape[0] != pair_features.shape[0]:
+                    raise ValueError("offloading dynamic and pair candidate counts differ")
                 candidate_count = int(dynamic_features.shape[0])
+                if candidate_count <= 0:
+                    raise ValueError("recorded offloading action has no candidates")
                 features = torch.cat([task_embedding.expand(candidate_count, -1), dynamic_features, pair_features], dim=1)
                 mask = torch.as_tensor(offloading_record.candidate_mask, dtype=torch.bool, device=self.device)
+                if mask.dim() != 1 or int(mask.shape[0]) != candidate_count:
+                    raise ValueError("offloading candidate mask shape is inconsistent with candidate features")
+                if not bool(mask.any().item()):
+                    raise ValueError("recorded offloading action has no legal candidate")
                 logits = self.modules.offloading_actor.scorer(features).masked_fill(~mask, torch.finfo(torch.float32).min)
                 dist = Categorical(logits=logits)
-                action = torch.as_tensor(int(offloading_record.selected_action), dtype=torch.long, device=self.device)
+                action_index = int(offloading_record.selected_action)
+                if action_index < 0 or action_index >= candidate_count or not bool(mask[action_index].item()):
+                    raise ValueError("recorded offloading selected action is not a legal candidate")
+                action = torch.as_tensor(action_index, dtype=torch.long, device=self.device)
                 old_log_prob = torch.as_tensor(float(offloading_record.old_log_probability), dtype=torch.float32, device=self.device)
-                off_losses.append(
-                    _ppo_action_loss(
-                        new_log_prob=dist.log_prob(action),
-                        old_log_prob=old_log_prob,
-                        advantage=advantages[slot_idx],
-                        clip_epsilon=self.config.clip_epsilon,
+                item: dict[str, Any] = {
+                    "slot_idx": int(slot_idx),
+                    "dist": dist,
+                    "action": action,
+                    "old_log_prob": old_log_prob,
+                    "entropy": dist.entropy(),
+                }
+                if action_value_enabled:
+                    global_context = critic_input.detach().reshape(1, -1).expand(candidate_count, -1)
+                    action_value_input = torch.cat([features.detach(), global_context], dim=1)
+                    action_values = self.modules.offloading_action_value_critic(action_value_input)
+                    if action_values.dim() != 1 or int(action_values.shape[0]) != candidate_count:
+                        raise ValueError("offloading action-value critic returned an inconsistent shape")
+                    if not bool(torch.isfinite(action_values[mask]).all().item()):
+                        raise FloatingPointError("offloading action-value critic returned non-finite legal values")
+                    selected_value = action_values[action_index]
+                    target = advantages[slot_idx].detach()
+                    q_loss = 0.5 * (selected_value - target).pow(2)
+                    counterfactual, q_spread = masked_counterfactual_value(
+                        logits=logits,
+                        action_values=action_values,
+                        candidate_mask=mask,
+                        selected_action=action_index,
                     )
-                )
-                off_entropies.append(dist.entropy())
-            if off_losses:
-                per_slot_off_losses.append(torch.stack(off_losses).mean())
-                per_slot_off_entropies.append(torch.stack(off_entropies).mean())
+                    if not bool(torch.isfinite(q_loss).item()):
+                        raise FloatingPointError("offloading action-value loss is non-finite")
+                    action_value_losses_by_slot.setdefault(int(slot_idx), []).append(q_loss)
+                    action_value_targets.append(target)
+                    selected_action_values.append(selected_value.detach())
+                    legal_q_spreads.append(q_spread)
+                    raw_counterfactual_values.append(counterfactual)
+                offloading_items.append(item)
+
+        normalized_counterfactual, counterfactual_diagnostics = normalize_counterfactual_values(
+            raw_counterfactual_values
+        ) if action_value_enabled else ([], {
+            "mean": 0.0,
+            "std": 0.0,
+            "normalized_std": 0.0,
+            "effective_count": 0,
+        })
+
+        off_losses_by_slot: dict[int, list[Any]] = {}
+        off_entropies_by_slot: dict[int, list[Any]] = {}
+        for item_index, item in enumerate(offloading_items):
+            slot_idx = int(item["slot_idx"])
+            offloading_advantage = advantages[slot_idx]
+            if action_value_enabled:
+                offloading_advantage = offloading_advantage + float(
+                    self.config.offloading_counterfactual_coef
+                ) * normalized_counterfactual[item_index]
+            off_loss = _ppo_action_loss(
+                new_log_prob=item["dist"].log_prob(item["action"]),
+                old_log_prob=item["old_log_prob"],
+                advantage=offloading_advantage.detach(),
+                clip_epsilon=self.config.clip_epsilon,
+            )
+            off_losses_by_slot.setdefault(slot_idx, []).append(off_loss)
+            off_entropies_by_slot.setdefault(slot_idx, []).append(item["entropy"])
+
+        per_slot_off_losses = [
+            torch.stack(off_losses_by_slot[idx]).mean() for idx in sorted(off_losses_by_slot)
+        ]
+        per_slot_off_entropies = [
+            torch.stack(off_entropies_by_slot[idx]).mean() for idx in sorted(off_entropies_by_slot)
+        ]
+        per_slot_action_value_losses = [
+            torch.stack(action_value_losses_by_slot[idx]).mean()
+            for idx in sorted(action_value_losses_by_slot)
+        ]
 
         zero = torch.zeros((), dtype=torch.float32, device=self.device)
         movement_loss = torch.stack(per_slot_move_losses).mean() if per_slot_move_losses else zero
@@ -378,12 +488,35 @@ class CleanPPOUpdater:
         offloading_loss = torch.stack(per_slot_off_losses).mean() if per_slot_off_losses else zero
         offloading_entropy = torch.stack(per_slot_off_entropies).mean() if per_slot_off_entropies else zero
         value_loss = torch.stack(value_losses).mean() if value_losses else zero
+        offloading_action_value_loss = (
+            torch.stack(per_slot_action_value_losses).mean()
+            if per_slot_action_value_losses
+            else zero
+        )
         total_loss = (
             movement_loss
             + offloading_loss
             + float(self.config.value_coef) * value_loss
+            + float(self.config.offloading_action_value_loss_coef) * offloading_action_value_loss
             - float(self.config.movement_entropy_coef) * movement_entropy
             - float(self.config.offloading_entropy_coef) * offloading_entropy
+        )
+        for loss_name, loss_value in (
+            ("movement_loss", movement_loss),
+            ("offloading_loss", offloading_loss),
+            ("value_loss", value_loss),
+            ("offloading_action_value_loss", offloading_action_value_loss),
+            ("total_loss", total_loss),
+        ):
+            if not bool(torch.isfinite(loss_value).item()):
+                raise FloatingPointError(f"{loss_name} is non-finite")
+
+        action_value_diagnostics = _action_value_diagnostics(
+            targets=action_value_targets,
+            selected_values=selected_action_values,
+            legal_q_spreads=legal_q_spreads,
+            counterfactual=counterfactual_diagnostics,
+            config=self.config,
         )
         return {
             "movement_loss": movement_loss,
@@ -391,7 +524,9 @@ class CleanPPOUpdater:
             "offloading_loss": offloading_loss,
             "offloading_entropy": offloading_entropy,
             "value_loss": value_loss,
+            "offloading_action_value_loss": offloading_action_value_loss,
             "total_loss": total_loss,
+            "action_value_diagnostics": action_value_diagnostics,
         }
 
     def _stats_from_loss_parts(
@@ -414,7 +549,107 @@ class CleanPPOUpdater:
             grad_norm=float(grad_norm),
             hgnn_grad_norm=_module_grad_norm(self.modules.hgnn),
             update_step=self.update_step,
+            offloading_action_value_loss=float(
+                loss_parts["offloading_action_value_loss"].detach().cpu().item()
+            ),
         )
+
+
+def _validate_action_value_configuration(
+    config: CleanPPOUpdateConfig,
+    modules: CleanTrainingModules,
+) -> None:
+    beta = float(config.offloading_counterfactual_coef)
+    eta = float(config.offloading_action_value_loss_coef)
+    if not np.isfinite(beta) or beta < 0.0:
+        raise ValueError("offloading counterfactual coefficient must be finite and non-negative")
+    if not np.isfinite(eta) or eta < 0.0:
+        raise ValueError("offloading action-value loss coefficient must be finite and non-negative")
+    coefficient_enabled = beta > 0.0 and eta > 0.0
+    if (beta > 0.0) != (eta > 0.0):
+        raise ValueError("offloading counterfactual and action-value loss coefficients must be enabled together")
+    module_enabled = modules.offloading_action_value_critic is not None
+    if coefficient_enabled != module_enabled:
+        raise ValueError(
+            "offloading action-value critic presence must match the enabled coefficient pair"
+        )
+
+
+def _action_value_diagnostics(
+    *,
+    targets: list[Any],
+    selected_values: list[Any],
+    legal_q_spreads: list[Any],
+    counterfactual: dict[str, Any],
+    config: CleanPPOUpdateConfig,
+) -> dict[str, Any]:
+    diagnostics = {
+        "offloading_counterfactual_coef": float(config.offloading_counterfactual_coef),
+        "offloading_action_value_loss_coef": float(config.offloading_action_value_loss_coef),
+        "offloading_action_value_target_mean": 0.0,
+        "offloading_action_value_target_std": 0.0,
+        "offloading_action_value_selected_mean": 0.0,
+        "offloading_action_value_selected_std": 0.0,
+        "offloading_action_value_explained_variance": 0.0,
+        "offloading_legal_q_spread_mean": 0.0,
+        "offloading_counterfactual_advantage_mean": float(counterfactual.get("mean", 0.0)),
+        "offloading_counterfactual_advantage_std": float(counterfactual.get("std", 0.0)),
+        "offloading_counterfactual_advantage_normalized_std": float(
+            counterfactual.get("normalized_std", 0.0)
+        ),
+        "offloading_counterfactual_effective_action_count": int(
+            counterfactual.get("effective_count", 0)
+        ),
+    }
+    if not targets:
+        return diagnostics
+
+    target_tensor = torch.stack([value.detach().reshape(()) for value in targets])
+    selected_tensor = torch.stack([value.detach().reshape(()) for value in selected_values])
+    if not bool(torch.isfinite(target_tensor).all().item()):
+        raise FloatingPointError("offloading action-value targets contain non-finite values")
+    if not bool(torch.isfinite(selected_tensor).all().item()):
+        raise FloatingPointError("selected offloading action values contain non-finite values")
+    target_variance = target_tensor.var(unbiased=False)
+    residual_variance = (target_tensor - selected_tensor).var(unbiased=False)
+    explained_variance = (
+        1.0 - float(residual_variance.item()) / float(target_variance.item())
+        if float(target_variance.item()) > 1e-12
+        else 0.0
+    )
+    spread_mean = (
+        float(torch.stack([value.detach().reshape(()) for value in legal_q_spreads]).mean().item())
+        if legal_q_spreads
+        else 0.0
+    )
+    diagnostics.update(
+        {
+            "offloading_action_value_target_mean": float(target_tensor.mean().item()),
+            "offloading_action_value_target_std": float(target_tensor.std(unbiased=False).item()),
+            "offloading_action_value_selected_mean": float(selected_tensor.mean().item()),
+            "offloading_action_value_selected_std": float(selected_tensor.std(unbiased=False).item()),
+            "offloading_action_value_explained_variance": float(explained_variance),
+            "offloading_legal_q_spread_mean": spread_mean,
+        }
+    )
+    return diagnostics
+
+
+def _loss_to_module_grad_norm(loss: Any, module: Any) -> float:
+    if module is None or not (
+        isinstance(loss, torch.Tensor) and loss.requires_grad and loss.grad_fn is not None
+    ):
+        return 0.0
+    params = [param for param in module.parameters() if param.requires_grad]
+    if not params:
+        return 0.0
+    grads = torch.autograd.grad(loss, params, retain_graph=True, allow_unused=True)
+    total = sum(
+        float(grad.detach().pow(2).sum().cpu().item())
+        for grad in grads
+        if grad is not None
+    )
+    return float(total ** 0.5)
 
 
 def build_single_optimizer(
@@ -426,7 +661,18 @@ def build_single_optimizer(
     if torch is None:
         raise ModuleNotFoundError("torch is required to build clean PPO optimizer")
     optimizer_type = optimizer_cls or torch.optim.Adam
-    return optimizer_type(_unique_parameters([modules.hgnn, modules.movement_actor, modules.offloading_actor, modules.critic]), lr=float(lr))
+    return optimizer_type(
+        _unique_parameters(
+            [
+                modules.hgnn,
+                modules.movement_actor,
+                modules.offloading_actor,
+                modules.critic,
+                modules.offloading_action_value_critic,
+            ]
+        ),
+        lr=float(lr),
+    )
 
 
 def close_rollout_with_bootstrap(
@@ -565,6 +811,8 @@ def _unique_parameters(modules: Iterable[Any]) -> list[Any]:
     params = []
     seen: set[int] = set()
     for module in modules:
+        if module is None:
+            continue
         for param in module.parameters():
             marker = id(param)
             if marker not in seen:
@@ -574,7 +822,7 @@ def _unique_parameters(modules: Iterable[Any]) -> list[Any]:
 
 
 def _module_grad_norm(module: Any) -> float:
-    if torch is None:
+    if torch is None or module is None:
         return 0.0
     total = 0.0
     for param in module.parameters():
