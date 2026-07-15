@@ -44,6 +44,8 @@ class CleanPPOUpdateConfig:
     detach_critic_hgnn: bool = False
     offloading_counterfactual_coef: float = 0.0
     offloading_action_value_loss_coef: float = 0.0
+    offloading_lagged_q_coef: float = 0.0
+    offloading_lagged_q_loss_coef: float = 0.0
     # Diagnostics-only: every N-th update, decompose the HGNN gradient into its
     # actor-loss and value-loss components via torch.autograd.grad (never
     # touches .grad). 0 disables the decomposition.
@@ -66,6 +68,7 @@ class CleanPPOUpdateStats:
     hgnn_grad_norm: float
     update_step: int
     offloading_action_value_loss: float = 0.0
+    offloading_lagged_q_loss: float = 0.0
     # Value/return scale diagnostics (Phase 4 P0): computed from the pre-update
     # GAE returns and value predictions of the rollout being consumed.
     returns_mean: float = 0.0
@@ -85,6 +88,7 @@ class CleanTrainingModules:
     offloading_actor: Any
     critic: Any
     offloading_action_value_critic: Any | None = None
+    offloading_lagged_q_critic: Any | None = None
 
 
 class CleanJSONLLogger:
@@ -144,6 +148,8 @@ class CleanCheckpointManager:
         }
         if modules.offloading_action_value_critic is not None:
             payload["offloading_action_value_critic"] = modules.offloading_action_value_critic.state_dict()
+        if modules.offloading_lagged_q_critic is not None:
+            payload["offloading_lagged_residual_q"] = modules.offloading_lagged_q_critic.state_dict()
         path = self.checkpoint_dir / filename
         torch.save(payload, path)
         return path
@@ -178,6 +184,7 @@ class CleanCheckpointManager:
     ) -> dict[str, Any]:
         """Restore a previously validated checkpoint payload."""
         action_value_state = payload.get("offloading_action_value_critic")
+        lagged_q_state = payload.get("offloading_lagged_residual_q")
         if modules.offloading_action_value_critic is None and action_value_state is not None:
             raise ValueError("checkpoint contains an enabled offloading action-value critic, but the live run disabled it")
         if modules.offloading_action_value_critic is not None and action_value_state is None:
@@ -188,6 +195,12 @@ class CleanCheckpointManager:
         modules.critic.load_state_dict(payload["critic"])
         if modules.offloading_action_value_critic is not None:
             modules.offloading_action_value_critic.load_state_dict(action_value_state)
+        if modules.offloading_lagged_q_critic is None and lagged_q_state is not None:
+            raise ValueError("checkpoint contains lagged residual Q, but the live run disabled it")
+        if modules.offloading_lagged_q_critic is not None and lagged_q_state is None:
+            raise ValueError("enabled lagged residual Q state is missing from checkpoint")
+        if modules.offloading_lagged_q_critic is not None:
+            modules.offloading_lagged_q_critic.load_state_dict(lagged_q_state)
         optimizer.load_state_dict(payload["optimizer"])
         _set_rng_state(payload.get("rng_state", {}))
         return payload
@@ -213,12 +226,22 @@ class CleanPPOUpdater:
         self.update_step = 0
         _validate_action_value_configuration(self.config, self.modules)
 
-    def update(self, buffer: CleanSlotRolloutBuffer) -> CleanPPOUpdateStats:
+    def update(
+        self,
+        buffer: CleanSlotRolloutBuffer,
+        *,
+        lagged_q_samples: list[Any] | None = None,
+        lagged_q_pending_count: int = 0,
+    ) -> CleanPPOUpdateStats:
         if not buffer.closed:
             raise RuntimeError("Clean PPO update requires a closed rollout buffer.")
         records = list(buffer.records)
         if not records:
             raise ValueError("Cannot update from an empty rollout buffer.")
+        lagged_samples = list(lagged_q_samples or [])
+        frozen_lagged_corrections, lagged_correction_diagnostics = (
+            self._precompute_lagged_q_corrections(records)
+        )
 
         returns_np, advantages_np = compute_slot_level_gae(
             records,
@@ -247,12 +270,21 @@ class CleanPPOUpdater:
 
         latest_stats: CleanPPOUpdateStats | None = None
         diagnostics: dict = _rollout_entropy_diagnostics(records)
+        diagnostics.update(lagged_correction_diagnostics)
+        diagnostics["offloading_lagged_q_pending_count"] = int(lagged_q_pending_count)
         diagnostics["critic_hgnn_detached"] = bool(self.config.detach_critic_hgnn)
         decompose_interval = int(getattr(self.config, "hgnn_grad_decomposition_interval", 0))
         decompose_due = decompose_interval > 0 and (self.update_step % decompose_interval == 0)
         for epoch_index in range(max(int(self.config.ppo_epochs), 1)):
-            loss_parts = self._loss(records=records, returns=returns, advantages=advantages)
+            loss_parts = self._loss(
+                records=records,
+                returns=returns,
+                advantages=advantages,
+                lagged_q_samples=lagged_samples,
+                frozen_lagged_corrections=frozen_lagged_corrections,
+            )
             diagnostics.update(loss_parts.get("action_value_diagnostics", {}))
+            diagnostics.update(loss_parts.get("lagged_q_diagnostics", {}))
             if decompose_due and epoch_index == 0:
                 # torch.autograd.grad reads the live graph without writing .grad,
                 # so this is behavior-neutral for the optimizer step below.
@@ -268,6 +300,20 @@ class CleanPPOUpdater:
                     loss_parts["offloading_action_value_loss"],
                     self.modules.hgnn,
                 )
+            if epoch_index == 0 and self.modules.offloading_lagged_q_critic is not None:
+                lagged_loss = loss_parts["offloading_lagged_q_loss"]
+                diagnostics["offloading_lagged_q_direct_grad_q"] = _loss_to_module_grad_norm(
+                    lagged_loss, self.modules.offloading_lagged_q_critic
+                )
+                diagnostics["offloading_lagged_q_direct_grad_hgnn"] = _loss_to_module_grad_norm(
+                    lagged_loss, self.modules.hgnn
+                )
+                diagnostics["offloading_lagged_q_direct_grad_actor"] = _loss_to_module_grad_norm(
+                    lagged_loss, self.modules.offloading_actor
+                )
+                diagnostics["offloading_lagged_q_direct_grad_critic"] = _loss_to_module_grad_norm(
+                    lagged_loss, self.modules.critic
+                )
             self.optimizer.zero_grad(set_to_none=True)
             loss_parts["total_loss"].backward()
             pre_clip = {
@@ -278,6 +324,9 @@ class CleanPPOUpdater:
                 "grad_pre_clip_offloading_action_value": _module_grad_norm(
                     self.modules.offloading_action_value_critic
                 ),
+                "grad_pre_clip_offloading_lagged_q": _module_grad_norm(
+                    self.modules.offloading_lagged_q_critic
+                ),
             }
             grad_norm = torch.nn.utils.clip_grad_norm_(
                 _unique_parameters(
@@ -287,6 +336,7 @@ class CleanPPOUpdater:
                         self.modules.offloading_actor,
                         self.modules.critic,
                         self.modules.offloading_action_value_critic,
+                        self.modules.offloading_lagged_q_critic,
                     ]
                 ),
                 float(self.config.max_grad_norm),
@@ -298,6 +348,9 @@ class CleanPPOUpdater:
                 "grad_post_clip_hgnn": _module_grad_norm(self.modules.hgnn),
                 "grad_post_clip_offloading_action_value": _module_grad_norm(
                     self.modules.offloading_action_value_critic
+                ),
+                "grad_post_clip_offloading_lagged_q": _module_grad_norm(
+                    self.modules.offloading_lagged_q_critic
                 ),
             }
             diagnostics.update(pre_clip)
@@ -320,12 +373,107 @@ class CleanPPOUpdater:
         latest_stats.update_step = self.update_step
         return latest_stats
 
+    def _precompute_lagged_q_corrections(
+        self,
+        records: list[CleanSlotRolloutRecord],
+    ) -> tuple[list[Any], dict[str, Any]]:
+        module = self.modules.offloading_lagged_q_critic
+        diagnostics: dict[str, Any] = {
+            "offloading_lagged_q_coef": float(self.config.offloading_lagged_q_coef),
+            "offloading_lagged_q_loss_coef": float(self.config.offloading_lagged_q_loss_coef),
+            "offloading_lagged_q_current_action_count": int(
+                sum(len(record.offloading_records) for record in records)
+            ),
+            "offloading_lagged_q_legal_spread_mean": 0.0,
+            "offloading_lagged_q_legal_spread_median": 0.0,
+            "offloading_lagged_q_legal_spread_p90": 0.0,
+            "offloading_lagged_q_correction_mean": 0.0,
+            "offloading_lagged_q_correction_std": 0.0,
+            "offloading_lagged_q_correction_min": 0.0,
+            "offloading_lagged_q_correction_max": 0.0,
+            "offloading_lagged_q_multi_candidate_fraction": 0.0,
+            "offloading_lagged_q_clamp_fraction": 0.0,
+        }
+        if module is None:
+            return [], diagnostics
+        corrections: list[Any] = []
+        spreads: list[float] = []
+        raw_legal_count = 0
+        clamped_count = 0
+        multi_candidate_count = 0
+        with torch.no_grad():
+            for slot_record in records:
+                for record in slot_record.offloading_records:
+                    if record.candidate_features is None or record.critic_global_context is None:
+                        raise ValueError("lagged Q current rollout record lacks candidate/context features")
+                    features = torch.as_tensor(
+                        record.candidate_features, dtype=torch.float32, device=self.device
+                    )
+                    context = torch.as_tensor(
+                        record.critic_global_context, dtype=torch.float32, device=self.device
+                    ).reshape(1, -1)
+                    if features.dim() != 2:
+                        raise ValueError("lagged Q current candidate features must be 2D")
+                    candidate_count = int(features.shape[0])
+                    q_inputs = torch.cat([features, context.expand(candidate_count, -1)], dim=1)
+                    raw_q = module(q_inputs)
+                    mask = torch.as_tensor(
+                        record.candidate_mask, dtype=torch.bool, device=self.device
+                    )
+                    if raw_q.dim() != 1 or mask.shape != raw_q.shape or not bool(mask.any().item()):
+                        raise ValueError("lagged Q current candidate output/mask mismatch")
+                    if not bool(torch.isfinite(raw_q[mask]).all().item()):
+                        raise FloatingPointError("lagged Q current legal values are non-finite")
+                    raw_legal = raw_q[mask]
+                    raw_legal_count += int(raw_legal.numel())
+                    clamped_count += int(((raw_legal <= -1.0) | (raw_legal >= 1.0)).sum().item())
+                    q_values = raw_q.clamp(-1.0, 1.0)
+                    logits = self.modules.offloading_actor.scorer(features)
+                    masked_logits = logits.masked_fill(~mask, torch.finfo(logits.dtype).min)
+                    probabilities = torch.softmax(masked_logits, dim=0)
+                    selected = int(record.selected_action)
+                    if selected < 0 or selected >= candidate_count or not bool(mask[selected].item()):
+                        raise ValueError("lagged Q selected action is not legal")
+                    legal_count = int(mask.sum().item())
+                    if legal_count > 1:
+                        multi_candidate_count += 1
+                        correction = q_values[selected] - torch.sum(probabilities * q_values)
+                    else:
+                        correction = q_values.new_zeros(())
+                    corrections.append(correction.detach().reshape(()))
+                    spreads.append(float((q_values[mask].max() - q_values[mask].min()).item()))
+        if corrections:
+            correction_values = np.asarray(
+                [float(value.cpu().item()) for value in corrections], dtype=np.float64
+            )
+            spread_values = np.asarray(spreads, dtype=np.float64)
+            diagnostics.update(
+                {
+                    "offloading_lagged_q_legal_spread_mean": float(spread_values.mean()),
+                    "offloading_lagged_q_legal_spread_median": float(np.median(spread_values)),
+                    "offloading_lagged_q_legal_spread_p90": float(np.percentile(spread_values, 90.0)),
+                    "offloading_lagged_q_correction_mean": float(correction_values.mean()),
+                    "offloading_lagged_q_correction_std": float(correction_values.std()),
+                    "offloading_lagged_q_correction_min": float(correction_values.min()),
+                    "offloading_lagged_q_correction_max": float(correction_values.max()),
+                    "offloading_lagged_q_multi_candidate_fraction": float(
+                        multi_candidate_count / len(corrections)
+                    ),
+                    "offloading_lagged_q_clamp_fraction": float(
+                        clamped_count / max(raw_legal_count, 1)
+                    ),
+                }
+            )
+        return corrections, diagnostics
+
     def _loss(
         self,
         *,
         records: list[CleanSlotRolloutRecord],
         returns: Any,
         advantages: Any,
+        lagged_q_samples: list[Any] | None = None,
+        frozen_lagged_corrections: list[Any] | None = None,
     ) -> dict[str, Any]:
         per_slot_move_losses: list[Any] = []
         per_slot_move_entropies: list[Any] = []
@@ -337,6 +485,8 @@ class CleanPPOUpdater:
         legal_q_spreads: list[Any] = []
         raw_counterfactual_values: list[Any] = []
         action_value_enabled = self.modules.offloading_action_value_critic is not None
+        lagged_q_enabled = self.modules.offloading_lagged_q_critic is not None
+        lagged_corrections = list(frozen_lagged_corrections or [])
 
         for slot_idx, record in enumerate(records):
             task_features_np = np.asarray(record.graph_snapshot.task_features, dtype=np.float32).copy()
@@ -453,6 +603,11 @@ class CleanPPOUpdater:
             "effective_count": 0,
         })
 
+        if lagged_q_enabled and len(lagged_corrections) != len(offloading_items):
+            raise ValueError(
+                "frozen lagged-Q correction count must equal current PPO offloading action count"
+            )
+
         off_losses_by_slot: dict[int, list[Any]] = {}
         off_entropies_by_slot: dict[int, list[Any]] = {}
         for item_index, item in enumerate(offloading_items):
@@ -462,6 +617,10 @@ class CleanPPOUpdater:
                 offloading_advantage = offloading_advantage + float(
                     self.config.offloading_counterfactual_coef
                 ) * normalized_counterfactual[item_index]
+            if lagged_q_enabled:
+                offloading_advantage = offloading_advantage + float(
+                    self.config.offloading_lagged_q_coef
+                ) * lagged_corrections[item_index]
             off_loss = _ppo_action_loss(
                 new_log_prob=item["dist"].log_prob(item["action"]),
                 old_log_prob=item["old_log_prob"],
@@ -493,11 +652,20 @@ class CleanPPOUpdater:
             if per_slot_action_value_losses
             else zero
         )
+        offloading_lagged_q_loss, lagged_q_diagnostics = _lagged_q_regression_loss(
+            module=self.modules.offloading_lagged_q_critic,
+            samples=list(lagged_q_samples or []),
+            device=self.device,
+        )
+        lagged_q_diagnostics["offloading_lagged_q_label_coverage"] = float(
+            len(list(lagged_q_samples or [])) / max(len(offloading_items), 1)
+        )
         total_loss = (
             movement_loss
             + offloading_loss
             + float(self.config.value_coef) * value_loss
             + float(self.config.offloading_action_value_loss_coef) * offloading_action_value_loss
+            + float(self.config.offloading_lagged_q_loss_coef) * offloading_lagged_q_loss
             - float(self.config.movement_entropy_coef) * movement_entropy
             - float(self.config.offloading_entropy_coef) * offloading_entropy
         )
@@ -506,6 +674,7 @@ class CleanPPOUpdater:
             ("offloading_loss", offloading_loss),
             ("value_loss", value_loss),
             ("offloading_action_value_loss", offloading_action_value_loss),
+            ("offloading_lagged_q_loss", offloading_lagged_q_loss),
             ("total_loss", total_loss),
         ):
             if not bool(torch.isfinite(loss_value).item()):
@@ -525,8 +694,10 @@ class CleanPPOUpdater:
             "offloading_entropy": offloading_entropy,
             "value_loss": value_loss,
             "offloading_action_value_loss": offloading_action_value_loss,
+            "offloading_lagged_q_loss": offloading_lagged_q_loss,
             "total_loss": total_loss,
             "action_value_diagnostics": action_value_diagnostics,
+            "lagged_q_diagnostics": lagged_q_diagnostics,
         }
 
     def _stats_from_loss_parts(
@@ -552,6 +723,9 @@ class CleanPPOUpdater:
             offloading_action_value_loss=float(
                 loss_parts["offloading_action_value_loss"].detach().cpu().item()
             ),
+            offloading_lagged_q_loss=float(
+                loss_parts["offloading_lagged_q_loss"].detach().cpu().item()
+            ),
         )
 
 
@@ -573,6 +747,106 @@ def _validate_action_value_configuration(
         raise ValueError(
             "offloading action-value critic presence must match the enabled coefficient pair"
         )
+
+    lagged_beta = float(config.offloading_lagged_q_coef)
+    lagged_eta = float(config.offloading_lagged_q_loss_coef)
+    if not np.isfinite(lagged_beta) or lagged_beta < 0.0:
+        raise ValueError("offloading lagged-Q coefficient must be finite and non-negative")
+    if not np.isfinite(lagged_eta) or lagged_eta < 0.0:
+        raise ValueError("offloading lagged-Q loss coefficient must be finite and non-negative")
+    lagged_coefficients_enabled = lagged_beta > 0.0 and lagged_eta > 0.0
+    if (lagged_beta > 0.0) != (lagged_eta > 0.0):
+        raise ValueError("offloading lagged-Q advantage and loss coefficients must be enabled together")
+    lagged_module_enabled = modules.offloading_lagged_q_critic is not None
+    if lagged_coefficients_enabled != lagged_module_enabled:
+        raise ValueError("lagged residual-Q module presence must match its enabled coefficient pair")
+    if coefficient_enabled and lagged_coefficients_enabled:
+        raise ValueError("offloading counterfactual v1 and lagged-Q v2 are mutually exclusive")
+
+
+def _lagged_q_regression_loss(
+    *,
+    module: Any | None,
+    samples: list[Any],
+    device: Any,
+) -> tuple[Any, dict[str, Any]]:
+    zero = torch.zeros((), dtype=torch.float32, device=device)
+    diagnostics: dict[str, Any] = {
+        "offloading_lagged_q_training_sample_count": int(len(samples)),
+        "offloading_lagged_q_completed_sample_count": int(
+            sum(not bool(sample.censored) for sample in samples)
+        ),
+        "offloading_lagged_q_censored_sample_count": int(
+            sum(bool(sample.censored) for sample in samples)
+        ),
+        "offloading_lagged_q_effective_weight": 0.0,
+        "offloading_lagged_q_censor_fraction": 0.0,
+        "offloading_lagged_q_target_mean": 0.0,
+        "offloading_lagged_q_target_std": 0.0,
+        "offloading_lagged_q_target_min": 0.0,
+        "offloading_lagged_q_target_max": 0.0,
+        "offloading_lagged_q_selected_mean": 0.0,
+        "offloading_lagged_q_selected_std": 0.0,
+        "offloading_lagged_q_explained_variance": 0.0,
+    }
+    if module is None:
+        if samples:
+            raise ValueError("lagged Q samples were supplied while the module is disabled")
+        return zero, diagnostics
+    if not samples:
+        return zero, diagnostics
+    if any(hasattr(sample, "old_log_probability") or hasattr(sample, "old_log_prob") for sample in samples):
+        raise ValueError("lagged Q regression samples must not contain PPO log probabilities")
+    inputs = torch.as_tensor(
+        np.stack([np.asarray(sample.selected_input, dtype=np.float32) for sample in samples]),
+        dtype=torch.float32,
+        device=device,
+    )
+    targets = torch.as_tensor(
+        [float(sample.target) for sample in samples], dtype=torch.float32, device=device
+    )
+    weights = torch.as_tensor(
+        [float(sample.weight) for sample in samples], dtype=torch.float32, device=device
+    )
+    if not bool(torch.isfinite(inputs).all().item()) or not bool(torch.isfinite(targets).all().item()):
+        raise FloatingPointError("lagged Q regression input/target is non-finite")
+    if not bool(torch.isfinite(weights).all().item()) or bool((weights < 0.0).any().item()):
+        raise FloatingPointError("lagged Q regression weight is invalid")
+    effective_weight = weights.sum()
+    if float(effective_weight.item()) <= 0.0:
+        return zero, diagnostics
+    predictions = module(inputs)
+    if predictions.shape != targets.shape or not bool(torch.isfinite(predictions).all().item()):
+        raise FloatingPointError("lagged Q regression prediction is invalid")
+    element_losses = torch.nn.functional.smooth_l1_loss(
+        predictions, targets, reduction="none"
+    )
+    loss = torch.sum(element_losses * weights) / effective_weight
+    target_variance = targets.var(unbiased=False)
+    residual_variance = (targets - predictions.detach()).var(unbiased=False)
+    explained_variance = (
+        1.0 - float(residual_variance.item()) / float(target_variance.item())
+        if float(target_variance.item()) > 1e-12
+        else 0.0
+    )
+    diagnostics.update(
+        {
+            "offloading_lagged_q_effective_weight": float(effective_weight.item()),
+            "offloading_lagged_q_censor_fraction": float(
+                sum(bool(sample.censored) for sample in samples) / len(samples)
+            ),
+            "offloading_lagged_q_target_mean": float(targets.mean().item()),
+            "offloading_lagged_q_target_std": float(targets.std(unbiased=False).item()),
+            "offloading_lagged_q_target_min": float(targets.min().item()),
+            "offloading_lagged_q_target_max": float(targets.max().item()),
+            "offloading_lagged_q_selected_mean": float(predictions.detach().mean().item()),
+            "offloading_lagged_q_selected_std": float(
+                predictions.detach().std(unbiased=False).item()
+            ),
+            "offloading_lagged_q_explained_variance": float(explained_variance),
+        }
+    )
+    return loss, diagnostics
 
 
 def _action_value_diagnostics(
@@ -669,6 +943,7 @@ def build_single_optimizer(
                 modules.offloading_actor,
                 modules.critic,
                 modules.offloading_action_value_critic,
+                modules.offloading_lagged_q_critic,
             ]
         ),
         lr=float(lr),

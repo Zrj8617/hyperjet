@@ -80,6 +80,38 @@ def _resolved_offloading_action_value_controls(args: argparse.Namespace) -> tupl
     )
 
 
+def _validated_offloading_lagged_q_controls(
+    lagged_q_coef: str | float,
+    lagged_q_loss_coef: str | float,
+    scale_seconds: str | float,
+    censor_weight: str | float,
+) -> tuple[float, float, float, float]:
+    beta = _validated_completed_dag_weight(lagged_q_coef)
+    eta = _validated_completed_dag_weight(lagged_q_loss_coef)
+    scale = float(scale_seconds)
+    censor = float(censor_weight)
+    if (beta > 0.0) != (eta > 0.0):
+        raise ValueError("offloading lagged-Q advantage and loss coefficients must be enabled together")
+    if not math.isfinite(scale) or scale <= 0.0:
+        raise ValueError("offloading lagged-Q scale seconds must be finite and positive")
+    if not math.isfinite(censor) or not 0.0 <= censor <= 1.0:
+        raise ValueError("offloading lagged-Q censor weight must be finite and in [0, 1]")
+    return beta, eta, scale, censor
+
+
+def _resolved_offloading_lagged_q_controls(args: argparse.Namespace) -> tuple[float, float, float, float]:
+    controls = _validated_offloading_lagged_q_controls(
+        getattr(args, "offloading_lagged_q_coef", 0.0),
+        getattr(args, "offloading_lagged_q_loss_coef", 0.0),
+        getattr(args, "offloading_lagged_q_scale_seconds", 200.0),
+        getattr(args, "offloading_lagged_q_censor_weight", 0.25),
+    )
+    v1_beta, _ = _resolved_offloading_action_value_controls(args)
+    if v1_beta > 0.0 and controls[0] > 0.0:
+        raise ValueError("offloading counterfactual v1 and lagged-Q v2 are mutually exclusive")
+    return controls
+
+
 def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
     """Resolve experiment controls from new or legacy clean checkpoints."""
     checkpoint_config = payload.get("config", {})
@@ -96,6 +128,16 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
         cli.get("offloading_counterfactual_coef", 0.0),
         cli.get("offloading_action_value_loss_coef", 0.0),
     )
+    lagged_q_coef, lagged_q_loss_coef, lagged_q_scale_seconds, lagged_q_censor_weight = (
+        _validated_offloading_lagged_q_controls(
+            cli.get("offloading_lagged_q_coef", 0.0),
+            cli.get("offloading_lagged_q_loss_coef", 0.0),
+            cli.get("offloading_lagged_q_scale_seconds", 200.0),
+            cli.get("offloading_lagged_q_censor_weight", 0.25),
+        )
+    )
+    if counterfactual_coef > 0.0 and lagged_q_coef > 0.0:
+        raise ValueError("checkpoint offloading counterfactual v1 and lagged-Q v2 cannot both be enabled")
     return {
         "completed_dag_weight": _validated_completed_dag_weight(
             cli.get("completed_dag_weight", config.REWARD_COMPLETED_DAG_WEIGHT)
@@ -104,6 +146,10 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
         "freeze_ue_mobility": freeze_ue_mobility,
         "offloading_counterfactual_coef": counterfactual_coef,
         "offloading_action_value_loss_coef": action_value_loss_coef,
+        "offloading_lagged_q_coef": lagged_q_coef,
+        "offloading_lagged_q_loss_coef": lagged_q_loss_coef,
+        "offloading_lagged_q_scale_seconds": lagged_q_scale_seconds,
+        "offloading_lagged_q_censor_weight": lagged_q_censor_weight,
     }
 
 
@@ -147,6 +193,21 @@ def validate_resume_experiment_controls(
             rel_tol=0.0,
             abs_tol=1e-12,
         ):
+            raise ValueError(
+                f"resume checkpoint {key.replace('_', ' ')} mismatch: "
+                f"requested {requested}, checkpoint {saved[key]}"
+            )
+    requested_lagged = _resolved_offloading_lagged_q_controls(args)
+    for key, requested in zip(
+        (
+            "offloading_lagged_q_coef",
+            "offloading_lagged_q_loss_coef",
+            "offloading_lagged_q_scale_seconds",
+            "offloading_lagged_q_censor_weight",
+        ),
+        requested_lagged,
+    ):
+        if not math.isclose(requested, float(saved[key]), rel_tol=0.0, abs_tol=1e-12):
             raise ValueError(
                 f"resume checkpoint {key.replace('_', ' ')} mismatch: "
                 f"requested {requested}, checkpoint {saved[key]}"
@@ -196,6 +257,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=0.0,
         help="Weight eta for the selected-action value regression loss.",
     )
+    parser.add_argument(
+        "--offloading-lagged-q-coef",
+        type=_nonnegative_finite_float,
+        default=0.0,
+        help="Weight beta_lq for the detached lagged DAG-outcome Q correction.",
+    )
+    parser.add_argument(
+        "--offloading-lagged-q-loss-coef",
+        type=_nonnegative_finite_float,
+        default=0.0,
+        help="Weight eta_lq for lagged DAG-outcome residual-Q regression.",
+    )
+    parser.add_argument("--offloading-lagged-q-scale-seconds", type=float, default=200.0)
+    parser.add_argument("--offloading-lagged-q-censor-weight", type=float, default=0.25)
     parser.add_argument("--output-dir", type=Path, default=Path("logs") / "clean_mainline")
     parser.add_argument("--run-name", type=str, default="clean")
     parser.add_argument("--checkpoint-interval", type=int, default=10)
@@ -245,6 +320,9 @@ def create_run_directory(args: argparse.Namespace) -> Path:
 def build_config_snapshot(args: argparse.Namespace) -> dict[str, Any]:
     completed_dag_weight = _resolved_completed_dag_weight(args)
     counterfactual_coef, action_value_loss_coef = _resolved_offloading_action_value_controls(args)
+    lagged_q_coef, lagged_q_loss_coef, lagged_q_scale_seconds, lagged_q_censor_weight = (
+        _resolved_offloading_lagged_q_controls(args)
+    )
     return {
         "cli": _namespace_to_dict(args),
         "experiment_controls": {
@@ -253,6 +331,11 @@ def build_config_snapshot(args: argparse.Namespace) -> dict[str, Any]:
             "freeze_ue_mobility": bool(getattr(args, "freeze_ue_mobility", False)),
             "offloading_counterfactual_coef": counterfactual_coef,
             "offloading_action_value_loss_coef": action_value_loss_coef,
+            "offloading_lagged_q_coef": lagged_q_coef,
+            "offloading_lagged_q_loss_coef": lagged_q_loss_coef,
+            "offloading_lagged_q_scale_seconds": lagged_q_scale_seconds,
+            "offloading_lagged_q_censor_weight": lagged_q_censor_weight,
+            "lagged_q_resume_pending_policy": "discard_restarted_episode",
         },
         "clean_scene": {
             "AREA_WIDTH": config.AREA_WIDTH,
@@ -289,6 +372,9 @@ def build_config_snapshot(args: argparse.Namespace) -> dict[str, Any]:
 
 def initialize_run_files(run_dir: Path, args: argparse.Namespace) -> None:
     counterfactual_coef, action_value_loss_coef = _resolved_offloading_action_value_controls(args)
+    lagged_q_coef, lagged_q_loss_coef, lagged_q_scale_seconds, lagged_q_censor_weight = (
+        _resolved_offloading_lagged_q_controls(args)
+    )
     _write_json(run_dir / "config.json", build_config_snapshot(args))
     _write_json(
         run_dir / "run_summary.json",
@@ -301,6 +387,11 @@ def initialize_run_files(run_dir: Path, args: argparse.Namespace) -> None:
             "freeze_ue_mobility": bool(getattr(args, "freeze_ue_mobility", False)),
             "offloading_counterfactual_coef": counterfactual_coef,
             "offloading_action_value_loss_coef": action_value_loss_coef,
+            "offloading_lagged_q_coef": lagged_q_coef,
+            "offloading_lagged_q_loss_coef": lagged_q_loss_coef,
+            "offloading_lagged_q_scale_seconds": lagged_q_scale_seconds,
+            "offloading_lagged_q_censor_weight": lagged_q_censor_weight,
+            "lagged_q_resume_pending_policy": "discard_restarted_episode",
             "resume_semantics": "restart_from_new_episode_only",
         },
     )
@@ -313,6 +404,12 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         args.offloading_counterfactual_coef,
         args.offloading_action_value_loss_coef,
     ) = _resolved_offloading_action_value_controls(args)
+    (
+        args.offloading_lagged_q_coef,
+        args.offloading_lagged_q_loss_coef,
+        args.offloading_lagged_q_scale_seconds,
+        args.offloading_lagged_q_censor_weight,
+    ) = _resolved_offloading_lagged_q_controls(args)
     run_dir = create_run_directory(args)
     initialize_run_files(run_dir, args)
 
@@ -324,6 +421,10 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     from marl_models.mappo.clean_movement_actor import CleanMovementActor
     from marl_models.mappo.clean_offloading_actor import CleanOffloadingActor
     from marl_models.mappo.clean_offloading_action_value import CleanOffloadingActionValueCritic
+    from marl_models.mappo.clean_lagged_residual_q import (
+        CleanLaggedOutcomeTracker,
+        CleanLaggedResidualQCritic,
+    )
     from marl_models.mappo.clean_ppo import CleanCentralizedCritic, clean_critic_input_dim
     from marl_models.mappo.clean_trainer import CleanPPOUpdater
 
@@ -350,6 +451,15 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         if action_value_enabled
         else None
     )
+    lagged_q_enabled = float(args.offloading_lagged_q_coef) > 0.0
+    offloading_lagged_q_critic = (
+        CleanLaggedResidualQCritic(
+            input_dim=int(offloading_actor.candidate_feature_dim) + int(critic_input_dim),
+            hidden_dim=int(args.hidden_dim),
+        )
+        if lagged_q_enabled
+        else None
+    )
     modules = CleanTrainingModules(
         hgnn=CleanIncidenceHGNN(
             task_feature_dim=task_feature_dim,
@@ -363,6 +473,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             hidden_dim=int(args.hidden_dim),
         ),
         offloading_action_value_critic=offloading_action_value_critic,
+        offloading_lagged_q_critic=offloading_lagged_q_critic,
     )
     device = torch.device(str(args.device))
     _move_modules_to_device(modules, device)
@@ -382,11 +493,21 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             detach_critic_hgnn=bool(args.detach_critic_hgnn),
             offloading_counterfactual_coef=float(args.offloading_counterfactual_coef),
             offloading_action_value_loss_coef=float(args.offloading_action_value_loss_coef),
+            offloading_lagged_q_coef=float(args.offloading_lagged_q_coef),
+            offloading_lagged_q_loss_coef=float(args.offloading_lagged_q_loss_coef),
         ),
         device=device,
     )
     checkpoint_manager = CleanCheckpointManager(run_dir / "checkpoints")
     logger = CleanJSONLLogger(run_dir)
+    lagged_q_tracker = (
+        CleanLaggedOutcomeTracker(
+            scale_seconds=float(args.offloading_lagged_q_scale_seconds),
+            censor_weight=float(args.offloading_lagged_q_censor_weight),
+        )
+        if lagged_q_enabled
+        else None
+    )
     start_episode = 0
     global_slot = 0
     latest_update_stats: CleanPPOUpdateStats | None = None
@@ -403,6 +524,8 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     try:
         for episode in range(start_episode, int(args.episodes)):
             env.reset()
+            if lagged_q_tracker is not None:
+                lagged_q_tracker.start_episode(episode)
             graph_builder.reset()
             current_prepared = prepare_slot_state(env=env, graph_builder=graph_builder)
             current_encoded = encode_prepared_slot(
@@ -434,6 +557,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                     device=device,
                     task_state_ready=TASK_STATE_READY_UNSCHEDULED,
                     freeze_movement=bool(args.freeze_movement),
+                    lagged_q_enabled=bool(lagged_q_enabled),
                 )
                 global_slot += 1
                 episode_reward += float(slot_record.reward)
@@ -448,6 +572,9 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                 info["terminated"] = bool(done)
                 info["truncated"] = truncated
                 buffer.append(slot_record)
+                if lagged_q_tracker is not None:
+                    lagged_q_tracker.register_rollout_actions(slot_record=slot_record, env=env)
+                    lagged_q_tracker.resolve_completed(env=env)
 
                 next_prepared = None
                 next_encoded_old = None
@@ -465,8 +592,27 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
 
                 should_update = len(buffer) >= int(args.rollout_horizon) or bool(done) or truncated
                 if should_update:
+                    lagged_tracker_summary: dict[str, int] | None = None
+                    if lagged_q_tracker is not None and bool(done or truncated):
+                        lagged_q_tracker.resolve_completed(env=env)
+                        lagged_q_tracker.finalize_censored(
+                            episode_end_time=float(env.current_time_seconds)
+                        )
+                    lagged_q_samples = (
+                        lagged_q_tracker.pop_finalized()
+                        if lagged_q_tracker is not None
+                        else []
+                    )
                     close_rollout_with_bootstrap(buffer=buffer, next_encoded_state=next_encoded_old, terminated=bool(done))
-                    latest_update_stats = updater.update(buffer)
+                    latest_update_stats = updater.update(
+                        buffer,
+                        lagged_q_samples=lagged_q_samples,
+                        lagged_q_pending_count=(
+                            lagged_q_tracker.pending_count if lagged_q_tracker is not None else 0
+                        ),
+                    )
+                    if lagged_q_tracker is not None and bool(done or truncated):
+                        lagged_tracker_summary = lagged_q_tracker.finish_episode()
                     write_clean_training_log(
                         logger,
                         episode=episode,
@@ -482,6 +628,9 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                             freeze_ue_mobility=bool(args.freeze_ue_mobility),
                             offloading_counterfactual_coef=float(args.offloading_counterfactual_coef),
                             offloading_action_value_loss_coef=float(args.offloading_action_value_loss_coef),
+                            offloading_lagged_q_coef=float(args.offloading_lagged_q_coef),
+                            offloading_lagged_q_loss_coef=float(args.offloading_lagged_q_loss_coef),
+                            lagged_tracker_summary=lagged_tracker_summary,
                         ),
                     )
                     checkpoint_manager.save(
@@ -541,6 +690,10 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                     "freeze_ue_mobility": bool(args.freeze_ue_mobility),
                     "offloading_counterfactual_coef": float(args.offloading_counterfactual_coef),
                     "offloading_action_value_loss_coef": float(args.offloading_action_value_loss_coef),
+                    "offloading_lagged_q_coef": float(args.offloading_lagged_q_coef),
+                    "offloading_lagged_q_loss_coef": float(args.offloading_lagged_q_loss_coef),
+                    "offloading_lagged_q_scale_seconds": float(args.offloading_lagged_q_scale_seconds),
+                    "offloading_lagged_q_censor_weight": float(args.offloading_lagged_q_censor_weight),
                     "initial_hotspot_ue_count": int(env.initial_hotspot_ue_count),
                     "resume_semantics": "restart_from_new_episode_only",
                 },
@@ -558,6 +711,10 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         "freeze_ue_mobility": bool(args.freeze_ue_mobility),
         "offloading_counterfactual_coef": float(args.offloading_counterfactual_coef),
         "offloading_action_value_loss_coef": float(args.offloading_action_value_loss_coef),
+        "offloading_lagged_q_coef": float(args.offloading_lagged_q_coef),
+        "offloading_lagged_q_loss_coef": float(args.offloading_lagged_q_loss_coef),
+        "offloading_lagged_q_scale_seconds": float(args.offloading_lagged_q_scale_seconds),
+        "offloading_lagged_q_censor_weight": float(args.offloading_lagged_q_censor_weight),
         "kahypar_circuit_open": bool(graph_builder.kahypar_circuit_open),
         "kahypar_last_failure_reason": graph_builder.kahypar_last_failure_reason,
         "kahypar_cleanup_failed": bool(graph_builder.kahypar_cleanup_failed),
@@ -574,6 +731,7 @@ def _collect_clean_slot(
     device: Any,
     task_state_ready: str,
     freeze_movement: bool = False,
+    lagged_q_enabled: bool = False,
 ) -> tuple[Any, bool, dict[str, Any]]:
     import torch
 
@@ -605,6 +763,7 @@ def _collect_clean_slot(
             movement_actions=movement_actions,
             movement_records=movement_records,
             movement_frozen=True,
+            lagged_q_enabled=bool(lagged_q_enabled),
         )
 
     movement_dist = categorical_cls(logits=encoded_state.movement_logits)
@@ -638,6 +797,7 @@ def _collect_clean_slot(
         movement_actions=movement_actions,
         movement_records=movement_records,
         movement_frozen=False,
+        lagged_q_enabled=bool(lagged_q_enabled),
     )
 
 
@@ -650,7 +810,9 @@ def _finish_collect_clean_slot(
     movement_actions: dict[int, int],
     movement_records: list[CleanMovementRolloutRecord],
     movement_frozen: bool,
+    lagged_q_enabled: bool = False,
 ) -> tuple[Any, bool, dict[str, Any]]:
+    assignment_time_seconds = float(env.current_time_seconds)
     env.apply_movement(movement_actions)
     frozen_ready_tasks = [env.task_manager.get_task(task_id) for task_id in encoded_state.prepared_state.frozen_ready_task_ids]
     frozen_ready_tasks = [task for task in frozen_ready_tasks if task is not None and task.state == task_state_ready]
@@ -680,6 +842,28 @@ def _finish_collect_clean_slot(
             selected_uav_id=int(record.selected_uav_id),
             old_log_probability=float(record.old_log_prob),
             entropy=float(record.entropy),
+            dag_id=str(record.dag_id) if lagged_q_enabled else None,
+            assignment_time_seconds=assignment_time_seconds if lagged_q_enabled else None,
+            candidate_features=(
+                record.candidate_features.detach().cpu().numpy().copy()
+                if lagged_q_enabled
+                else None
+            ),
+            critic_global_context=(
+                encoded_state.critic_global_input.detach().cpu().numpy().copy()
+                if lagged_q_enabled and hasattr(encoded_state.critic_global_input, "detach")
+                else (
+                    np.asarray(encoded_state.critic_global_input, dtype=np.float32).copy()
+                    if lagged_q_enabled
+                    else None
+                )
+            ),
+            selected_estimated_finish_time=(
+                float(record.selected_estimated_finish_time) if lagged_q_enabled else None
+            ),
+            selected_estimated_incremental_delay=(
+                float(record.selected_estimated_incremental_delay) if lagged_q_enabled else None
+            ),
         )
         for record in modules.offloading_actor.latest_records
     ]
@@ -717,6 +901,9 @@ def _episode_diagnostics_payload(
     freeze_ue_mobility: bool,
     offloading_counterfactual_coef: float,
     offloading_action_value_loss_coef: float,
+    offloading_lagged_q_coef: float,
+    offloading_lagged_q_loss_coef: float,
+    lagged_tracker_summary: dict[str, int] | None,
 ) -> dict[str, Any]:
     """Episode-level reward component accumulation (diagnostics only).
 
@@ -733,12 +920,18 @@ def _episode_diagnostics_payload(
     payload["freeze_ue_mobility"] = bool(freeze_ue_mobility)
     payload["offloading_counterfactual_coef"] = float(offloading_counterfactual_coef)
     payload["offloading_action_value_loss_coef"] = float(offloading_action_value_loss_coef)
+    payload["offloading_lagged_q_coef"] = float(offloading_lagged_q_coef)
+    payload["offloading_lagged_q_loss_coef"] = float(offloading_lagged_q_loss_coef)
     payload["initial_hotspot_ue_count"] = int(env.initial_hotspot_ue_count)
     if terminal:
         payload.update(
             {f"episode_{key}_total": float(value) for key, value in episode_component_totals.items()}
         )
         payload.update(_unsettled_backlog_estimate(env))
+        if lagged_tracker_summary is not None:
+            payload.update(
+                {f"lagged_q_episode_{key}": int(value) for key, value in lagged_tracker_summary.items()}
+            )
     return payload
 
 
@@ -831,6 +1024,8 @@ def _move_modules_to_device(modules: CleanTrainingModules, device: Any) -> None:
     modules.critic.to(device)
     if modules.offloading_action_value_critic is not None:
         modules.offloading_action_value_critic.to(device)
+    if modules.offloading_lagged_q_critic is not None:
+        modules.offloading_lagged_q_critic.to(device)
 
 
 def _make_progress_bar(total: int) -> Any:

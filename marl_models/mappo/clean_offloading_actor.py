@@ -20,6 +20,7 @@ from environment.assignment import (
 @dataclass(slots=True)
 class CleanOffloadingActionRecord:
     task_id: str
+    dag_id: str
     task_local_index: int
     decision_order: int
     candidate_uav_ids: list[int]
@@ -31,6 +32,8 @@ class CleanOffloadingActionRecord:
     selected_uav_id: int
     old_log_prob: float
     entropy: float
+    selected_estimated_finish_time: float
+    selected_estimated_incremental_delay: float
 
 
 class SharedOffloadingCandidateScorer(nn.Module):
@@ -144,6 +147,7 @@ class CleanOffloadingActor(nn.Module):
             records.append(
                 CleanOffloadingActionRecord(
                     task_id=str(task.task_id),
+                    dag_id=str(task.dag_id),
                     task_local_index=int(task_idx),
                     decision_order=int(decision_order),
                     candidate_uav_ids=list(candidate_uav_ids),
@@ -155,6 +159,8 @@ class CleanOffloadingActor(nn.Module):
                     selected_uav_id=selected_uav_id,
                     old_log_prob=float(dist.log_prob(selected).item()),
                     entropy=float(dist.entropy().item()),
+                    selected_estimated_finish_time=float(selected_estimate.estimated_finish_time),
+                    selected_estimated_incremental_delay=float(selected_estimate.incremental_delay),
                 )
             )
 

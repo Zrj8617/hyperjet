@@ -105,6 +105,10 @@ def build_eval_config(
             "freeze_ue_mobility": False,
             "offloading_counterfactual_coef": 0.0,
             "offloading_action_value_loss_coef": 0.0,
+            "offloading_lagged_q_coef": 0.0,
+            "offloading_lagged_q_loss_coef": 0.0,
+            "offloading_lagged_q_scale_seconds": 200.0,
+            "offloading_lagged_q_censor_weight": 0.25,
         }
         requested = getattr(args, "freeze_ue_mobility", None)
         freeze_ue_mobility = False if requested is None else bool(requested)
@@ -171,6 +175,10 @@ def initialize_eval_files(
             "freeze_ue_mobility": False,
             "offloading_counterfactual_coef": 0.0,
             "offloading_action_value_loss_coef": 0.0,
+            "offloading_lagged_q_coef": 0.0,
+            "offloading_lagged_q_loss_coef": 0.0,
+            "offloading_lagged_q_scale_seconds": 200.0,
+            "offloading_lagged_q_censor_weight": 0.25,
         }
         requested = getattr(args, "freeze_ue_mobility", None)
         freeze_ue_mobility = False if requested is None else bool(requested)
@@ -194,6 +202,10 @@ def initialize_eval_files(
             "freeze_ue_mobility": freeze_ue_mobility,
             "offloading_counterfactual_coef": float(controls["offloading_counterfactual_coef"]),
             "offloading_action_value_loss_coef": float(controls["offloading_action_value_loss_coef"]),
+            "offloading_lagged_q_coef": float(controls["offloading_lagged_q_coef"]),
+            "offloading_lagged_q_loss_coef": float(controls["offloading_lagged_q_loss_coef"]),
+            "offloading_lagged_q_scale_seconds": float(controls["offloading_lagged_q_scale_seconds"]),
+            "offloading_lagged_q_censor_weight": float(controls["offloading_lagged_q_censor_weight"]),
             "offloading_policy": str(args.offloading_policy),
             "git_commit": _git_commit(),
         },
@@ -260,6 +272,10 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
                 offloading_action_value_loss_coef=float(
                     experiment_controls["offloading_action_value_loss_coef"]
                 ),
+                offloading_lagged_q_coef=float(experiment_controls["offloading_lagged_q_coef"]),
+                offloading_lagged_q_loss_coef=float(
+                    experiment_controls["offloading_lagged_q_loss_coef"]
+                ),
             )
             episode_decisions = episode_result.pop("_offloading_decisions")
             metrics_rows.append(episode_result)
@@ -291,6 +307,16 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
             "offloading_action_value_loss_coef": float(
                 experiment_controls["offloading_action_value_loss_coef"]
             ),
+            "offloading_lagged_q_coef": float(experiment_controls["offloading_lagged_q_coef"]),
+            "offloading_lagged_q_loss_coef": float(
+                experiment_controls["offloading_lagged_q_loss_coef"]
+            ),
+            "offloading_lagged_q_scale_seconds": float(
+                experiment_controls["offloading_lagged_q_scale_seconds"]
+            ),
+            "offloading_lagged_q_censor_weight": float(
+                experiment_controls["offloading_lagged_q_censor_weight"]
+            ),
             "episodes": int(args.episodes),
             "kahypar_circuit_open": bool(graph_builder.kahypar_circuit_open),
             "kahypar_last_failure_reason": graph_builder.kahypar_last_failure_reason,
@@ -320,6 +346,8 @@ def _run_eval_episode(
     detach_critic_hgnn: bool = False,
     offloading_counterfactual_coef: float = 0.0,
     offloading_action_value_loss_coef: float = 0.0,
+    offloading_lagged_q_coef: float = 0.0,
+    offloading_lagged_q_loss_coef: float = 0.0,
 ) -> dict[str, Any]:
     arrival_slots = 0
     drain_slots = 0
@@ -435,6 +463,8 @@ def _run_eval_episode(
         "detach_critic_hgnn": bool(detach_critic_hgnn),
         "offloading_counterfactual_coef": float(offloading_counterfactual_coef),
         "offloading_action_value_loss_coef": float(offloading_action_value_loss_coef),
+        "offloading_lagged_q_coef": float(offloading_lagged_q_coef),
+        "offloading_lagged_q_loss_coef": float(offloading_lagged_q_loss_coef),
         "generated_DAG_count": generated,
         "completed_DAG_count": completed,
         "DAG_completion_rate": float(completed / max(generated, 1.0)),
@@ -584,6 +614,7 @@ def _build_modules(
     from marl_models.mappo.clean_movement_actor import CleanMovementActor
     from marl_models.mappo.clean_offloading_actor import CleanOffloadingActor
     from marl_models.mappo.clean_offloading_action_value import CleanOffloadingActionValueCritic
+    from marl_models.mappo.clean_lagged_residual_q import CleanLaggedResidualQCritic
     from marl_models.mappo.clean_ppo import CleanCentralizedCritic, clean_critic_input_dim
 
     critic_input_dim = clean_critic_input_dim(int(dims["task_embedding_dim"]), config.NUM_UAVS)
@@ -592,6 +623,7 @@ def _build_modules(
         hidden_dim=int(dims["hidden_dim"]),
     ).to(device)
     action_value_enabled = float(experiment_controls.get("offloading_counterfactual_coef", 0.0)) > 0.0
+    lagged_q_enabled = float(experiment_controls.get("offloading_lagged_q_coef", 0.0)) > 0.0
     modules = CleanTrainingModules(
         hgnn=CleanIncidenceHGNN(
             task_feature_dim=int(dims["task_feature_dim"]),
@@ -615,6 +647,14 @@ def _build_modules(
             if action_value_enabled
             else None
         ),
+        offloading_lagged_q_critic=(
+            CleanLaggedResidualQCritic(
+                input_dim=int(offloading_actor.candidate_feature_dim) + int(critic_input_dim),
+                hidden_dim=int(dims["hidden_dim"]),
+            ).to(device)
+            if lagged_q_enabled
+            else None
+        ),
     )
     return modules
 
@@ -625,12 +665,19 @@ def _load_module_state(modules: CleanTrainingModules, payload: dict[str, Any]) -
     modules.offloading_actor.load_state_dict(payload["offloading_actor"])
     modules.critic.load_state_dict(payload["critic"])
     action_value_state = payload.get("offloading_action_value_critic")
+    lagged_q_state = payload.get("offloading_lagged_residual_q")
     if modules.offloading_action_value_critic is None and action_value_state is not None:
         raise ValueError("checkpoint action-value critic is enabled but eval controls disabled it")
     if modules.offloading_action_value_critic is not None and action_value_state is None:
         raise ValueError("enabled checkpoint is missing offloading action-value critic state")
     if modules.offloading_action_value_critic is not None:
         modules.offloading_action_value_critic.load_state_dict(action_value_state)
+    if modules.offloading_lagged_q_critic is None and lagged_q_state is not None:
+        raise ValueError("checkpoint lagged residual Q is enabled but eval controls disabled it")
+    if modules.offloading_lagged_q_critic is not None and lagged_q_state is None:
+        raise ValueError("enabled checkpoint is missing lagged residual Q state")
+    if modules.offloading_lagged_q_critic is not None:
+        modules.offloading_lagged_q_critic.load_state_dict(lagged_q_state)
 
 
 def _load_trusted_checkpoint(torch: Any, checkpoint: Path) -> dict[str, Any]:
@@ -679,6 +726,8 @@ def _set_eval_mode(modules: CleanTrainingModules) -> None:
     modules.critic.eval()
     if modules.offloading_action_value_critic is not None:
         modules.offloading_action_value_critic.eval()
+    if modules.offloading_lagged_q_critic is not None:
+        modules.offloading_lagged_q_critic.eval()
 
 
 def _select_deterministic_movement_actions(encoded: Any, *, freeze_movement: bool) -> dict[int, int]:

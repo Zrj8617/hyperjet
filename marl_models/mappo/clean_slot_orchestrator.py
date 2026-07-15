@@ -77,6 +77,12 @@ class CleanOffloadingRolloutRecord:
     selected_uav_id: int
     old_log_probability: float
     entropy: float
+    dag_id: str | None = None
+    assignment_time_seconds: float | None = None
+    candidate_features: np.ndarray | None = None
+    critic_global_context: np.ndarray | None = None
+    selected_estimated_finish_time: float | None = None
+    selected_estimated_incremental_delay: float | None = None
 
 
 @dataclass(slots=True)
