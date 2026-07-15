@@ -1,8 +1,11 @@
 # Lagged DAG-Outcome Residual-Q Short-Gate Results
 
-Date: 2026-07-15  
-Branch: `zrj_3_static_ue`  
-Implementation commit: `a08486f18f2816ec8f1e512df11b10fb5aa5d782`  
+Date: 2026-07-15
+
+Branch: `zrj_3_static_ue`
+
+Implementation commit: `a08486f18f2816ec8f1e512df11b10fb5aa5d782`
+
 Decision: **VETO v2; do not launch formal 1000-episode training**
 
 ## 1. Audited artifacts
