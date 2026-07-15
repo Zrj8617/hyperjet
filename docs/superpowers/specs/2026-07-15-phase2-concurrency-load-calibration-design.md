@@ -171,7 +171,8 @@ preserved and stops the matrix; it is never silently skipped or substituted.
 The coarse scan marks a probability provisionally safe only when both policies
 and both seeds finish drain within 500 slots, all metrics are finite, P90 queue
 pressure is below `0.95`, and skipped-ready-task counts do not indicate
-persistent capacity rejection. This relaxed coarse gate only selects the formal
+persistent capacity rejection, operationalized as an arrival-phase skipped
+offloading rate below `1%`. This relaxed coarse gate only selects the formal
 matrix; it never selects the final load.
 
 A higher probability is viable only if all integrity checks pass and, for both
