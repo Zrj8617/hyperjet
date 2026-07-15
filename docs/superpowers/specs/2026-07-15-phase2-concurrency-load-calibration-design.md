@@ -120,30 +120,59 @@ are required. Repository source must not contain result-specific paths.
 
 ### 6.1 Smoke gate
 
-Before the formal matrix, run one seed and both policies for 200 arrival slots
-and up to 500 drain slots at the baseline and stress probabilities. Verify finite
-metrics, correct arrival provenance, functioning hyperedge counters, no RNG
-pairing regression, and no residual process.
+Before the coarse matrix, run one seed and both policies for 30 arrival slots
+and up to 100 drain slots at the baseline and highest stress probabilities.
+Verify finite metrics, correct arrival provenance, functioning hyperedge
+counters, no RNG-pairing regression, and no residual process.
 
-### 6.2 Formal 1000-slot matrix
+### 6.2 Coarse 200-slot boundary scan
 
 Use probabilities:
 
 - `0.0145` -- current baseline;
-- `0.0180` -- medium-low candidate;
-- `0.0220` -- medium-high candidate;
-- `0.0290` -- approximately double-probability stress point.
+- `0.0290` -- two times the baseline;
+- `0.0435` -- three times the baseline;
+- `0.0580` -- four times the baseline;
+- `0.0870` -- six times the baseline stress point.
+
+Use environment seeds `4242, 4243`, policies `greedy` and `random`, 200 arrival
+slots, and up to 500 drain slots:
+
+`5 probabilities x 2 seeds x 2 policies = 20 cells`.
+
+This scan locates the transition from useful additional concurrency to obvious
+saturation. It is not used for the final load claim.
+
+### 6.3 Formal 1000-slot confirmation
+
+The formal matrix contains exactly three probabilities:
+
+1. the current baseline `0.0145`;
+2. the highest coarse-scan probability that satisfies the coarse safety gate;
+3. the next lower non-baseline probability from the fixed coarse list.
+
+If the highest safe candidate is `0.0290`, use `0.0145`, `0.0290`, and `0.0435`
+so the first unsafe neighbor is formally confirmed. If no probability above
+baseline satisfies the coarse gate, use only `0.0145` and `0.0290` to confirm
+the first overload boundary; no higher load may be selected. If every tested
+probability is provisionally safe, use `0.0145`, `0.0580`, and `0.0870`.
 
 Use environment seeds `4242, 4243, 4244, 4245, 4246`, policies `greedy` and
-`random`, 1000 arrival slots, and up to 1000 drain slots:
+`random`, 1000 arrival slots, and up to 1000 drain slots. The normal case is:
 
-`4 probabilities x 5 seeds x 2 policies = 40 cells`.
+`3 probabilities x 5 seeds x 2 policies = 30 cells`.
 
-Cells run sequentially in a persistent server session and write to new
+Coarse and formal cells run sequentially in persistent server sessions and write to new
 timestamped roots. The manifest is fixed before the first cell. A failed cell is
 preserved and stops the matrix; it is never silently skipped or substituted.
 
 ## 7. Load-selection gate
+
+The coarse scan marks a probability provisionally safe only when both policies
+and both seeds finish drain within 500 slots, all metrics are finite, P90 queue
+pressure is below `0.95`, and skipped-ready-task counts do not indicate
+persistent capacity rejection. This relaxed coarse gate only selects the formal
+matrix; it never selects the final load.
 
 A higher probability is viable only if all integrity checks pass and, for both
 policies:
