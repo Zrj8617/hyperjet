@@ -160,7 +160,11 @@ class CleanOffloadingActor(nn.Module):
                     old_log_prob=float(dist.log_prob(selected).item()),
                     entropy=float(dist.entropy().item()),
                     selected_estimated_finish_time=float(selected_estimate.estimated_finish_time),
-                    selected_estimated_incremental_delay=float(selected_estimate.incremental_delay),
+                    selected_estimated_incremental_delay=max(
+                        float(selected_estimate.estimated_finish_time)
+                        - float(current_time_seconds),
+                        0.0,
+                    ),
                 )
             )
 
