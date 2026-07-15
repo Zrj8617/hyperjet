@@ -235,3 +235,15 @@ class CleanLaggedResidualQCritic(nn.Module):
         if inputs.dim() != 2 or int(inputs.shape[1]) != self.input_dim:
             raise ValueError("lagged residual Q input shape mismatch")
         return self.net(inputs).squeeze(-1)
+
+
+def build_rng_neutral_lagged_residual_q_critic(
+    *, input_dim: int, hidden_dim: int = 128
+) -> CleanLaggedResidualQCritic:
+    """Build the auxiliary CPU module without advancing the actor's Torch RNG stream."""
+
+    rng_state = torch.random.get_rng_state().clone()
+    try:
+        return CleanLaggedResidualQCritic(input_dim=input_dim, hidden_dim=hidden_dim)
+    finally:
+        torch.random.set_rng_state(rng_state)

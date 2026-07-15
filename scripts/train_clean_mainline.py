@@ -423,7 +423,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     from marl_models.mappo.clean_offloading_action_value import CleanOffloadingActionValueCritic
     from marl_models.mappo.clean_lagged_residual_q import (
         CleanLaggedOutcomeTracker,
-        CleanLaggedResidualQCritic,
+        build_rng_neutral_lagged_residual_q_critic,
     )
     from marl_models.mappo.clean_ppo import CleanCentralizedCritic, clean_critic_input_dim
     from marl_models.mappo.clean_trainer import CleanPPOUpdater
@@ -453,7 +453,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     )
     lagged_q_enabled = float(args.offloading_lagged_q_coef) > 0.0
     offloading_lagged_q_critic = (
-        CleanLaggedResidualQCritic(
+        build_rng_neutral_lagged_residual_q_critic(
             input_dim=int(offloading_actor.candidate_feature_dim) + int(critic_input_dim),
             hidden_dim=int(args.hidden_dim),
         )

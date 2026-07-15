@@ -88,6 +88,12 @@ Validation:
 - v1 and v2 may not be enabled in the same run;
 - defaults must create no extra module, tracker, target, loss, or optimizer parameter.
 
+When v2 is enabled, constructing its auxiliary Q module must save and restore the
+CPU Torch RNG state. The Q initialization remains reproducible, but its mere
+presence must not shift the actor's subsequent sampling stream before a learned
+Q correction exists. This keeps paired baseline/v2 comparisons isolated at the
+first action.
+
 Recommended first arm:
 
 - `beta_lq=0.25`;

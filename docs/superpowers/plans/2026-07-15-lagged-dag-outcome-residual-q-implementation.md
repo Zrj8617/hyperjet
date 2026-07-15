@@ -14,6 +14,9 @@ Files:
 
 Add the four v2 controls, strict validation, v1/v2 mutual exclusion, config/checkpoint/resume propagation, and deterministic-eval reporting. Prove old checkpoints resolve to disabled defaults and all-zero controls create baseline topology and optimizer parameters.
 
+Build the enabled auxiliary Q module without advancing the CPU Torch RNG stream,
+and test the RNG state for exact equality before and after construction.
+
 ## Task 2: Implement target and tracker primitives
 
 Files:

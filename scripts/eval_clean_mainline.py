@@ -614,7 +614,9 @@ def _build_modules(
     from marl_models.mappo.clean_movement_actor import CleanMovementActor
     from marl_models.mappo.clean_offloading_actor import CleanOffloadingActor
     from marl_models.mappo.clean_offloading_action_value import CleanOffloadingActionValueCritic
-    from marl_models.mappo.clean_lagged_residual_q import CleanLaggedResidualQCritic
+    from marl_models.mappo.clean_lagged_residual_q import (
+        build_rng_neutral_lagged_residual_q_critic,
+    )
     from marl_models.mappo.clean_ppo import CleanCentralizedCritic, clean_critic_input_dim
 
     critic_input_dim = clean_critic_input_dim(int(dims["task_embedding_dim"]), config.NUM_UAVS)
@@ -648,7 +650,7 @@ def _build_modules(
             else None
         ),
         offloading_lagged_q_critic=(
-            CleanLaggedResidualQCritic(
+            build_rng_neutral_lagged_residual_q_critic(
                 input_dim=int(offloading_actor.candidate_feature_dim) + int(critic_input_dim),
                 hidden_dim=int(dims["hidden_dim"]),
             ).to(device)

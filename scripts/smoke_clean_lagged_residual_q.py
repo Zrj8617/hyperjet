@@ -46,6 +46,7 @@ def main() -> int:
         CleanLaggedOutcomeTracker,
         CleanLaggedQSample,
         CleanLaggedResidualQCritic,
+        build_rng_neutral_lagged_residual_q_critic,
         lagged_residual_target,
     )
     from marl_models.mappo.clean_movement_actor import CleanMovementActor
@@ -195,6 +196,20 @@ def main() -> int:
     task_feature_dim = 4
     critic_input_dim = clean_critic_input_dim(embedding_dim, config.NUM_UAVS)
     actor = CleanOffloadingActor(task_embedding_dim=embedding_dim, hidden_dim=hidden_dim)
+    torch.manual_seed(9876)
+    rng_before_q_build = torch.random.get_rng_state().clone()
+    rng_neutral_q = build_rng_neutral_lagged_residual_q_critic(
+        input_dim=actor.candidate_feature_dim + critic_input_dim,
+        hidden_dim=hidden_dim,
+    )
+    _assert(
+        torch.equal(torch.random.get_rng_state(), rng_before_q_build),
+        "auxiliary Q construction must not advance the actor Torch RNG stream",
+    )
+    _assert(
+        torch.equal(rng_neutral_q(torch.randn(2, rng_neutral_q.input_dim)), torch.zeros(2)),
+        "RNG-neutral Q must retain exact zero output initialization",
+    )
     lagged_q = CleanLaggedResidualQCritic(
         input_dim=actor.candidate_feature_dim + critic_input_dim,
         hidden_dim=hidden_dim,
