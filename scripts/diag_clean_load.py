@@ -565,6 +565,10 @@ def run_baseline(
     generated_tasks = len(task_manager.tasks)
     completed_tasks = sum(1 for task in task_manager.tasks.values() if task.state == "COMPLETED")
     queue_len_end = [len(env.executor.uav_queues.get(int(uav.id), [])) for uav in env.uavs]
+    final_ready_backlog = len(env.task_manager.get_ready_tasks())
+    final_active_dag_backlog = sum(
+        1 for job in env.task_manager.jobs.values() if not job.completed
+    )
     scheduled_records = list(env.executor.task_records.values())
     service_times = [
         float(record.upload_time)
@@ -632,9 +636,9 @@ def run_baseline(
         "generated_tasks": generated_tasks,
         "completed_tasks": completed_tasks,
         "avg_flowtime_raw": round(float(np.mean(flowtimes)), 2) if flowtimes else None,
-        "active_dag_backlog_end": active_dag_samples[-1] if active_dag_samples else 0,
+        "active_dag_backlog_end": int(final_active_dag_backlog),
         "active_dag_backlog_max": max(active_dag_samples) if active_dag_samples else 0,
-        "ready_backlog_end": ready_backlog_samples[-1] if ready_backlog_samples else 0,
+        "ready_backlog_end": int(final_ready_backlog),
         "ready_backlog_mean": round(float(np.mean(ready_backlog_samples)), 2) if ready_backlog_samples else 0.0,
         "ready_backlog_max": max(ready_backlog_samples) if ready_backlog_samples else 0,
         "queue_len_end": queue_len_end,

@@ -128,6 +128,14 @@ def main() -> int:
                 all(row["drain_slots_used"] == row["drain_slots_executed"] for row in rows),
                 "drain slot alias mismatch",
             )
+            _assert(
+                all(
+                    row["active_dag_backlog_end"] == 0 and row["ready_backlog_end"] == 0
+                    for row in rows
+                    if row["drain_end_reason"] == "all_completed"
+                ),
+                "completed drain retained final backlog",
+            )
             _assert(all("arrival_slot_funnel" in row for row in rows), "slot funnel missing")
             _assert(all(row["funnel_monotonicity_violation_count"] == 0 for row in rows), "funnel not monotone")
             _assert(all(row["executor_record_count_mismatch_count"] == 0 for row in rows), "executor record mismatch")
