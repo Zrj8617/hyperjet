@@ -36,6 +36,7 @@ class CleanExecutionStepStats:
     """汇总一个时隙内新分配、完成任务、完成 DAG 和能耗等结果。"""
     newly_assigned_tasks: int = 0
     invalid_assignments: int = 0
+    invalid_assignment_reasons: dict[str, int] = field(default_factory=dict)
     completed_tasks: int = 0
     completed_dags: int = 0
     step_task_energy: float = 0.0
@@ -48,6 +49,12 @@ class CleanExecutionStepStats:
     reward_completed_dag_ids: list[str] = field(default_factory=list)
     compute_time_by_uav: dict[int, float] = field(default_factory=dict)
     completed_workload_by_uav: dict[int, float] = field(default_factory=dict)
+
+    def record_invalid_assignment(self, reason: str) -> None:
+        """Record one rejected assignment without changing acceptance behavior."""
+        self.invalid_assignments += 1
+        key = str(reason)
+        self.invalid_assignment_reasons[key] = self.invalid_assignment_reasons.get(key, 0) + 1
 
 
 class CleanTaskExecutor:
@@ -107,7 +114,7 @@ class CleanTaskExecutor:
             try:
                 uav_id = int(raw_uav_id)
             except (TypeError, ValueError):
-                self.latest_stats.invalid_assignments += 1
+                self.latest_stats.record_invalid_assignment("malformed_uav_id")
                 continue
             task = task_manager.get_task(str(task_id))
             if not is_assignment_legal(
@@ -118,7 +125,7 @@ class CleanTaskExecutor:
                 executor=self,
                 service_positions=uav_service_positions,
             ):
-                self.latest_stats.invalid_assignments += 1
+                self.latest_stats.record_invalid_assignment("illegal_assignment")
                 continue
             assert task is not None
 
@@ -134,7 +141,7 @@ class CleanTaskExecutor:
                 ue_service_positions=ue_service_positions,
             )
             if record is None:
-                self.latest_stats.invalid_assignments += 1
+                self.latest_stats.record_invalid_assignment("schedule_record_failure")
                 continue
 
             task_manager.mark_task_queued(task.task_id, uav_id, current_time_seconds)

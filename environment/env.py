@@ -388,6 +388,7 @@ class Env:
             "created_dags": created_dags,
             "newly_assigned_tasks": execution_stats.newly_assigned_tasks,
             "invalid_assignments": execution_stats.invalid_assignments,
+            "invalid_assignment_reasons": dict(execution_stats.invalid_assignment_reasons),
             "completed_tasks": execution_stats.completed_tasks,
             "completed_dags": execution_stats.completed_dags,
             "step_reward": step_reward.reward_total,
