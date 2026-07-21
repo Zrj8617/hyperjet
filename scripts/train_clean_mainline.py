@@ -138,6 +138,12 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
     )
     if counterfactual_coef > 0.0 and lagged_q_coef > 0.0:
         raise ValueError("checkpoint offloading counterfactual v1 and lagged-Q v2 cannot both be enabled")
+    normalize_value_targets = cli.get("normalize_value_targets", False)
+    if not isinstance(normalize_value_targets, bool):
+        raise ValueError("checkpoint normalize_value_targets must be boolean")
+    value_clip_epsilon = float(cli.get("value_clip_epsilon", 0.0))
+    if not math.isfinite(value_clip_epsilon) or value_clip_epsilon < 0.0:
+        raise ValueError("checkpoint value_clip_epsilon must be finite and non-negative")
     return {
         "completed_dag_weight": _validated_completed_dag_weight(
             cli.get("completed_dag_weight", config.REWARD_COMPLETED_DAG_WEIGHT)
@@ -150,6 +156,8 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
         "offloading_lagged_q_loss_coef": lagged_q_loss_coef,
         "offloading_lagged_q_scale_seconds": lagged_q_scale_seconds,
         "offloading_lagged_q_censor_weight": lagged_q_censor_weight,
+        "normalize_value_targets": normalize_value_targets,
+        "value_clip_epsilon": value_clip_epsilon,
     }
 
 
@@ -212,6 +220,23 @@ def validate_resume_experiment_controls(
                 f"resume checkpoint {key.replace('_', ' ')} mismatch: "
                 f"requested {requested}, checkpoint {saved[key]}"
             )
+    requested_normalization = bool(getattr(args, "normalize_value_targets", True))
+    if requested_normalization != bool(saved["normalize_value_targets"]):
+        raise ValueError(
+            "resume checkpoint value-target normalization mismatch: "
+            f"requested {requested_normalization}, checkpoint {saved['normalize_value_targets']}"
+        )
+    requested_value_clip = float(getattr(args, "value_clip_epsilon", 0.2))
+    if not math.isclose(
+        requested_value_clip,
+        float(saved["value_clip_epsilon"]),
+        rel_tol=0.0,
+        abs_tol=1e-12,
+    ):
+        raise ValueError(
+            "resume checkpoint value clip mismatch: "
+            f"requested {requested_value_clip}, checkpoint {saved['value_clip_epsilon']}"
+        )
     return saved
 
 
@@ -227,6 +252,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--clip-ratio", type=float, default=0.2)
     parser.add_argument("--entropy-coef", type=float, default=0.01)
     parser.add_argument("--value-coef", type=float, default=0.5)
+    parser.add_argument(
+        "--normalize-value-targets",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Standardize returns and value predictions together inside each rollout value loss.",
+    )
+    parser.add_argument(
+        "--value-clip-epsilon",
+        type=_nonnegative_finite_float,
+        default=0.2,
+        help="PPO value clipping radius in normalized value units; zero disables clipping.",
+    )
     parser.add_argument(
         "--completed-dag-weight",
         type=_nonnegative_finite_float,
@@ -335,6 +372,8 @@ def build_config_snapshot(args: argparse.Namespace) -> dict[str, Any]:
             "offloading_lagged_q_loss_coef": lagged_q_loss_coef,
             "offloading_lagged_q_scale_seconds": lagged_q_scale_seconds,
             "offloading_lagged_q_censor_weight": lagged_q_censor_weight,
+            "normalize_value_targets": bool(args.normalize_value_targets),
+            "value_clip_epsilon": float(args.value_clip_epsilon),
             "lagged_q_resume_pending_policy": "discard_restarted_episode",
         },
         "clean_scene": {
@@ -487,6 +526,8 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             clip_epsilon=float(args.clip_ratio),
             ppo_epochs=int(args.ppo_epochs),
             value_coef=float(args.value_coef),
+            normalize_value_targets=bool(args.normalize_value_targets),
+            value_clip_epsilon=float(args.value_clip_epsilon),
             movement_entropy_coef=float(args.entropy_coef),
             offloading_entropy_coef=float(args.entropy_coef),
             max_grad_norm=float(args.max_grad_norm),

@@ -437,6 +437,8 @@ def main() -> int:
                 "offloading_lagged_q_loss_coef": 0.5,
                 "offloading_lagged_q_scale_seconds": 200.0,
                 "offloading_lagged_q_censor_weight": 0.25,
+                "normalize_value_targets": True,
+                "value_clip_epsilon": 0.2,
             }
         }
     }

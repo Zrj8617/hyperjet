@@ -36,6 +36,12 @@ class CleanPPOUpdateConfig:
     clip_epsilon: float = 0.2
     ppo_epochs: int = 1
     value_coef: float = 0.5
+    # Keep critic predictions on the environment reward scale for GAE, but
+    # standardize targets and predictions together inside the value loss.
+    normalize_value_targets: bool = False
+    # PPO-style clipping radius in the normalized value space. Zero disables
+    # clipping and preserves the legacy squared-error objective.
+    value_clip_epsilon: float = 0.0
     movement_entropy_coef: float = 0.01
     offloading_entropy_coef: float = 0.01
     max_grad_norm: float = 0.5
@@ -225,6 +231,7 @@ class CleanPPOUpdater:
         self.device = device
         self.update_step = 0
         _validate_action_value_configuration(self.config, self.modules)
+        _validate_value_configuration(self.config)
 
     def update(
         self,
@@ -264,6 +271,13 @@ class CleanPPOUpdater:
             "explained_variance": float(explained_variance),
         }
         returns = torch.as_tensor(returns_np, dtype=torch.float32, device=self.device)
+        old_values = torch.as_tensor(values_np, dtype=torch.float32, device=self.device)
+        if bool(self.config.normalize_value_targets):
+            value_target_mean = returns.mean().detach()
+            value_target_scale = returns.std(unbiased=False).detach().clamp_min(1e-8)
+        else:
+            value_target_mean = torch.zeros((), dtype=torch.float32, device=self.device)
+            value_target_scale = torch.ones((), dtype=torch.float32, device=self.device)
         advantages = torch.as_tensor(advantages_np, dtype=torch.float32, device=self.device)
         if advantages.numel() > 1:
             advantages = (advantages - advantages.mean()) / advantages.std(unbiased=False).clamp_min(1e-8)
@@ -273,18 +287,30 @@ class CleanPPOUpdater:
         diagnostics.update(lagged_correction_diagnostics)
         diagnostics["offloading_lagged_q_pending_count"] = int(lagged_q_pending_count)
         diagnostics["critic_hgnn_detached"] = bool(self.config.detach_critic_hgnn)
+        diagnostics.update(
+            {
+                "value_target_normalization_enabled": bool(self.config.normalize_value_targets),
+                "value_target_normalization_mean": float(value_target_mean.cpu().item()),
+                "value_target_normalization_scale": float(value_target_scale.cpu().item()),
+                "value_clip_epsilon": float(self.config.value_clip_epsilon),
+            }
+        )
         decompose_interval = int(getattr(self.config, "hgnn_grad_decomposition_interval", 0))
         decompose_due = decompose_interval > 0 and (self.update_step % decompose_interval == 0)
         for epoch_index in range(max(int(self.config.ppo_epochs), 1)):
             loss_parts = self._loss(
                 records=records,
                 returns=returns,
+                old_values=old_values,
+                value_target_mean=value_target_mean,
+                value_target_scale=value_target_scale,
                 advantages=advantages,
                 lagged_q_samples=lagged_samples,
                 frozen_lagged_corrections=frozen_lagged_corrections,
             )
             diagnostics.update(loss_parts.get("action_value_diagnostics", {}))
             diagnostics.update(loss_parts.get("lagged_q_diagnostics", {}))
+            diagnostics.update(loss_parts.get("value_diagnostics", {}))
             if decompose_due and epoch_index == 0:
                 # torch.autograd.grad reads the live graph without writing .grad,
                 # so this is behavior-neutral for the optimizer step below.
@@ -471,6 +497,9 @@ class CleanPPOUpdater:
         *,
         records: list[CleanSlotRolloutRecord],
         returns: Any,
+        old_values: Any,
+        value_target_mean: Any,
+        value_target_scale: Any,
         advantages: Any,
         lagged_q_samples: list[Any] | None = None,
         frozen_lagged_corrections: list[Any] | None = None,
@@ -478,6 +507,7 @@ class CleanPPOUpdater:
         per_slot_move_losses: list[Any] = []
         per_slot_move_entropies: list[Any] = []
         value_losses: list[Any] = []
+        value_clip_indicators: list[Any] = []
         offloading_items: list[dict[str, Any]] = []
         action_value_losses_by_slot: dict[int, list[Any]] = {}
         action_value_targets: list[Any] = []
@@ -501,7 +531,16 @@ class CleanPPOUpdater:
             )
             critic_input = _critic_input_tensor(critic_embeddings, record.critic_non_graph_input)
             value = self.modules.critic(critic_input).reshape(-1)[0]
-            value_losses.append(0.5 * (value - returns[slot_idx]).pow(2))
+            value_loss, was_clipped = _normalized_clipped_value_loss(
+                value=value,
+                old_value=old_values[slot_idx],
+                target=returns[slot_idx],
+                target_mean=value_target_mean,
+                target_scale=value_target_scale,
+                clip_epsilon=float(self.config.value_clip_epsilon),
+            )
+            value_losses.append(value_loss)
+            value_clip_indicators.append(was_clipped)
 
             move_losses: list[Any] = []
             move_entropies: list[Any] = []
@@ -698,6 +737,18 @@ class CleanPPOUpdater:
             "total_loss": total_loss,
             "action_value_diagnostics": action_value_diagnostics,
             "lagged_q_diagnostics": lagged_q_diagnostics,
+            "value_diagnostics": {
+                "value_clip_fraction": float(
+                    torch.stack(value_clip_indicators).mean().detach().cpu().item()
+                ) if value_clip_indicators else 0.0,
+                "value_normalized_target_mean": float(
+                    ((returns - value_target_mean) / value_target_scale).mean().detach().cpu().item()
+                ),
+                "value_normalized_target_std": float(
+                    ((returns - value_target_mean) / value_target_scale)
+                    .std(unbiased=False).detach().cpu().item()
+                ),
+            },
         }
 
     def _stats_from_loss_parts(
@@ -762,6 +813,37 @@ def _validate_action_value_configuration(
         raise ValueError("lagged residual-Q module presence must match its enabled coefficient pair")
     if coefficient_enabled and lagged_coefficients_enabled:
         raise ValueError("offloading counterfactual v1 and lagged-Q v2 are mutually exclusive")
+
+
+def _validate_value_configuration(config: CleanPPOUpdateConfig) -> None:
+    if not isinstance(config.normalize_value_targets, bool):
+        raise ValueError("normalize_value_targets must be boolean")
+    clip_epsilon = float(config.value_clip_epsilon)
+    if not np.isfinite(clip_epsilon) or clip_epsilon < 0.0:
+        raise ValueError("value clip epsilon must be finite and non-negative")
+
+
+def _normalized_clipped_value_loss(
+    *,
+    value: Any,
+    old_value: Any,
+    target: Any,
+    target_mean: Any,
+    target_scale: Any,
+    clip_epsilon: float,
+) -> tuple[Any, Any]:
+    """PPO value loss without changing the critic's raw reward-scale output."""
+    normalized_value = (value - target_mean) / target_scale
+    normalized_old_value = (old_value - target_mean) / target_scale
+    normalized_target = (target - target_mean) / target_scale
+    loss_unclipped = (normalized_value - normalized_target).pow(2)
+    if float(clip_epsilon) <= 0.0:
+        return 0.5 * loss_unclipped, torch.zeros((), dtype=torch.float32, device=value.device)
+    delta = normalized_value - normalized_old_value
+    clipped_value = normalized_old_value + delta.clamp(-float(clip_epsilon), float(clip_epsilon))
+    loss_clipped = (clipped_value - normalized_target).pow(2)
+    was_clipped = (delta.abs() > float(clip_epsilon)).to(dtype=torch.float32)
+    return 0.5 * torch.maximum(loss_unclipped, loss_clipped), was_clipped
 
 
 def _lagged_q_regression_loss(
