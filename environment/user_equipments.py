@@ -77,6 +77,12 @@ class UE:
         self.active_dag_id = None
         self.service_waiting = False
 
+    def sync_service_waiting(self, active_dag_ids: list[str]) -> None:
+        """Synchronize the compatibility UE marker from authoritative DAG state."""
+        normalized = [str(active_dag_id) for active_dag_id in active_dag_ids]
+        self.active_dag_id = normalized[-1] if normalized else None
+        self.service_waiting = bool(normalized)
+
     def _sample_uniform_position(self) -> np.ndarray:
         """在矩形地图内均匀采样一个地面三维坐标，z 轴固定为 0。"""
         return np.array(

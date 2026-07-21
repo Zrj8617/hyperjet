@@ -78,6 +78,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Comma-separated DAG_BASE_ARRIVAL_PROB values for --sweep.",
     )
     parser.add_argument(
+        "--active-dag-caps",
+        type=str,
+        default="1",
+        help="Comma-separated positive per-UE active-DAG caps for --sweep.",
+    )
+    parser.add_argument(
         "--input-ranges",
         type=str,
         default=f"{config.INPUT_DATA_SIZE_MB_RANGE[0]}:{config.INPUT_DATA_SIZE_MB_RANGE[1]}",
@@ -198,12 +204,18 @@ def _per_uav_aggregate(samples: list[list[int]], uav_count: int, prefix: str) ->
     }
 
 
-def run_baseline(policy: str, slots: int, seed: int, drain_slots: int = 0) -> dict:
+def run_baseline(
+    policy: str,
+    slots: int,
+    seed: int,
+    drain_slots: int = 0,
+    max_active_dags_per_ue: int = 1,
+) -> dict:
     np.random.seed(int(seed))
     # Keep policy sampling out of the environment RNG stream so greedy/random
     # diagnostics do not diverge merely because random offloading consumes RNG.
     policy_rng = np.random.default_rng(int(seed) + 1_000_003)
-    env = Env()
+    env = Env(max_active_dags_per_ue=max_active_dags_per_ue)
     env.reset()
     graph_builder = CleanGraphBuilder()
 
@@ -247,10 +259,7 @@ def run_baseline(policy: str, slots: int, seed: int, drain_slots: int = 0) -> di
         nonlocal capacity_blocked_task_slot_total, funnel_monotonicity_violation_count
         nonlocal executor_record_count_mismatch_count, executor_invalid_reason_mismatch_count
         eligible_ues = sum(
-            1
-            for ue in env.ues
-            if ue.active_dag_id is None
-            and env.task_manager.get_active_job_for_ue(ue.id) is None
+            1 for ue in env.ues if env.task_manager.can_accept_dag_for_ue(ue.id)
         )
         context = env.prepare_slot_state()
         graph_snapshot = graph_builder.build(
@@ -607,6 +616,7 @@ def run_baseline(policy: str, slots: int, seed: int, drain_slots: int = 0) -> di
         "policy": policy,
         "slots": int(slots),
         "seed": int(seed),
+        "max_active_dags_per_ue": int(env.max_active_dags_per_ue),
         "dag_base_arrival_prob": float(config.DAG_BASE_ARRIVAL_PROB),
         "dag_hotspot_arrival_multiplier": float(config.DAG_HOTSPOT_ARRIVAL_MULTIPLIER),
         "drain_slots_max": int(drain_slots),
@@ -739,6 +749,15 @@ def parse_float_csv(raw: str) -> list[float]:
     return values
 
 
+def parse_positive_int_csv(raw: str) -> list[int]:
+    values = [int(item.strip()) for item in str(raw).split(",") if item.strip()]
+    if not values or any(value <= 0 for value in values):
+        raise ValueError("Expected at least one positive integer value.")
+    if len(set(values)) != len(values):
+        raise ValueError("Active-DAG caps must not contain duplicates.")
+    return values
+
+
 def parse_range_csv(raw: str) -> list[tuple[float, float]]:
     ranges: list[tuple[float, float]] = []
     for item in str(raw).split(","):
@@ -791,8 +810,9 @@ def _with_sweep_config(
     config.TASK_CONSTANT_RANGE = (int(task_constant_range[0]), int(task_constant_range[1]))
 
 
-def _scenario_key(row: dict) -> tuple[float, tuple[float, float], tuple[float, float], tuple[int, int]]:
+def _scenario_key(row: dict) -> tuple[int, float, tuple[float, float], tuple[float, float], tuple[int, int]]:
     return (
+        int(row["max_active_dags_per_ue"]),
         float(row["arrival_prob"]),
         tuple(float(value) for value in row["input_range"]),
         tuple(float(value) for value in row["output_range"]),
@@ -804,17 +824,52 @@ def _mean(values: list[float]) -> float:
     return float(np.mean(values)) if values else 0.0
 
 
+def _cap_pair_key(row: dict) -> tuple:
+    """Identify one paired cap cell while excluding the cap itself."""
+    return (
+        float(row["arrival_prob"]),
+        tuple(float(value) for value in row["input_range"]),
+        tuple(float(value) for value in row["output_range"]),
+        tuple(int(value) for value in row["task_constant_range"]),
+        int(row["seed"]),
+        str(row["policy"]),
+    )
+
+
 def summarize_sweep(rows: list[dict]) -> list[dict]:
-    grouped: dict[tuple[float, tuple[float, float], tuple[float, float], tuple[int, int]], list[dict]] = defaultdict(list)
+    grouped: dict[tuple[int, float, tuple[float, float], tuple[float, float], tuple[int, int]], list[dict]] = defaultdict(list)
     for row in rows:
         grouped[_scenario_key(row)].append(row)
 
+    cap_one_by_pair = {
+        _cap_pair_key(row): row
+        for row in rows
+        if int(row["max_active_dags_per_ue"]) == 1
+    }
     summaries: list[dict] = []
-    for (arrival_prob, input_range, output_range, task_constant_range), group in sorted(grouped.items()):
+    for (active_dag_cap, arrival_prob, input_range, output_range, task_constant_range), group in sorted(grouped.items()):
         by_policy = {policy: [row for row in group if row["policy"] == policy] for policy in ("greedy", "random")}
         greedy_rows = by_policy.get("greedy", [])
         random_rows = by_policy.get("random", [])
         all_rows = greedy_rows + random_rows
+        paired_deltas = [
+            float(row["executor_accepted_per_arrival_slot_mean"])
+            - float(cap_one_by_pair[_cap_pair_key(row)]["executor_accepted_per_arrival_slot_mean"])
+            for row in all_rows
+            if _cap_pair_key(row) in cap_one_by_pair
+        ]
+        greedy_paired_deltas = [
+            float(row["executor_accepted_per_arrival_slot_mean"])
+            - float(cap_one_by_pair[_cap_pair_key(row)]["executor_accepted_per_arrival_slot_mean"])
+            for row in greedy_rows
+            if _cap_pair_key(row) in cap_one_by_pair
+        ]
+        random_paired_deltas = [
+            float(row["executor_accepted_per_arrival_slot_mean"])
+            - float(cap_one_by_pair[_cap_pair_key(row)]["executor_accepted_per_arrival_slot_mean"])
+            for row in random_rows
+            if _cap_pair_key(row) in cap_one_by_pair
+        ]
         reason_keys = sorted(
             {
                 str(reason)
@@ -827,6 +882,7 @@ def summarize_sweep(rows: list[dict]) -> list[dict]:
             for reason in reason_keys
         }
         summary = {
+            "max_active_dags_per_ue": active_dag_cap,
             "arrival_prob": arrival_prob,
             "input_range": list(input_range),
             "output_range": list(output_range),
@@ -885,6 +941,10 @@ def summarize_sweep(rows: list[dict]) -> list[dict]:
             "executor_accepted_per_slot_mean": round(
                 _mean([float(row["executor_accepted_per_arrival_slot_mean"]) for row in all_rows]), 3
             ),
+            "paired_executor_accepted_delta_vs_cap1_mean": round(_mean(paired_deltas), 4),
+            "greedy_paired_executor_accepted_delta_vs_cap1_mean": round(_mean(greedy_paired_deltas), 4),
+            "random_paired_executor_accepted_delta_vs_cap1_mean": round(_mean(random_paired_deltas), 4),
+            "paired_executor_accepted_delta_cell_count": len(paired_deltas),
             "greedy_executor_accepted_per_slot_mean": round(
                 _mean([float(row["executor_accepted_per_arrival_slot_mean"]) for row in greedy_rows]), 3
             ),
@@ -923,6 +983,12 @@ def summarize_sweep(rows: list[dict]) -> list[dict]:
             "arrival_end_active_dag_backlog_mean": round(
                 _mean([float(row["active_dag_backlog_arrival_end"]) for row in all_rows]), 2
             ),
+            "final_ready_backlog_mean": round(
+                _mean([float(row["ready_backlog_end"]) for row in all_rows]), 2
+            ),
+            "final_active_dag_backlog_mean": round(
+                _mean([float(row["active_dag_backlog_end"]) for row in all_rows]), 2
+            ),
             "ready_backlog_final50_slope_mean": round(
                 _mean([float(row["ready_backlog_final50_slope_per_slot"]) for row in all_rows]), 6
             ),
@@ -942,6 +1008,9 @@ def summarize_sweep(rows: list[dict]) -> list[dict]:
             "partition_hyperedges_mean": round(
                 _mean([float(row["partition_hyperedges_per_arrival_slot_mean"]) for row in all_rows]), 3
             ),
+            "total_hyperedges_mean": round(
+                _mean([float(row["total_hyperedges_per_arrival_slot_mean"]) for row in all_rows]), 3
+            ),
             "partition_nonzero_slot_ratio_mean": round(
                 _mean([float(row["partition_hyperedge_nonzero_slot_ratio"]) for row in all_rows]), 4
             ),
@@ -956,6 +1025,16 @@ def summarize_sweep(rows: list[dict]) -> list[dict]:
                     for row in all_rows
                 )
             ),
+            "feasible": bool(
+                all(
+                    row.get("drain_end_reason") == "all_completed"
+                    and int(row["active_dag_backlog_end"]) == 0
+                    and int(row["ready_backlog_end"]) == 0
+                    and np.isfinite(float(row["executor_accepted_per_arrival_slot_mean"]))
+                    and np.isfinite(float(row["capacity_blocked_task_slot_ratio"]))
+                    for row in all_rows
+                )
+            ),
         }
         summaries.append(summary)
     return summaries
@@ -963,13 +1042,14 @@ def summarize_sweep(rows: list[dict]) -> list[dict]:
 
 def print_sweep_table(summaries: list[dict]) -> None:
     header = (
-        "arrival | arr_g | arr_r | final_g | final_r | accept_g | accept_r | "
+        "cap | arrival | arr_g | arr_r | final_g | final_r | accept_g | accept_r | delta1 | "
         "legal_util | blocked | full_post | full_run | ready_end | drain"
     )
     print("SWEEP_TABLE " + header)
     for row in summaries:
         print(
             "SWEEP_TABLE "
+            f"{row['max_active_dags_per_ue']} | "
             f"{row['arrival_prob']:.4g} | "
             f"{row['greedy_arrival_completion_mean']:.3f} | "
             f"{row['random_arrival_completion_mean']:.3f} | "
@@ -977,6 +1057,7 @@ def print_sweep_table(summaries: list[dict]) -> None:
             f"{row['random_final_completion_mean']:.3f} | "
             f"{row['greedy_executor_accepted_per_slot_mean']:.2f} | "
             f"{row['random_executor_accepted_per_slot_mean']:.2f} | "
+            f"{row['paired_executor_accepted_delta_vs_cap1_mean']:+.3f} | "
             f"{row['legal_capacity_utilization_mean']:.3f} | "
             f"{row['capacity_blocked_task_slot_ratio_mean']:.3f} | "
             f"{row['post_decision_all_uav_full_slot_fraction_mean']:.3f} | "
@@ -1009,7 +1090,7 @@ def _prepare_sweep_output(args: argparse.Namespace, cells: list[dict]) -> Path |
         raise FileExistsError(f"--output-dir must be new or empty: {output_dir}")
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest = {
-        "schema_version": 2,
+        "schema_version": 3,
         "diagnostic": "phase2b_ready_to_offload_funnel_stage1",
         "created_at_utc": _utc_now(),
         "git_head": _git_value("rev-parse", "HEAD"),
@@ -1025,6 +1106,7 @@ def _prepare_sweep_output(args: argparse.Namespace, cells: list[dict]) -> Path |
             "num_uavs": int(config.NUM_UAVS),
             "time_slot_duration": float(config.TIME_SLOT_DURATION),
             "queue_capacity_per_uav": int(config.CLEAN_MAX_QUEUE_PER_UAV),
+            "active_dag_caps": parse_positive_int_csv(args.active_dag_caps),
             "kahypar_enabled": bool(config.ENABLE_KAHYPAR_PARTITION_HYPEREDGES),
         },
         "cell_count": len(cells),
@@ -1050,20 +1132,21 @@ def _write_sweep_reports(output_dir: Path, rows: list[dict], summaries: list[dic
         "",
         f"Cells: {len(rows)}",
         "",
-        "| arrival | arrival comp. G/R | final comp. G/R | accepted/slot G/R | legal util. | blocked ratio | post-full frac. | longest full | ready end | drained |",
-        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|",
+        "| cap | arrival | arrival comp. G/R | final comp. G/R | accepted/slot G/R | paired delta vs cap 1 | legal util. | blocked ratio | post-full frac. | longest full | ready end | feasible |",
+        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|",
     ]
     for row in summaries:
         lines.append(
-            f"| {row['arrival_prob']:.4g} | "
+            f"| {row['max_active_dags_per_ue']} | {row['arrival_prob']:.4g} | "
             f"{row['greedy_arrival_completion_mean']:.3f}/{row['random_arrival_completion_mean']:.3f} | "
             f"{row['greedy_final_completion_mean']:.3f}/{row['random_final_completion_mean']:.3f} | "
             f"{row['greedy_executor_accepted_per_slot_mean']:.2f}/{row['random_executor_accepted_per_slot_mean']:.2f} | "
+            f"{row['paired_executor_accepted_delta_vs_cap1_mean']:+.3f} | "
             f"{row['legal_capacity_utilization_mean']:.3f} | "
             f"{row['capacity_blocked_task_slot_ratio_mean']:.3f} | "
             f"{row['post_decision_all_uav_full_slot_fraction_mean']:.3f} | "
             f"{row['post_decision_longest_all_full_run_max']} | "
-            f"{row['arrival_end_ready_backlog_mean']:.1f} | {row['drain_all_completed']} |"
+            f"{row['arrival_end_ready_backlog_mean']:.1f} | {row['feasible']} |"
         )
     lines.extend(
         [
@@ -1075,6 +1158,7 @@ def _write_sweep_reports(output_dir: Path, rows: list[dict], summaries: list[dic
 
 
 def run_sweep(args: argparse.Namespace) -> int:
+    active_dag_caps = parse_positive_int_csv(args.active_dag_caps)
     arrival_probs = parse_float_csv(args.arrival_probs)
     input_ranges = parse_range_csv(args.input_ranges)
     output_ranges = parse_range_csv(args.output_ranges)
@@ -1088,6 +1172,7 @@ def run_sweep(args: argparse.Namespace) -> int:
     cells = [
         {
             "cell_index": index,
+            "max_active_dags_per_ue": int(active_dag_cap),
             "arrival_prob": float(arrival_prob),
             "input_range": [float(value) for value in input_range],
             "output_range": [float(value) for value in output_range],
@@ -1097,9 +1182,10 @@ def run_sweep(args: argparse.Namespace) -> int:
             "arrival_slots": int(args.slots),
             "drain_slots": int(args.drain_slots),
         }
-        for index, (arrival_prob, input_range, output_range, task_constant_range, seed, policy) in enumerate(
+        for index, (active_dag_cap, arrival_prob, input_range, output_range, task_constant_range, seed, policy) in enumerate(
             (
-                (arrival_prob, input_range, output_range, task_constant_range, seed, policy)
+                (active_dag_cap, arrival_prob, input_range, output_range, task_constant_range, seed, policy)
+                for active_dag_cap in active_dag_caps
                 for arrival_prob in arrival_probs
                 for input_range in input_ranges
                 for output_range in output_ranges
@@ -1121,52 +1207,54 @@ def run_sweep(args: argparse.Namespace) -> int:
     }
     rows: list[dict] = []
     try:
-        for arrival_prob in arrival_probs:
-            for input_range in input_ranges:
-                for output_range in output_ranges:
-                    for task_constant_range in task_constant_ranges:
-                        _with_sweep_config(
-                            arrival_prob=arrival_prob,
-                            input_range=input_range,
-                            output_range=output_range,
-                            task_constant_range=task_constant_range,
-                        )
-                        for seed in seeds:
-                            for policy in args.policies:
-                                result = run_baseline(
-                                    policy=policy,
-                                    slots=args.slots,
-                                    seed=seed,
-                                    drain_slots=args.drain_slots,
-                                )
-                                result["arrival_prob"] = float(arrival_prob)
-                                result["input_range"] = [float(input_range[0]), float(input_range[1])]
-                                result["output_range"] = [float(output_range[0]), float(output_range[1])]
-                                result["task_constant_range"] = [
-                                    int(task_constant_range[0]),
-                                    int(task_constant_range[1]),
-                                ]
-                                rows.append(result)
-                                console_result = {
-                                    key: value for key, value in result.items() if key != "arrival_slot_funnel"
-                                }
-                                print(
-                                    "SWEEP_JSON " + json.dumps(console_result, ensure_ascii=True, sort_keys=True),
-                                    flush=True,
-                                )
-                                if output_dir is not None:
-                                    with (output_dir / "sweep_rows.jsonl").open("a", encoding="utf-8") as handle:
-                                        handle.write(json.dumps(result, ensure_ascii=True, sort_keys=True) + "\n")
-                                    _write_json(
-                                        output_dir / "progress.json",
-                                        {
-                                            "status": "running",
-                                            "completed_cells": len(rows),
-                                            "total_cells": len(cells),
-                                            "last_cell": cells[len(rows) - 1],
-                                            "updated_at_utc": _utc_now(),
-                                        },
+        for active_dag_cap in active_dag_caps:
+            for arrival_prob in arrival_probs:
+                for input_range in input_ranges:
+                    for output_range in output_ranges:
+                        for task_constant_range in task_constant_ranges:
+                            _with_sweep_config(
+                                arrival_prob=arrival_prob,
+                                input_range=input_range,
+                                output_range=output_range,
+                                task_constant_range=task_constant_range,
+                            )
+                            for seed in seeds:
+                                for policy in args.policies:
+                                    result = run_baseline(
+                                        policy=policy,
+                                        slots=args.slots,
+                                        seed=seed,
+                                        drain_slots=args.drain_slots,
+                                        max_active_dags_per_ue=active_dag_cap,
                                     )
+                                    result["arrival_prob"] = float(arrival_prob)
+                                    result["input_range"] = [float(input_range[0]), float(input_range[1])]
+                                    result["output_range"] = [float(output_range[0]), float(output_range[1])]
+                                    result["task_constant_range"] = [
+                                        int(task_constant_range[0]),
+                                        int(task_constant_range[1]),
+                                    ]
+                                    rows.append(result)
+                                    console_result = {
+                                        key: value for key, value in result.items() if key != "arrival_slot_funnel"
+                                    }
+                                    print(
+                                        "SWEEP_JSON " + json.dumps(console_result, ensure_ascii=True, sort_keys=True),
+                                        flush=True,
+                                    )
+                                    if output_dir is not None:
+                                        with (output_dir / "sweep_rows.jsonl").open("a", encoding="utf-8") as handle:
+                                            handle.write(json.dumps(result, ensure_ascii=True, sort_keys=True) + "\n")
+                                        _write_json(
+                                            output_dir / "progress.json",
+                                            {
+                                                "status": "running",
+                                                "completed_cells": len(rows),
+                                                "total_cells": len(cells),
+                                                "last_cell": cells[len(rows) - 1],
+                                                "updated_at_utc": _utc_now(),
+                                            },
+                                        )
     except Exception as exc:
         if output_dir is not None:
             _write_json(

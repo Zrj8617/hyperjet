@@ -45,7 +45,7 @@ def main() -> None:
         config.DAG_BASE_ARRIVAL_PROB = 1.0
         ue = env.ues[0]
         for other_ue in env.ues[1:]:
-            other_ue.active_dag_id = "preexisting_dag"
+            other_ue.get_arrival_probability = lambda *_args: 0.0
         ue.pos[:2] = env.hotspot_center.copy()
         source_at_arrival = ue.pos[:2].copy()
         created_count = env._process_clean_dag_arrivals()
@@ -71,7 +71,12 @@ def main() -> None:
     moving_ue.velocity = moving_ue._velocity_from_polar()
     normal_velocity_norm = float(np.linalg.norm(moving_ue.velocity))
 
-    moving_ue.enter_service_waiting("manual_dag")
+    manual_job = env.task_manager.create_dag_for_ue(
+        moving_ue.id,
+        moving_ue.pos[:2],
+        arrival_time=env.current_time_seconds,
+    )
+    moving_ue.enter_service_waiting(manual_job.dag_id)
     moving_ue.speed = float(config.UE_WALK_SPEED_MEAN)
     moving_ue.theta = 0.0
     moving_ue.velocity = moving_ue._velocity_from_polar()
@@ -80,7 +85,8 @@ def main() -> None:
     assert waiting_velocity_norm <= normal_velocity_norm * config.UE_SERVICE_WAITING_SPEED_SCALE + 1e-6
     assert waiting_velocity_norm > 0.0
 
-    env.release_ue_after_dag_completed("manual_dag")
+    manual_job.completed = True
+    env.release_ue_after_dag_completed(manual_job.dag_id)
     assert moving_ue.active_dag_id is None
     assert not moving_ue.service_waiting
 

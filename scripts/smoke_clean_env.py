@@ -44,7 +44,7 @@ def main() -> None:
         target.pos[:2] = env.hotspot_center.copy()
         source_pos = target.pos[:2].copy()
         for ue in env.ues[1:]:
-            ue.active_dag_id = "blocked_for_smoke"
+            ue.get_arrival_probability = lambda *_args: 0.0
 
         created = env._process_clean_dag_arrivals()
         assert created == 1
@@ -64,7 +64,6 @@ def main() -> None:
         assert len([job for job in env.task_manager.jobs.values() if job.ue_id == target.id]) == 1
 
         outside = env.ues[1]
-        outside.active_dag_id = None
         outside.pos[:2] = np.array([0.0, 0.0], dtype=np.float32)
         setattr(outside, "is_hotspot", True)
         config.DAG_BASE_ARRIVAL_PROB = 0.0

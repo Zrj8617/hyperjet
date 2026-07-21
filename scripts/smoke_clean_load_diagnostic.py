@@ -85,6 +85,8 @@ def main() -> int:
                     "random",
                     "--arrival-probs",
                     "0.5,1.0",
+                    "--active-dag-caps",
+                    "1,2",
                     "--input-ranges",
                     "0.75:14",
                     "--output-ranges",
@@ -100,10 +102,15 @@ def main() -> int:
             progress = json.loads((output_dir / "progress.json").read_text(encoding="utf-8"))
             rows = [json.loads(line) for line in (output_dir / "sweep_rows.jsonl").read_text().splitlines()]
             summaries = json.loads((output_dir / "sweep_summary.json").read_text(encoding="utf-8"))
-            _assert(manifest["cell_count"] == 4, "manifest cell count mismatch")
-            _assert(manifest["schema_version"] == 2, "manifest schema mismatch")
-            _assert(progress["status"] == "completed" and progress["completed_cells"] == 4, "progress mismatch")
-            _assert(len(rows) == 4 and len(summaries) == 2, "persisted row/summary count mismatch")
+            _assert(manifest["cell_count"] == 8, "manifest cell count mismatch")
+            _assert(manifest["schema_version"] == 3, "manifest schema mismatch")
+            _assert(progress["status"] == "completed" and progress["completed_cells"] == 8, "progress mismatch")
+            _assert(len(rows) == 8 and len(summaries) == 4, "persisted row/summary count mismatch")
+            _assert({row["max_active_dags_per_ue"] for row in rows} == {1, 2}, "cap provenance missing")
+            _assert(
+                all("paired_executor_accepted_delta_vs_cap1_mean" in summary for summary in summaries),
+                "paired cap delta missing",
+            )
             _assert(all(row["drain_slots_max"] == 2 for row in rows), "sweep did not forward drain slots")
             _assert(all("active_dags_per_arrival_slot_p90" in row for row in rows), "concurrency metrics missing")
             _assert(all("partition_status_counts" in row for row in rows), "partition provenance missing")
@@ -156,7 +163,7 @@ def main() -> int:
                     )
             paired = {}
             for row in rows:
-                key = (row["dag_base_arrival_prob"], row["seed"])
+                key = (row["max_active_dags_per_ue"], row["dag_base_arrival_prob"], row["seed"])
                 paired.setdefault(key, []).append(row)
             _assert(
                 all(len(group) == 2 and group[0]["generated_dags"] == group[1]["generated_dags"] for group in paired.values()),

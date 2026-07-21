@@ -34,6 +34,7 @@ class Env:
         self,
         completed_dag_weight: float | None = None,
         freeze_ue_mobility: bool = False,
+        max_active_dags_per_ue: int = 1,
     ) -> None:
         """初始化环境状态、任务管理器和指标组件。"""
         self._time_step: int = 0
@@ -45,7 +46,9 @@ class Env:
         self._initial_hotspot_ue_count: int = 0
         self._ues: list[UE] = []
         self._uavs: list[UAV] = []
-        self._task_manager: DAGTaskManager = DAGTaskManager()
+        self._task_manager: DAGTaskManager = DAGTaskManager(
+            max_active_dags_per_ue=max_active_dags_per_ue
+        )
         self._executor: CleanTaskExecutor = CleanTaskExecutor()
         self._metrics: CleanMetricsTracker = CleanMetricsTracker(
             completed_dag_weight=completed_dag_weight
@@ -83,6 +86,11 @@ class Env:
     def task_manager(self) -> DAGTaskManager:
         """返回 DAG 任务管理器。"""
         return self._task_manager
+
+    @property
+    def max_active_dags_per_ue(self) -> int:
+        """Return the immutable run-level per-UE active-DAG cap."""
+        return int(self._task_manager.max_active_dags_per_ue)
 
     @property
     def executor(self) -> CleanTaskExecutor:
@@ -211,6 +219,7 @@ class Env:
             "step_reward": 0.0,
             "episode_reward": 0.0,
             "freeze_ue_mobility": bool(self.freeze_ue_mobility),
+            "max_active_dags_per_ue": int(self.max_active_dags_per_ue),
             "initial_hotspot_ue_count": int(self._initial_hotspot_ue_count),
         }
         return self._get_obs()
@@ -469,9 +478,7 @@ class Env:
 
         # 每个空闲用户根据其相对热点的位置独立计算任务到达概率。
         for ue in self._ues:
-            if ue.active_dag_id is not None:
-                continue
-            if self._task_manager.get_active_job_for_ue(ue.id) is not None:
+            if not self._task_manager.can_accept_dag_for_ue(ue.id):
                 continue
             arrival_prob = ue.get_arrival_probability(self.hotspot_center, self.hotspot_radius)
             if np.random.random() >= arrival_prob:
@@ -494,10 +501,18 @@ class Env:
 
     def release_ue_after_dag_completed(self, dag_id: str) -> None:
         """在 DAG 完成后解除对应用户设备的等待状态。"""
+        job = self._task_manager.get_job(dag_id)
+        if job is None:
+            return
         for ue in self._ues:
-            if ue.active_dag_id == dag_id:
-                ue.release_service_waiting(dag_id)
-                return
+            if int(ue.id) != int(job.ue_id):
+                continue
+            active_ids = [
+                active_job.dag_id
+                for active_job in self._task_manager.get_active_jobs_for_ue(ue.id)
+            ]
+            ue.sync_service_waiting(active_ids)
+            return
 
     def _get_obs(self) -> list[np.ndarray]:
         """构建所有无人机的归一化环境观测。

@@ -155,8 +155,13 @@ class DAGTaskManager:
     environment/env.py.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, max_active_dags_per_ue: int = 1) -> None:
         """创建空的 DAG、任务和 UE 索引，并初始化编号和版本计数器。"""
+        if isinstance(max_active_dags_per_ue, bool) or not isinstance(max_active_dags_per_ue, int):
+            raise ValueError("max_active_dags_per_ue must be a positive integer")
+        if max_active_dags_per_ue <= 0:
+            raise ValueError("max_active_dags_per_ue must be a positive integer")
+        self.max_active_dags_per_ue: int = int(max_active_dags_per_ue)
         self._jobs: dict[str, DAGJob] = {}
         self._tasks: dict[str, TaskNode] = {}
         self._tasks_by_ue: dict[int, list[str]] = {}
@@ -209,12 +214,14 @@ class DAGTaskManager:
         中文：为指定 UE 随机生成一个分层 DAG，采样任务属性和链路带宽，
         建立依赖、k 跳超边和关键路径；同一 UE 同时只能有一个活动 DAG。
 
-        A UE may have at most one active DAG. `source_pos` is copied and remains
-        fixed for the DAG lifetime.
+        A UE may have at most the configured run-level number of active DAGs.
+        `source_pos` is copied and remains fixed for the DAG lifetime.
         """
         actual_arrival = float(current_time_step if current_time_step is not None else (arrival_time or 0.0))
-        if self._ue_has_active_dag(ue_id):
-            raise ValueError(f"UE {ue_id} already has an active DAG.")
+        if not self.can_accept_dag_for_ue(ue_id):
+            raise ValueError(
+                f"UE {ue_id} already has {self.max_active_dags_per_ue} active DAG(s)."
+            )
 
         self._job_counter += 1
         dag_id = f"dag_{int(actual_arrival)}_{ue_id}_{self._job_counter}"
@@ -292,7 +299,7 @@ class DAGTaskManager:
         created_dag_ids: list[str] = []
         for ue in ues:
             ue_id = int(getattr(ue, "id"))
-            if self._ue_has_active_dag(ue_id):
+            if not self.can_accept_dag_for_ue(ue_id):
                 continue
             arrival_prob = float(np.clip(config.DAG_BASE_ARRIVAL_PROB, 0.0, 1.0))
             if np.random.random() >= arrival_prob:
@@ -341,10 +348,24 @@ class DAGTaskManager:
 
     def get_active_job_for_ue(self, ue_id: int) -> DAGJob | None:
         """查找 UE 当前尚未完成的 DAG。"""
-        for job in self._jobs.values():
-            if job.ue_id == ue_id and not job.completed:
-                return job
-        return None
+        active_jobs = self.get_active_jobs_for_ue(ue_id)
+        return active_jobs[0] if active_jobs else None
+
+    def get_active_jobs_for_ue(self, ue_id: int) -> list[DAGJob]:
+        """Return all unfinished DAGs for one UE in creation order."""
+        return [
+            job
+            for job in self._jobs.values()
+            if job.ue_id == int(ue_id) and not job.completed
+        ]
+
+    def active_dag_count_for_ue(self, ue_id: int) -> int:
+        """Return the authoritative number of unfinished DAGs for one UE."""
+        return len(self.get_active_jobs_for_ue(ue_id))
+
+    def can_accept_dag_for_ue(self, ue_id: int) -> bool:
+        """Return whether the run-level per-UE active-DAG cap has room."""
+        return self.active_dag_count_for_ue(ue_id) < self.max_active_dags_per_ue
 
     def get_job_tasks(self, dag_id: str) -> list[TaskNode]:
         """按 DAG 中记录的顺序返回其仍然存在的任务节点。"""
@@ -576,7 +597,7 @@ class DAGTaskManager:
         """
         for ue in ues:
             ue_id = int(getattr(ue, "id"))
-            if self._ue_has_active_dag(ue_id):
+            if not self.can_accept_dag_for_ue(ue_id):
                 continue
             if np.random.random() < float(np.clip(config.DAG_BASE_ARRIVAL_PROB, 0.0, 1.0)):
                 pos = np.asarray(getattr(ue, "pos"), dtype=np.float32).reshape(-1)[:2]
@@ -598,10 +619,7 @@ class DAGTaskManager:
 
     def _ue_has_active_dag(self, ue_id: int) -> bool:
         """判断 UE 是否已经有一个尚未完成的 DAG。"""
-        for job in self._jobs.values():
-            if job.ue_id == ue_id and not job.completed:
-                return True
-        return False
+        return self.active_dag_count_for_ue(ue_id) > 0
 
     def _sample_level_sizes(self) -> list[int]:
         """随机决定 DAG 的层数以及每一层包含的任务数。"""
