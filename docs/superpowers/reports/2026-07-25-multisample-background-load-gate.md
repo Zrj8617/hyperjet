@@ -1,5 +1,9 @@
 # Multisample Background-Load Gate Report
 
+> This report covers the rejected single-process synchronous prototype. The
+> subsequent true process-worker result is documented in
+> `2026-07-25-multisample-process-background-load-gate.md`.
+
 ## Identity
 
 - Branch: `zrj_3multisample`
