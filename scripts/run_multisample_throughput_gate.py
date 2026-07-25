@@ -27,8 +27,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--episodes", type=int, default=8)
     parser.add_argument("--max-steps-per-episode", type=int, default=64)
     parser.add_argument("--rollout-horizon", type=int, default=16)
+    parser.add_argument("--ppo-epochs", type=int, default=1)
+    parser.add_argument("--checkpoint-interval", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument(
+        "--label",
+        type=str,
+        default="multisample_process_background_load",
+    )
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -45,12 +52,16 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.output_dir)
     if not root.is_absolute():
         root = ROOT / root
-    gate_root = root / f"{timestamp}_multisample_process_background_load"
+    safe_label = "".join(
+        char if char.isalnum() or char in {"-", "_"} else "_"
+        for char in str(args.label)
+    ).strip("_")
+    gate_root = root / f"{timestamp}_{safe_label or 'multisample_gate'}"
     gate_root.mkdir(parents=True, exist_ok=False)
     cases = [_build_case(args, gate_root, value) for value in args.num_envs]
     manifest = {
         "schema": "multisample_throughput_gate_v1",
-        "label": "multisample_process_background_load",
+        "label": str(args.label),
         "git_commit": _git_commit(),
         "gate_root": str(gate_root),
         "execute": bool(args.execute),
@@ -60,6 +71,8 @@ def main(argv: list[str] | None = None) -> int:
         "total_environment_slots": int(args.episodes)
         * int(args.max_steps_per_episode),
         "rollout_horizon_per_environment": int(args.rollout_horizon),
+        "ppo_epochs": int(args.ppo_epochs),
+        "checkpoint_interval": int(args.checkpoint_interval),
         "cases": cases,
     }
     _write_json(gate_root / "manifest.json", manifest)
@@ -117,7 +130,7 @@ def _build_case(
         "--completed-dag-weight",
         "16",
         "--ppo-epochs",
-        "1",
+        str(int(args.ppo_epochs)),
         "--no-normalize-value-targets",
         "--value-clip-epsilon",
         "0",
@@ -130,7 +143,7 @@ def _build_case(
         "--offloading-lagged-q-loss-coef",
         "0",
         "--checkpoint-interval",
-        "0",
+        str(int(args.checkpoint_interval)),
         "--output-dir",
         str(gate_root / "runs"),
         "--run-name",
@@ -138,7 +151,7 @@ def _build_case(
     ]
     return {
         "cell_id": cell_id,
-        "label": "multisample_process_background_load",
+        "label": str(args.label),
         "num_envs": int(num_envs),
         "total_environment_slots": int(args.episodes)
         * int(args.max_steps_per_episode),
@@ -253,7 +266,7 @@ def _summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
             }
         )
     return {
-        "label": "multisample_process_background_load",
+        "label": str(results[0]["label"]) if results else "multisample_process",
         "status": (
             "completed"
             if all(int(row["return_code"]) == 0 for row in results)
@@ -275,6 +288,10 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("episode and step counts must be positive")
     if int(args.rollout_horizon) <= 0:
         raise ValueError("rollout horizon must be positive")
+    if int(args.ppo_epochs) <= 0:
+        raise ValueError("ppo epochs must be positive")
+    if int(args.checkpoint_interval) < 0:
+        raise ValueError("checkpoint interval must be non-negative")
 
 
 def _git_commit() -> str:

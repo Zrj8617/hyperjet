@@ -137,8 +137,11 @@ def _cli_and_gate_check() -> None:
         episodes=8,
         max_steps_per_episode=64,
         rollout_horizon=16,
+        ppo_epochs=1,
+        checkpoint_interval=0,
         seed=42,
         device="cuda",
+        label="multisample_process_background_load",
     )
     run_multisample_throughput_gate._validate_args(args)
     case = run_multisample_throughput_gate._build_case(
