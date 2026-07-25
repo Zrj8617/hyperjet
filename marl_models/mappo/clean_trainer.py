@@ -240,19 +240,45 @@ class CleanPPOUpdater:
         lagged_q_samples: list[Any] | None = None,
         lagged_q_pending_count: int = 0,
     ) -> CleanPPOUpdateStats:
-        if not buffer.closed:
-            raise RuntimeError("Clean PPO update requires a closed rollout buffer.")
-        records = list(buffer.records)
-        if not records:
-            raise ValueError("Cannot update from an empty rollout buffer.")
+        return self.update_many(
+            [buffer],
+            lagged_q_samples=lagged_q_samples,
+            lagged_q_pending_count=lagged_q_pending_count,
+        )
+
+    def update_many(
+        self,
+        buffers: list[CleanSlotRolloutBuffer],
+        *,
+        lagged_q_samples: list[Any] | None = None,
+        lagged_q_pending_count: int = 0,
+    ) -> CleanPPOUpdateStats:
+        """Update once from independent closed rollout trajectories.
+
+        GAE is evaluated separately for every buffer before the resulting arrays
+        are concatenated. This prevents the last state of one environment from
+        bootstrapping or discounting into the first state of another.
+        """
+        rollout_buffers = list(buffers)
+        if not rollout_buffers:
+            raise ValueError("Clean PPO multi-buffer update requires at least one buffer.")
+        for buffer in rollout_buffers:
+            if not buffer.closed:
+                raise RuntimeError("Clean PPO update requires every rollout buffer to be closed.")
+            if not buffer.records:
+                raise ValueError("Cannot update from an empty rollout buffer.")
+        records = [
+            record
+            for buffer in rollout_buffers
+            for record in buffer.records
+        ]
         lagged_samples = list(lagged_q_samples or [])
         frozen_lagged_corrections, lagged_correction_diagnostics = (
             self._precompute_lagged_q_corrections(records)
         )
 
-        returns_np, advantages_np = compute_slot_level_gae(
-            records,
-            bootstrap_value=_buffer_bootstrap_value(records),
+        returns_np, advantages_np = compute_multi_trajectory_gae(
+            rollout_buffers,
             gamma=self.config.gamma,
             gae_lambda=self.config.gae_lambda,
         )
@@ -285,6 +311,10 @@ class CleanPPOUpdater:
         latest_stats: CleanPPOUpdateStats | None = None
         diagnostics: dict = _rollout_entropy_diagnostics(records)
         diagnostics.update(lagged_correction_diagnostics)
+        diagnostics["rollout_environment_count"] = int(len(rollout_buffers))
+        diagnostics["rollout_records_per_environment"] = [
+            int(len(buffer.records)) for buffer in rollout_buffers
+        ]
         diagnostics["offloading_lagged_q_pending_count"] = int(lagged_q_pending_count)
         diagnostics["critic_hgnn_detached"] = bool(self.config.detach_critic_hgnn)
         diagnostics.update(
@@ -1085,6 +1115,40 @@ def compute_slot_level_gae(
         returns[idx] = float(gae + float(record.value))
         next_value = float(record.value)
     return returns, advantages
+
+
+def compute_multi_trajectory_gae(
+    buffers: list[CleanSlotRolloutBuffer],
+    *,
+    gamma: float = 0.99,
+    gae_lambda: float = 0.95,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute independent GAE recursions and concatenate their results."""
+    rollout_buffers = list(buffers)
+    if not rollout_buffers:
+        raise ValueError("multi-trajectory GAE requires at least one rollout buffer")
+    trajectory_results: list[tuple[np.ndarray, np.ndarray]] = []
+    for buffer in rollout_buffers:
+        records = list(buffer.records)
+        if not buffer.closed:
+            raise RuntimeError("multi-trajectory GAE requires closed rollout buffers")
+        if not records:
+            raise ValueError("multi-trajectory GAE does not accept empty rollout buffers")
+        trajectory_results.append(
+            compute_slot_level_gae(
+                records,
+                bootstrap_value=_buffer_bootstrap_value(records),
+                gamma=gamma,
+                gae_lambda=gae_lambda,
+            )
+        )
+    return (
+        np.concatenate([returns for returns, _ in trajectory_results], axis=0),
+        np.concatenate(
+            [advantages for _, advantages in trajectory_results],
+            axis=0,
+        ),
+    )
 
 
 def write_clean_training_log(

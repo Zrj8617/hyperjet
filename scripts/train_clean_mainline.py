@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 import json
 import math
 from pathlib import Path
 import random
 import sys
+import time
 from typing import Any
 
 import numpy as np
@@ -52,6 +54,13 @@ def _nonnegative_finite_float(value: str | float) -> float:
         return _validated_completed_dag_weight(value)
     except ValueError as exc:
         raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def _positive_int(value: str | int) -> int:
+    resolved = int(value)
+    if resolved <= 0:
+        raise argparse.ArgumentTypeError("value must be a positive integer")
+    return resolved
 
 
 def _resolved_completed_dag_weight(args: argparse.Namespace) -> float:
@@ -147,6 +156,9 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
     task_encoder = str(cli.get("task_encoder", "hgnn"))
     if task_encoder not in {"hgnn", "mlp"}:
         raise ValueError(f"unsupported checkpoint task encoder: {task_encoder}")
+    num_envs = int(cli.get("num_envs", 1))
+    if num_envs <= 0:
+        raise ValueError("checkpoint num_envs must be positive")
     return {
         "completed_dag_weight": _validated_completed_dag_weight(
             cli.get("completed_dag_weight", config.REWARD_COMPLETED_DAG_WEIGHT)
@@ -162,6 +174,7 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
         "normalize_value_targets": normalize_value_targets,
         "value_clip_epsilon": value_clip_epsilon,
         "task_encoder": task_encoder,
+        "num_envs": num_envs,
     }
 
 
@@ -247,6 +260,12 @@ def validate_resume_experiment_controls(
             "resume checkpoint task encoder mismatch: "
             f"requested {requested_task_encoder}, checkpoint {saved['task_encoder']}"
         )
+    requested_num_envs = int(getattr(args, "num_envs", 1))
+    if requested_num_envs != int(saved["num_envs"]):
+        raise ValueError(
+            "resume checkpoint sampler environment count mismatch: "
+            f"requested {requested_num_envs}, checkpoint {saved['num_envs']}"
+        )
     return saved
 
 
@@ -255,6 +274,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--episodes", type=int, default=100)
     parser.add_argument("--max-steps-per-episode", type=int, default=int(config.EPISODE_LENGTH))
     parser.add_argument("--rollout-horizon", type=int, default=128)
+    parser.add_argument(
+        "--num-envs",
+        type=_positive_int,
+        default=1,
+        help="Number of synchronous independent environment sampler lanes.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--gamma", type=float, default=0.99)
@@ -391,6 +416,12 @@ def build_config_snapshot(args: argparse.Namespace) -> dict[str, Any]:
             "normalize_value_targets": bool(args.normalize_value_targets),
             "value_clip_epsilon": float(args.value_clip_epsilon),
             "task_encoder": str(args.task_encoder),
+            "num_envs": int(args.num_envs),
+            "environment_seeds": [
+                _derive_environment_seed(int(args.seed), lane_index)
+                for lane_index in range(int(args.num_envs))
+            ],
+            "episode_count_semantics": "total_across_all_environments",
             "lagged_q_resume_pending_policy": "discard_restarted_episode",
         },
         "clean_scene": {
@@ -440,6 +471,8 @@ def initialize_run_files(run_dir: Path, args: argparse.Namespace) -> None:
             "torch_required_for_training": True,
             "completed_dag_weight": _resolved_completed_dag_weight(args),
             "task_encoder": str(getattr(args, "task_encoder", "hgnn")),
+            "num_envs": int(getattr(args, "num_envs", 1)),
+            "multisample_label": "multisample",
             "detach_critic_hgnn": bool(getattr(args, "detach_critic_hgnn", False)),
             "freeze_ue_mobility": bool(getattr(args, "freeze_ue_mobility", False)),
             "offloading_counterfactual_coef": counterfactual_coef,
@@ -568,14 +601,6 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     )
     checkpoint_manager = CleanCheckpointManager(run_dir / "checkpoints")
     logger = CleanJSONLLogger(run_dir)
-    lagged_q_tracker = (
-        CleanLaggedOutcomeTracker(
-            scale_seconds=float(args.offloading_lagged_q_scale_seconds),
-            censor_weight=float(args.offloading_lagged_q_censor_weight),
-        )
-        if lagged_q_enabled
-        else None
-    )
     start_episode = 0
     global_slot = 0
     latest_update_stats: CleanPPOUpdateStats | None = None
@@ -588,6 +613,32 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         global_slot = int(payload.get("global_slot", 0))
         updater.update_step = int(payload.get("update_step", 0))
 
+    if int(args.num_envs) > 1:
+        return _run_multisample_training_loop(
+            args=args,
+            initial_env=env,
+            initial_graph_builder=graph_builder,
+            modules=modules,
+            updater=updater,
+            checkpoint_manager=checkpoint_manager,
+            logger=logger,
+            categorical_cls=Categorical,
+            device=device,
+            task_state_ready=TASK_STATE_READY_UNSCHEDULED,
+            lagged_tracker_cls=CleanLaggedOutcomeTracker,
+            lagged_q_enabled=lagged_q_enabled,
+            start_episode=start_episode,
+            global_slot=global_slot,
+        )
+
+    lagged_q_tracker = (
+        CleanLaggedOutcomeTracker(
+            scale_seconds=float(args.offloading_lagged_q_scale_seconds),
+            censor_weight=float(args.offloading_lagged_q_censor_weight),
+        )
+        if lagged_q_enabled
+        else None
+    )
     progress = _make_progress_bar(total=max(int(args.episodes) - start_episode, 0) * int(args.max_steps_per_episode))
     try:
         for episode in range(start_episode, int(args.episodes)):
@@ -788,6 +839,568 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         "kahypar_last_failure_reason": graph_builder.kahypar_last_failure_reason,
         "kahypar_cleanup_failed": bool(graph_builder.kahypar_cleanup_failed),
         "kahypar_worker_alive_after_close": bool(graph_builder.kahypar_worker_alive),
+    }
+
+
+@dataclass
+class _EnvironmentRNGState:
+    python_state: object
+    numpy_state: tuple[Any, ...]
+
+
+@dataclass
+class _SamplerLane:
+    lane_index: int
+    environment_seed: int
+    env: Env
+    graph_builder: CleanGraphBuilder
+    rng_state: _EnvironmentRNGState
+    lagged_q_tracker: Any | None = None
+    episode: int = -1
+    episode_step: int = 0
+    buffer: CleanSlotRolloutBuffer = field(default_factory=CleanSlotRolloutBuffer)
+    current_prepared: Any | None = None
+    current_encoded: Any | None = None
+    next_prepared: Any | None = None
+    next_encoded_old: Any | None = None
+    episode_reward: float = 0.0
+    episode_component_totals: dict[str, float] = field(default_factory=dict)
+    last_info: dict[str, Any] = field(default_factory=dict)
+    done: bool = False
+    truncated: bool = False
+
+    @property
+    def terminal(self) -> bool:
+        return bool(self.done or self.truncated)
+
+
+def _derive_environment_seed(training_seed: int, lane_index: int) -> int:
+    modulus = (2**32) - 1
+    return int((int(training_seed) + 1_000_003 * int(lane_index)) % modulus)
+
+
+def _capture_environment_rng_state() -> _EnvironmentRNGState:
+    return _EnvironmentRNGState(
+        python_state=random.getstate(),
+        numpy_state=np.random.get_state(),
+    )
+
+
+@contextmanager
+def _activate_lane_rng(lane: _SamplerLane):
+    outer_state = _capture_environment_rng_state()
+    random.setstate(lane.rng_state.python_state)
+    np.random.set_state(lane.rng_state.numpy_state)
+    try:
+        yield
+    finally:
+        lane.rng_state = _capture_environment_rng_state()
+        random.setstate(outer_state.python_state)
+        np.random.set_state(outer_state.numpy_state)
+
+
+def _new_episode_component_totals() -> dict[str, float]:
+    return {
+        "reward": 0.0,
+        "time_penalty": 0.0,
+        "dag_bonus": 0.0,
+        "task_energy_penalty": 0.0,
+        "movement_energy_penalty": 0.0,
+    }
+
+
+def _make_sampler_lanes(
+    *,
+    args: argparse.Namespace,
+    initial_env: Env,
+    initial_graph_builder: CleanGraphBuilder,
+    lagged_tracker_cls: Any,
+    lagged_q_enabled: bool,
+) -> list[_SamplerLane]:
+    lane_zero_state = _capture_environment_rng_state()
+    lanes = [
+        _SamplerLane(
+            lane_index=0,
+            environment_seed=_derive_environment_seed(int(args.seed), 0),
+            env=initial_env,
+            graph_builder=initial_graph_builder,
+            rng_state=lane_zero_state,
+        )
+    ]
+    for lane_index in range(1, int(args.num_envs)):
+        random.seed(_derive_environment_seed(int(args.seed), lane_index))
+        np.random.seed(_derive_environment_seed(int(args.seed), lane_index))
+        env = Env(
+            completed_dag_weight=float(args.completed_dag_weight),
+            freeze_ue_mobility=bool(args.freeze_ue_mobility),
+        )
+        graph_builder = CleanGraphBuilder()
+        env.reset()
+        graph_builder.reset()
+        prepare_slot_state(env=env, graph_builder=graph_builder)
+        lanes.append(
+            _SamplerLane(
+                lane_index=lane_index,
+                environment_seed=_derive_environment_seed(int(args.seed), lane_index),
+                env=env,
+                graph_builder=graph_builder,
+                rng_state=_capture_environment_rng_state(),
+            )
+        )
+    random.setstate(lane_zero_state.python_state)
+    np.random.set_state(lane_zero_state.numpy_state)
+    if lagged_q_enabled:
+        for lane in lanes:
+            lane.lagged_q_tracker = lagged_tracker_cls(
+                scale_seconds=float(args.offloading_lagged_q_scale_seconds),
+                censor_weight=float(args.offloading_lagged_q_censor_weight),
+            )
+    return lanes
+
+
+def _start_sampler_lane_episode(
+    *,
+    lane: _SamplerLane,
+    episode: int,
+    args: argparse.Namespace,
+    modules: CleanTrainingModules,
+    device: Any,
+) -> None:
+    lane.episode = int(episode)
+    lane.episode_step = 0
+    lane.buffer = CleanSlotRolloutBuffer()
+    lane.episode_reward = 0.0
+    lane.episode_component_totals = _new_episode_component_totals()
+    lane.last_info = {}
+    lane.done = False
+    lane.truncated = False
+    lane.next_prepared = None
+    lane.next_encoded_old = None
+    with _activate_lane_rng(lane):
+        lane.env.reset()
+        lane.graph_builder.reset()
+        if lane.lagged_q_tracker is not None:
+            lane.lagged_q_tracker.start_episode(int(episode))
+        lane.current_prepared = prepare_slot_state(
+            env=lane.env,
+            graph_builder=lane.graph_builder,
+        )
+    lane.current_encoded = encode_prepared_slot(
+        prepared_state=lane.current_prepared,
+        env=lane.env,
+        hgnn=modules.hgnn,
+        critic=modules.critic,
+        movement_actor=modules.movement_actor,
+        device=device,
+        detach_critic_hgnn=bool(args.detach_critic_hgnn),
+    )
+
+
+def _collect_sampler_lane_step(
+    *,
+    lane: _SamplerLane,
+    args: argparse.Namespace,
+    modules: CleanTrainingModules,
+    categorical_cls: Any,
+    device: Any,
+    task_state_ready: str,
+    lagged_q_enabled: bool,
+) -> None:
+    with _activate_lane_rng(lane):
+        slot_record, done, info = _collect_clean_slot(
+            env=lane.env,
+            modules=modules,
+            encoded_state=lane.current_encoded,
+            categorical_cls=categorical_cls,
+            device=device,
+            task_state_ready=task_state_ready,
+            freeze_movement=bool(args.freeze_movement),
+            lagged_q_enabled=bool(lagged_q_enabled),
+        )
+        if lane.lagged_q_tracker is not None:
+            lane.lagged_q_tracker.register_rollout_actions(
+                slot_record=slot_record,
+                env=lane.env,
+            )
+            lane.lagged_q_tracker.resolve_completed(env=lane.env)
+        next_prepared = None
+        if not done:
+            next_prepared = prepare_slot_state(
+                env=lane.env,
+                graph_builder=lane.graph_builder,
+            )
+    next_encoded_old = None
+    if next_prepared is not None:
+        next_encoded_old = encode_prepared_slot(
+            prepared_state=next_prepared,
+            env=lane.env,
+            hgnn=modules.hgnn,
+            critic=modules.critic,
+            movement_actor=modules.movement_actor,
+            device=device,
+            detach_critic_hgnn=bool(args.detach_critic_hgnn),
+        )
+
+    lane.episode_step += 1
+    lane.episode_reward += float(slot_record.reward)
+    lane.episode_component_totals["reward"] += float(info.get("step_reward", 0.0))
+    lane.episode_component_totals["time_penalty"] += float(
+        info.get("step_time_penalty", 0.0)
+    )
+    lane.episode_component_totals["dag_bonus"] += float(
+        info.get("step_completed_dag_bonus", 0.0)
+    )
+    lane.episode_component_totals["task_energy_penalty"] += float(
+        info.get("step_task_energy_penalty", 0.0)
+    )
+    lane.episode_component_totals["movement_energy_penalty"] += float(
+        info.get("step_movement_energy_penalty", 0.0)
+    )
+    truncated = bool(
+        lane.episode_step >= int(args.max_steps_per_episode) and not bool(done)
+    )
+    slot_record.terminated = bool(done)
+    slot_record.truncated = truncated
+    info["terminated"] = bool(done)
+    info["truncated"] = truncated
+    lane.buffer.append(slot_record)
+    lane.done = bool(done)
+    lane.truncated = truncated
+    lane.last_info = info
+    lane.next_prepared = next_prepared
+    lane.next_encoded_old = next_encoded_old
+
+
+def _close_sampler_lane_rollout(lane: _SamplerLane) -> tuple[list[Any], dict[str, int] | None]:
+    lagged_summary: dict[str, int] | None = None
+    if lane.lagged_q_tracker is not None and lane.terminal:
+        with _activate_lane_rng(lane):
+            lane.lagged_q_tracker.resolve_completed(env=lane.env)
+            lane.lagged_q_tracker.finalize_censored(
+                episode_end_time=float(lane.env.current_time_seconds)
+            )
+    lagged_samples = (
+        lane.lagged_q_tracker.pop_finalized()
+        if lane.lagged_q_tracker is not None
+        else []
+    )
+    close_rollout_with_bootstrap(
+        buffer=lane.buffer,
+        next_encoded_state=lane.next_encoded_old,
+        terminated=bool(lane.done),
+    )
+    if lane.lagged_q_tracker is not None and lane.terminal:
+        lagged_summary = lane.lagged_q_tracker.finish_episode()
+    return lagged_samples, lagged_summary
+
+
+def _run_multisample_training_loop(
+    *,
+    args: argparse.Namespace,
+    initial_env: Env,
+    initial_graph_builder: CleanGraphBuilder,
+    modules: CleanTrainingModules,
+    updater: Any,
+    checkpoint_manager: CleanCheckpointManager,
+    logger: CleanJSONLLogger,
+    categorical_cls: Any,
+    device: Any,
+    task_state_ready: str,
+    lagged_tracker_cls: Any,
+    lagged_q_enabled: bool,
+    start_episode: int,
+    global_slot: int,
+) -> dict[str, Any]:
+    run_dir = logger.run_dir
+    lanes = _make_sampler_lanes(
+        args=args,
+        initial_env=initial_env,
+        initial_graph_builder=initial_graph_builder,
+        lagged_tracker_cls=lagged_tracker_cls,
+        lagged_q_enabled=lagged_q_enabled,
+    )
+    latest_update_stats: CleanPPOUpdateStats | None = None
+    progress = _make_progress_bar(
+        total=max(int(args.episodes) - int(start_episode), 0)
+        * int(args.max_steps_per_episode)
+    )
+    next_episode = int(start_episode)
+    initial_global_slot = int(global_slot)
+    started_at = time.perf_counter()
+    graph_health: list[dict[str, Any]] = []
+    try:
+        while next_episode < int(args.episodes):
+            active_lanes = lanes[
+                : min(int(args.num_envs), int(args.episodes) - next_episode)
+            ]
+            for lane in active_lanes:
+                _start_sampler_lane_episode(
+                    lane=lane,
+                    episode=next_episode,
+                    args=args,
+                    modules=modules,
+                    device=device,
+                )
+                next_episode += 1
+
+            while any(not lane.terminal for lane in active_lanes):
+                for lane in active_lanes:
+                    if lane.terminal or len(lane.buffer) >= int(args.rollout_horizon):
+                        continue
+                    _collect_sampler_lane_step(
+                        lane=lane,
+                        args=args,
+                        modules=modules,
+                        categorical_cls=categorical_cls,
+                        device=device,
+                        task_state_ready=task_state_ready,
+                        lagged_q_enabled=lagged_q_enabled,
+                    )
+                    global_slot += 1
+                    _update_progress(
+                        progress,
+                        lane.episode,
+                        global_slot,
+                        lane.episode_reward,
+                        lane.last_info,
+                        latest_update_stats,
+                    )
+                    progress.update(1)
+
+                update_lanes = [
+                    lane
+                    for lane in active_lanes
+                    if len(lane.buffer) > 0
+                    and (
+                        len(lane.buffer) >= int(args.rollout_horizon)
+                        or lane.terminal
+                    )
+                ]
+                waiting_lanes = [
+                    lane
+                    for lane in active_lanes
+                    if not lane.terminal
+                    and 0 < len(lane.buffer) < int(args.rollout_horizon)
+                ]
+                if waiting_lanes:
+                    continue
+                if not update_lanes:
+                    continue
+
+                lagged_samples: list[Any] = []
+                lagged_summaries: dict[int, dict[str, int] | None] = {}
+                for lane in update_lanes:
+                    lane_samples, lane_summary = _close_sampler_lane_rollout(lane)
+                    lagged_samples.extend(lane_samples)
+                    lagged_summaries[lane.lane_index] = lane_summary
+                latest_update_stats = updater.update_many(
+                    [lane.buffer for lane in update_lanes],
+                    lagged_q_samples=lagged_samples,
+                    lagged_q_pending_count=sum(
+                        lane.lagged_q_tracker.pending_count
+                        if lane.lagged_q_tracker is not None
+                        else 0
+                        for lane in active_lanes
+                    ),
+                )
+                elapsed = max(time.perf_counter() - started_at, 1e-9)
+                for log_index, lane in enumerate(update_lanes):
+                    extra = _episode_diagnostics_payload(
+                        episode_component_totals=lane.episode_component_totals,
+                        terminal=lane.terminal,
+                        env=lane.env,
+                        completed_dag_weight=float(args.completed_dag_weight),
+                        detach_critic_hgnn=bool(args.detach_critic_hgnn),
+                        freeze_ue_mobility=bool(args.freeze_ue_mobility),
+                        offloading_counterfactual_coef=float(
+                            args.offloading_counterfactual_coef
+                        ),
+                        offloading_action_value_loss_coef=float(
+                            args.offloading_action_value_loss_coef
+                        ),
+                        offloading_lagged_q_coef=float(args.offloading_lagged_q_coef),
+                        offloading_lagged_q_loss_coef=float(
+                            args.offloading_lagged_q_loss_coef
+                        ),
+                        lagged_tracker_summary=lagged_summaries[lane.lane_index],
+                    )
+                    extra.update(
+                        {
+                            "multisample_label": "multisample",
+                            "num_envs": int(args.num_envs),
+                            "active_env_count": int(len(active_lanes)),
+                            "environment_index": int(lane.lane_index),
+                            "environment_seed": int(lane.environment_seed),
+                            "environment_slots_this_run": int(
+                                global_slot - initial_global_slot
+                            ),
+                            "environment_slots_per_second": float(
+                                (global_slot - initial_global_slot) / elapsed
+                            ),
+                        }
+                    )
+                    write_clean_training_log(
+                        logger,
+                        episode=lane.episode,
+                        global_slot=global_slot,
+                        info=lane.last_info,
+                        update_stats=latest_update_stats if log_index == 0 else None,
+                        extra=extra,
+                    )
+
+                checkpoint_manager.save(
+                    modules=modules,
+                    optimizer=updater.optimizer,
+                    episode=max(lane.episode for lane in active_lanes),
+                    global_slot=global_slot,
+                    update_step=updater.update_step,
+                    config_snapshot=build_config_snapshot(args),
+                    safe_boundary=all(lane.buffer.checkpoint_safe for lane in update_lanes),
+                    filename="latest.pt",
+                )
+                for lane in update_lanes:
+                    if lane.terminal:
+                        lane.buffer = CleanSlotRolloutBuffer()
+                        continue
+                    lane.current_prepared = lane.next_prepared
+                    lane.current_encoded = reencode_prepared_after_update(
+                        prepared_state=lane.current_prepared,
+                        env=lane.env,
+                        modules=modules,
+                        device=device,
+                        detach_critic_hgnn=bool(args.detach_critic_hgnn),
+                    )
+                    lane.buffer = CleanSlotRolloutBuffer()
+
+            finished_episode = max(lane.episode for lane in active_lanes)
+            for lane in active_lanes:
+                if (
+                    int(args.checkpoint_interval) > 0
+                    and (lane.episode + 1) % int(args.checkpoint_interval) == 0
+                ):
+                    checkpoint_manager.save(
+                        modules=modules,
+                        optimizer=updater.optimizer,
+                        episode=lane.episode,
+                        global_slot=global_slot,
+                        update_step=updater.update_step,
+                        config_snapshot=build_config_snapshot(args),
+                        safe_boundary=True,
+                        filename=f"checkpoint_ep_{lane.episode + 1:04d}.pt",
+                    )
+            elapsed = max(time.perf_counter() - started_at, 1e-9)
+            _write_json(
+                run_dir / "run_summary.json",
+                {
+                    "status": (
+                        "running"
+                        if finished_episode + 1 < int(args.episodes)
+                        else "completed"
+                    ),
+                    "episode": int(finished_episode),
+                    "global_slot": int(global_slot),
+                    "latest_update": (
+                        None
+                        if latest_update_stats is None
+                        else asdict(latest_update_stats)
+                    ),
+                    "num_envs": int(args.num_envs),
+                    "multisample_label": "multisample",
+                    "environment_seeds": [
+                        int(lane.environment_seed) for lane in lanes
+                    ],
+                    "environment_slots_this_run": int(
+                        global_slot - initial_global_slot
+                    ),
+                    "environment_slots_per_second": float(
+                        (global_slot - initial_global_slot) / elapsed
+                    ),
+                    "elapsed_seconds": float(elapsed),
+                    "completed_dag_weight": float(args.completed_dag_weight),
+                    "task_encoder": str(args.task_encoder),
+                    "detach_critic_hgnn": bool(args.detach_critic_hgnn),
+                    "freeze_ue_mobility": bool(args.freeze_ue_mobility),
+                    "offloading_counterfactual_coef": float(
+                        args.offloading_counterfactual_coef
+                    ),
+                    "offloading_action_value_loss_coef": float(
+                        args.offloading_action_value_loss_coef
+                    ),
+                    "offloading_lagged_q_coef": float(
+                        args.offloading_lagged_q_coef
+                    ),
+                    "offloading_lagged_q_loss_coef": float(
+                        args.offloading_lagged_q_loss_coef
+                    ),
+                    "resume_semantics": "restart_from_new_episode_only",
+                },
+            )
+    finally:
+        progress.close()
+        for lane in lanes:
+            lane.graph_builder.close()
+            graph_health.append(
+                {
+                    "lane_index": int(lane.lane_index),
+                    "kahypar_circuit_open": bool(
+                        lane.graph_builder.kahypar_circuit_open
+                    ),
+                    "kahypar_last_failure_reason": (
+                        lane.graph_builder.kahypar_last_failure_reason
+                    ),
+                    "kahypar_cleanup_failed": bool(
+                        lane.graph_builder.kahypar_cleanup_failed
+                    ),
+                    "kahypar_worker_alive_after_close": bool(
+                        lane.graph_builder.kahypar_worker_alive
+                    ),
+                }
+            )
+
+    elapsed = max(time.perf_counter() - started_at, 1e-9)
+    return {
+        "run_dir": str(run_dir),
+        "global_slot": int(global_slot),
+        "latest_update": (
+            None if latest_update_stats is None else asdict(latest_update_stats)
+        ),
+        "num_envs": int(args.num_envs),
+        "multisample_label": "multisample",
+        "environment_seeds": [int(lane.environment_seed) for lane in lanes],
+        "environment_slots_this_run": int(global_slot - initial_global_slot),
+        "environment_slots_per_second": float(
+            (global_slot - initial_global_slot) / elapsed
+        ),
+        "elapsed_seconds": float(elapsed),
+        "completed_dag_weight": float(args.completed_dag_weight),
+        "detach_critic_hgnn": bool(args.detach_critic_hgnn),
+        "freeze_ue_mobility": bool(args.freeze_ue_mobility),
+        "offloading_counterfactual_coef": float(args.offloading_counterfactual_coef),
+        "offloading_action_value_loss_coef": float(
+            args.offloading_action_value_loss_coef
+        ),
+        "offloading_lagged_q_coef": float(args.offloading_lagged_q_coef),
+        "offloading_lagged_q_loss_coef": float(
+            args.offloading_lagged_q_loss_coef
+        ),
+        "kahypar_circuit_open": any(
+            row["kahypar_circuit_open"] for row in graph_health
+        ),
+        "kahypar_last_failure_reason": next(
+            (
+                row["kahypar_last_failure_reason"]
+                for row in graph_health
+                if row["kahypar_last_failure_reason"] is not None
+            ),
+            None,
+        ),
+        "kahypar_cleanup_failed": any(
+            row["kahypar_cleanup_failed"] for row in graph_health
+        ),
+        "kahypar_worker_alive_after_close": any(
+            row["kahypar_worker_alive_after_close"] for row in graph_health
+        ),
+        "environment_health": graph_health,
     }
 
 
