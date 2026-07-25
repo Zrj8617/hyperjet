@@ -265,8 +265,10 @@ def _summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _validate_args(args: argparse.Namespace) -> None:
     values = [int(value) for value in args.num_envs]
-    if values != list(DEFAULT_ENV_COUNTS):
-        raise ValueError("throughput gate requires --num-envs 1 2 4 8")
+    if not values or any(value <= 0 for value in values):
+        raise ValueError("throughput gate num_envs values must be positive")
+    if len(set(values)) != len(values):
+        raise ValueError("throughput gate num_envs values must be unique")
     if int(args.episodes) < max(values):
         raise ValueError("episodes must be at least the largest num_envs value")
     if int(args.episodes) <= 0 or int(args.max_steps_per_episode) <= 0:
