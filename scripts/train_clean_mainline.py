@@ -6,10 +6,12 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 import json
 import math
+import multiprocessing
 from pathlib import Path
 import random
 import sys
 import time
+import traceback
 from typing import Any
 
 import numpy as np
@@ -159,6 +161,9 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
     num_envs = int(cli.get("num_envs", 1))
     if num_envs <= 0:
         raise ValueError("checkpoint num_envs must be positive")
+    sampler_backend = str(cli.get("sampler_backend", "synchronous"))
+    if sampler_backend not in {"synchronous", "process"}:
+        raise ValueError(f"unsupported checkpoint sampler backend: {sampler_backend}")
     return {
         "completed_dag_weight": _validated_completed_dag_weight(
             cli.get("completed_dag_weight", config.REWARD_COMPLETED_DAG_WEIGHT)
@@ -175,6 +180,7 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
         "value_clip_epsilon": value_clip_epsilon,
         "task_encoder": task_encoder,
         "num_envs": num_envs,
+        "sampler_backend": sampler_backend,
     }
 
 
@@ -266,6 +272,12 @@ def validate_resume_experiment_controls(
             "resume checkpoint sampler environment count mismatch: "
             f"requested {requested_num_envs}, checkpoint {saved['num_envs']}"
         )
+    requested_sampler_backend = str(getattr(args, "sampler_backend", "synchronous"))
+    if requested_sampler_backend != str(saved["sampler_backend"]):
+        raise ValueError(
+            "resume checkpoint sampler backend mismatch: "
+            f"requested {requested_sampler_backend}, checkpoint {saved['sampler_backend']}"
+        )
     return saved
 
 
@@ -279,6 +291,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=_positive_int,
         default=1,
         help="Number of synchronous independent environment sampler lanes.",
+    )
+    parser.add_argument(
+        "--sampler-backend",
+        choices=("synchronous", "process"),
+        default="synchronous",
+        help="Sampling backend. 'process' uses persistent independent worker processes.",
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--lr", type=float, default=3e-4)
@@ -417,6 +435,7 @@ def build_config_snapshot(args: argparse.Namespace) -> dict[str, Any]:
             "value_clip_epsilon": float(args.value_clip_epsilon),
             "task_encoder": str(args.task_encoder),
             "num_envs": int(args.num_envs),
+            "sampler_backend": str(args.sampler_backend),
             "environment_seeds": [
                 _derive_environment_seed(int(args.seed), lane_index)
                 for lane_index in range(int(args.num_envs))
@@ -472,6 +491,7 @@ def initialize_run_files(run_dir: Path, args: argparse.Namespace) -> None:
             "completed_dag_weight": _resolved_completed_dag_weight(args),
             "task_encoder": str(getattr(args, "task_encoder", "hgnn")),
             "num_envs": int(getattr(args, "num_envs", 1)),
+            "sampler_backend": str(getattr(args, "sampler_backend", "synchronous")),
             "multisample_label": "multisample",
             "detach_critic_hgnn": bool(getattr(args, "detach_critic_hgnn", False)),
             "freeze_ue_mobility": bool(getattr(args, "freeze_ue_mobility", False)),
@@ -612,6 +632,28 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         start_episode = int(payload.get("episode", -1)) + 1
         global_slot = int(payload.get("global_slot", 0))
         updater.update_step = int(payload.get("update_step", 0))
+
+    if str(args.sampler_backend) == "process":
+        if float(args.offloading_counterfactual_coef) > 0.0 or float(
+            args.offloading_lagged_q_coef
+        ) > 0.0:
+            graph_builder.close()
+            raise ValueError(
+                "process sampler backend currently supports only the formal baseline "
+                "with counterfactual and lagged residual-Q disabled"
+            )
+        graph_builder.close()
+        return _run_process_sampler_training_loop(
+            args=args,
+            task_feature_dim=task_feature_dim,
+            modules=modules,
+            updater=updater,
+            checkpoint_manager=checkpoint_manager,
+            logger=logger,
+            task_state_ready=TASK_STATE_READY_UNSCHEDULED,
+            start_episode=start_episode,
+            global_slot=global_slot,
+        )
 
     if int(args.num_envs) > 1:
         return _run_multisample_training_loop(
@@ -1404,6 +1446,535 @@ def _run_multisample_training_loop(
     }
 
 
+def _process_sampler_worker(
+    connection: Any,
+    *,
+    lane_index: int,
+    environment_seed: int,
+    task_feature_dim: int,
+    worker_config: dict[str, Any],
+) -> None:
+    graph_builder: CleanGraphBuilder | None = None
+    try:
+        torch, categorical_cls = _require_torch()
+        torch.set_num_threads(1)
+        _set_seed(int(environment_seed), torch=torch)
+        env = Env(
+            completed_dag_weight=float(worker_config["completed_dag_weight"]),
+            freeze_ue_mobility=bool(worker_config["freeze_ue_mobility"]),
+        )
+        graph_builder = CleanGraphBuilder()
+        env.reset()
+        graph_builder.reset()
+        probe = prepare_slot_state(env=env, graph_builder=graph_builder)
+        observed_feature_dim = int(probe.graph_snapshot.task_features.shape[1])
+        if observed_feature_dim != int(task_feature_dim):
+            raise RuntimeError(
+                "worker task feature dimension mismatch: "
+                f"{observed_feature_dim} != {task_feature_dim}"
+            )
+        modules = _build_process_worker_modules(
+            task_feature_dim=int(task_feature_dim),
+            task_embedding_dim=int(worker_config["task_embedding_dim"]),
+            hidden_dim=int(worker_config["hidden_dim"]),
+            task_encoder=str(worker_config["task_encoder"]),
+            device=torch.device("cpu"),
+        )
+        connection.send(
+            {
+                "type": "ready",
+                "lane_index": int(lane_index),
+                "pid": int(multiprocessing.current_process().pid or -1),
+            }
+        )
+        active_episode: int | None = None
+        episode_step = 0
+        episode_reward = 0.0
+        component_totals = _new_episode_component_totals()
+        current_prepared: Any | None = None
+        current_encoded: Any | None = None
+
+        while True:
+            command = connection.recv()
+            command_type = str(command.get("type", ""))
+            if command_type == "shutdown":
+                break
+            if command_type != "collect":
+                raise ValueError(f"unsupported process sampler command: {command_type}")
+            _load_module_state_payload(modules, command["module_state"])
+            requested_episode = command.get("episode")
+            if requested_episode is not None:
+                if active_episode is not None:
+                    raise RuntimeError("worker received a new episode before finishing the active one")
+                active_episode = int(requested_episode)
+                episode_step = 0
+                episode_reward = 0.0
+                component_totals = _new_episode_component_totals()
+                env.reset()
+                graph_builder.reset()
+                current_prepared = prepare_slot_state(
+                    env=env,
+                    graph_builder=graph_builder,
+                )
+            elif active_episode is None or current_prepared is None:
+                raise RuntimeError("worker collect continuation has no active episode")
+
+            current_encoded = encode_prepared_slot(
+                prepared_state=current_prepared,
+                env=env,
+                hgnn=modules.hgnn,
+                critic=modules.critic,
+                movement_actor=modules.movement_actor,
+                device=torch.device("cpu"),
+                detach_critic_hgnn=bool(worker_config["detach_critic_hgnn"]),
+            )
+            buffer = CleanSlotRolloutBuffer()
+            last_info: dict[str, Any] = {}
+            done = False
+            truncated = False
+            collect_started = time.perf_counter()
+            for _ in range(int(command["rollout_horizon"])):
+                slot_record, done, info = _collect_clean_slot(
+                    env=env,
+                    modules=modules,
+                    encoded_state=current_encoded,
+                    categorical_cls=categorical_cls,
+                    device=torch.device("cpu"),
+                    task_state_ready=str(worker_config["task_state_ready"]),
+                    freeze_movement=bool(worker_config["freeze_movement"]),
+                    lagged_q_enabled=False,
+                )
+                episode_step += 1
+                episode_reward += float(slot_record.reward)
+                component_totals["reward"] += float(info.get("step_reward", 0.0))
+                component_totals["time_penalty"] += float(
+                    info.get("step_time_penalty", 0.0)
+                )
+                component_totals["dag_bonus"] += float(
+                    info.get("step_completed_dag_bonus", 0.0)
+                )
+                component_totals["task_energy_penalty"] += float(
+                    info.get("step_task_energy_penalty", 0.0)
+                )
+                component_totals["movement_energy_penalty"] += float(
+                    info.get("step_movement_energy_penalty", 0.0)
+                )
+                truncated = bool(
+                    episode_step >= int(worker_config["max_steps_per_episode"])
+                    and not bool(done)
+                )
+                slot_record.terminated = bool(done)
+                slot_record.truncated = bool(truncated)
+                info["terminated"] = bool(done)
+                info["truncated"] = bool(truncated)
+                buffer.append(slot_record)
+                last_info = info
+
+                next_prepared = None
+                next_encoded_old = None
+                if not done:
+                    next_prepared = prepare_slot_state(
+                        env=env,
+                        graph_builder=graph_builder,
+                    )
+                    next_encoded_old = encode_prepared_slot(
+                        prepared_state=next_prepared,
+                        env=env,
+                        hgnn=modules.hgnn,
+                        critic=modules.critic,
+                        movement_actor=modules.movement_actor,
+                        device=torch.device("cpu"),
+                        detach_critic_hgnn=bool(
+                            worker_config["detach_critic_hgnn"]
+                        ),
+                    )
+                current_prepared = next_prepared
+                current_encoded = next_encoded_old
+                if bool(done or truncated):
+                    break
+
+            close_rollout_with_bootstrap(
+                buffer=buffer,
+                next_encoded_state=current_encoded,
+                terminated=bool(done),
+            )
+            terminal = bool(done or truncated)
+            episode_diagnostics = _episode_diagnostics_payload(
+                episode_component_totals=component_totals,
+                terminal=terminal,
+                env=env,
+                completed_dag_weight=float(worker_config["completed_dag_weight"]),
+                detach_critic_hgnn=bool(worker_config["detach_critic_hgnn"]),
+                freeze_ue_mobility=bool(worker_config["freeze_ue_mobility"]),
+                offloading_counterfactual_coef=0.0,
+                offloading_action_value_loss_coef=0.0,
+                offloading_lagged_q_coef=0.0,
+                offloading_lagged_q_loss_coef=0.0,
+                lagged_tracker_summary=None,
+            )
+            response = {
+                "type": "rollout",
+                "lane_index": int(lane_index),
+                "environment_seed": int(environment_seed),
+                "episode": int(active_episode),
+                "episode_step": int(episode_step),
+                "episode_reward": float(episode_reward),
+                "episode_component_totals": dict(component_totals),
+                "episode_diagnostics": episode_diagnostics,
+                "last_info": last_info,
+                "terminal": terminal,
+                "done": bool(done),
+                "truncated": bool(truncated),
+                "step_count": int(len(buffer)),
+                "worker_collect_seconds": float(
+                    time.perf_counter() - collect_started
+                ),
+                "initial_hotspot_ue_count": int(env.initial_hotspot_ue_count),
+                "buffer": buffer,
+            }
+            connection.send(response)
+            if terminal:
+                active_episode = None
+                current_prepared = None
+                current_encoded = None
+    except BaseException as exc:
+        try:
+            connection.send(
+                {
+                    "type": "error",
+                    "lane_index": int(lane_index),
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "traceback": traceback.format_exc(),
+                }
+            )
+        except BaseException:
+            pass
+    finally:
+        health = {
+            "lane_index": int(lane_index),
+            "kahypar_circuit_open": False,
+            "kahypar_last_failure_reason": None,
+            "kahypar_cleanup_failed": False,
+            "kahypar_worker_alive_after_close": False,
+        }
+        if graph_builder is not None:
+            graph_builder.close()
+            health.update(
+                {
+                    "kahypar_circuit_open": bool(
+                        graph_builder.kahypar_circuit_open
+                    ),
+                    "kahypar_last_failure_reason": (
+                        graph_builder.kahypar_last_failure_reason
+                    ),
+                    "kahypar_cleanup_failed": bool(
+                        graph_builder.kahypar_cleanup_failed
+                    ),
+                    "kahypar_worker_alive_after_close": bool(
+                        graph_builder.kahypar_worker_alive
+                    ),
+                }
+            )
+        try:
+            connection.send({"type": "shutdown", "health": health})
+        except BaseException:
+            pass
+        connection.close()
+
+
+def _run_process_sampler_training_loop(
+    *,
+    args: argparse.Namespace,
+    task_feature_dim: int,
+    modules: CleanTrainingModules,
+    updater: Any,
+    checkpoint_manager: CleanCheckpointManager,
+    logger: CleanJSONLLogger,
+    task_state_ready: str,
+    start_episode: int,
+    global_slot: int,
+) -> dict[str, Any]:
+    context = multiprocessing.get_context("spawn")
+    workers: list[dict[str, Any]] = []
+    worker_config = {
+        "completed_dag_weight": float(args.completed_dag_weight),
+        "freeze_ue_mobility": bool(args.freeze_ue_mobility),
+        "freeze_movement": bool(args.freeze_movement),
+        "detach_critic_hgnn": bool(args.detach_critic_hgnn),
+        "task_embedding_dim": int(args.task_embedding_dim),
+        "hidden_dim": int(args.hidden_dim),
+        "task_encoder": str(args.task_encoder),
+        "max_steps_per_episode": int(args.max_steps_per_episode),
+        "task_state_ready": str(task_state_ready),
+    }
+    for lane_index in range(int(args.num_envs)):
+        parent_connection, child_connection = context.Pipe(duplex=True)
+        process = context.Process(
+            target=_process_sampler_worker,
+            kwargs={
+                "connection": child_connection,
+                "lane_index": int(lane_index),
+                "environment_seed": _derive_environment_seed(
+                    int(args.seed), lane_index
+                ),
+                "task_feature_dim": int(task_feature_dim),
+                "worker_config": worker_config,
+            },
+            name=f"multisample-env-{lane_index}",
+        )
+        process.start()
+        child_connection.close()
+        workers.append(
+            {
+                "lane_index": int(lane_index),
+                "environment_seed": _derive_environment_seed(
+                    int(args.seed), lane_index
+                ),
+                "connection": parent_connection,
+                "process": process,
+                "episode": None,
+            }
+        )
+
+    progress = _make_progress_bar(
+        total=max(int(args.episodes) - int(start_episode), 0)
+        * int(args.max_steps_per_episode)
+    )
+    next_episode = int(start_episode)
+    initial_global_slot = int(global_slot)
+    latest_update_stats: CleanPPOUpdateStats | None = None
+    started_at = time.perf_counter()
+    worker_health: list[dict[str, Any]] = []
+    completed_episodes = int(start_episode)
+    failure: BaseException | None = None
+    try:
+        for worker in workers:
+            connection = worker["connection"]
+            if not connection.poll(120.0):
+                raise TimeoutError(
+                    f"process sampler worker {worker['lane_index']} startup timed out"
+                )
+            ready = connection.recv()
+            if ready.get("type") != "ready":
+                raise RuntimeError(f"process sampler worker startup failed: {ready}")
+
+        while completed_episodes < int(args.episodes):
+            round_workers: list[dict[str, Any]] = []
+            module_state = _module_state_payload(modules)
+            for worker in workers:
+                if worker["episode"] is None:
+                    if next_episode >= int(args.episodes):
+                        continue
+                    worker["episode"] = int(next_episode)
+                    next_episode += 1
+                    requested_episode: int | None = int(worker["episode"])
+                else:
+                    requested_episode = None
+                worker["connection"].send(
+                    {
+                        "type": "collect",
+                        "episode": requested_episode,
+                        "rollout_horizon": int(args.rollout_horizon),
+                        "module_state": module_state,
+                    }
+                )
+                round_workers.append(worker)
+
+            responses: list[dict[str, Any]] = []
+            for worker in round_workers:
+                connection = worker["connection"]
+                if not connection.poll(600.0):
+                    raise TimeoutError(
+                        f"process sampler worker {worker['lane_index']} rollout timed out"
+                    )
+                response = connection.recv()
+                if response.get("type") == "error":
+                    raise RuntimeError(
+                        "process sampler worker failed:\n"
+                        + str(response.get("traceback", response.get("error")))
+                    )
+                if response.get("type") != "rollout":
+                    raise RuntimeError(
+                        f"unexpected process sampler response: {response}"
+                    )
+                responses.append(response)
+
+            global_slot += sum(int(row["step_count"]) for row in responses)
+            latest_update_stats = updater.update_many(
+                [row["buffer"] for row in responses]
+            )
+            elapsed = max(time.perf_counter() - started_at, 1e-9)
+            for response_index, (worker, response) in enumerate(
+                zip(round_workers, responses)
+            ):
+                terminal = bool(response["terminal"])
+                extra = dict(response["episode_diagnostics"])
+                extra.update(
+                    {
+                        "multisample_label": "multisample_process",
+                        "sampler_backend": "process",
+                        "num_envs": int(args.num_envs),
+                        "active_env_count": int(len(round_workers)),
+                        "environment_index": int(response["lane_index"]),
+                        "environment_seed": int(response["environment_seed"]),
+                        "worker_collect_seconds": float(
+                            response["worker_collect_seconds"]
+                        ),
+                        "environment_slots_this_run": int(
+                            global_slot - initial_global_slot
+                        ),
+                        "environment_slots_per_second": float(
+                            (global_slot - initial_global_slot) / elapsed
+                        ),
+                    }
+                )
+                write_clean_training_log(
+                    logger,
+                    episode=int(response["episode"]),
+                    global_slot=int(global_slot),
+                    info=dict(response["last_info"]),
+                    update_stats=(
+                        latest_update_stats if response_index == 0 else None
+                    ),
+                    extra=extra,
+                )
+                progress.update(int(response["step_count"]))
+                if terminal:
+                    worker["episode"] = None
+                    completed_episodes += 1
+
+            checkpoint_manager.save(
+                modules=modules,
+                optimizer=updater.optimizer,
+                episode=max(int(row["episode"]) for row in responses),
+                global_slot=int(global_slot),
+                update_step=int(updater.update_step),
+                config_snapshot=build_config_snapshot(args),
+                safe_boundary=True,
+                filename="latest.pt",
+            )
+            elapsed = max(time.perf_counter() - started_at, 1e-9)
+            _write_json(
+                logger.run_dir / "run_summary.json",
+                {
+                    "status": (
+                        "completed"
+                        if completed_episodes >= int(args.episodes)
+                        else "running"
+                    ),
+                    "episode": int(completed_episodes - 1),
+                    "completed_episode_count": int(completed_episodes),
+                    "global_slot": int(global_slot),
+                    "latest_update": asdict(latest_update_stats),
+                    "num_envs": int(args.num_envs),
+                    "sampler_backend": "process",
+                    "multisample_label": "multisample_process",
+                    "environment_seeds": [
+                        int(worker["environment_seed"]) for worker in workers
+                    ],
+                    "environment_slots_this_run": int(
+                        global_slot - initial_global_slot
+                    ),
+                    "environment_slots_per_second": float(
+                        (global_slot - initial_global_slot) / elapsed
+                    ),
+                    "elapsed_seconds": float(elapsed),
+                    "completed_dag_weight": float(args.completed_dag_weight),
+                    "task_encoder": str(args.task_encoder),
+                    "resume_semantics": "restart_from_new_episode_only",
+                },
+            )
+    except BaseException as exc:
+        failure = exc
+    finally:
+        progress.close()
+        for worker in workers:
+            connection = worker["connection"]
+            process = worker["process"]
+            if process.is_alive():
+                try:
+                    connection.send({"type": "shutdown"})
+                except (BrokenPipeError, EOFError, OSError):
+                    pass
+        for worker in workers:
+            connection = worker["connection"]
+            process = worker["process"]
+            try:
+                if connection.poll(15.0):
+                    message = connection.recv()
+                    if message.get("type") == "shutdown":
+                        worker_health.append(dict(message["health"]))
+            except (BrokenPipeError, EOFError, OSError):
+                pass
+            process.join(timeout=15.0)
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5.0)
+            connection.close()
+            if not any(
+                int(row["lane_index"]) == int(worker["lane_index"])
+                for row in worker_health
+            ):
+                worker_health.append(
+                    {
+                        "lane_index": int(worker["lane_index"]),
+                        "process_exitcode": process.exitcode,
+                        "worker_health_missing": True,
+                    }
+                )
+    if failure is not None:
+        raise failure
+
+    elapsed = max(time.perf_counter() - started_at, 1e-9)
+    return {
+        "run_dir": str(logger.run_dir),
+        "global_slot": int(global_slot),
+        "latest_update": (
+            None if latest_update_stats is None else asdict(latest_update_stats)
+        ),
+        "num_envs": int(args.num_envs),
+        "sampler_backend": "process",
+        "multisample_label": "multisample_process",
+        "environment_seeds": [
+            _derive_environment_seed(int(args.seed), lane_index)
+            for lane_index in range(int(args.num_envs))
+        ],
+        "environment_slots_this_run": int(global_slot - initial_global_slot),
+        "environment_slots_per_second": float(
+            (global_slot - initial_global_slot) / elapsed
+        ),
+        "elapsed_seconds": float(elapsed),
+        "completed_dag_weight": float(args.completed_dag_weight),
+        "detach_critic_hgnn": bool(args.detach_critic_hgnn),
+        "freeze_ue_mobility": bool(args.freeze_ue_mobility),
+        "offloading_counterfactual_coef": 0.0,
+        "offloading_action_value_loss_coef": 0.0,
+        "offloading_lagged_q_coef": 0.0,
+        "offloading_lagged_q_loss_coef": 0.0,
+        "kahypar_circuit_open": any(
+            bool(row.get("kahypar_circuit_open", False))
+            for row in worker_health
+        ),
+        "kahypar_last_failure_reason": next(
+            (
+                row.get("kahypar_last_failure_reason")
+                for row in worker_health
+                if row.get("kahypar_last_failure_reason") is not None
+            ),
+            None,
+        ),
+        "kahypar_cleanup_failed": any(
+            bool(row.get("kahypar_cleanup_failed", False))
+            for row in worker_health
+        ),
+        "kahypar_worker_alive_after_close": any(
+            bool(row.get("kahypar_worker_alive_after_close", False))
+            for row in worker_health
+        ),
+        "environment_health": worker_health,
+    }
+
+
 def _collect_clean_slot(
     *,
     env: Env,
@@ -1697,6 +2268,73 @@ def _set_seed(seed: int, *, torch: Any) -> None:
     torch.manual_seed(int(seed))
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(int(seed))
+
+
+def _build_process_worker_modules(
+    *,
+    task_feature_dim: int,
+    task_embedding_dim: int,
+    hidden_dim: int,
+    task_encoder: str,
+    device: Any,
+) -> CleanTrainingModules:
+    from marl_models.hgnn import CleanIncidenceHGNN, CleanIndependentTaskMLP
+    from marl_models.mappo.clean_movement_actor import CleanMovementActor
+    from marl_models.mappo.clean_offloading_actor import CleanOffloadingActor
+    from marl_models.mappo.clean_ppo import (
+        CleanCentralizedCritic,
+        clean_critic_input_dim,
+    )
+
+    critic_input_dim = clean_critic_input_dim(int(task_embedding_dim), config.NUM_UAVS)
+    encoder = (
+        CleanIncidenceHGNN(
+            task_feature_dim=int(task_feature_dim),
+            hidden_dim=int(hidden_dim),
+            output_dim=int(task_embedding_dim),
+        )
+        if str(task_encoder) == "hgnn"
+        else CleanIndependentTaskMLP(
+            task_feature_dim=int(task_feature_dim),
+            hidden_dim=int(hidden_dim),
+            output_dim=int(task_embedding_dim),
+        )
+    )
+    modules = CleanTrainingModules(
+        hgnn=encoder,
+        movement_actor=CleanMovementActor(
+            task_embedding_dim=int(task_embedding_dim),
+            hidden_dim=int(hidden_dim),
+        ),
+        offloading_actor=CleanOffloadingActor(
+            task_embedding_dim=int(task_embedding_dim),
+            hidden_dim=int(hidden_dim),
+        ),
+        critic=CleanCentralizedCritic(
+            input_dim=int(critic_input_dim),
+            hidden_dim=int(hidden_dim),
+        ),
+    )
+    _move_modules_to_device(modules, device)
+    return modules
+
+
+def _module_state_payload(modules: CleanTrainingModules) -> dict[str, dict[str, Any]]:
+    return {
+        name: {
+            key: value.detach().cpu()
+            for key, value in getattr(modules, name).state_dict().items()
+        }
+        for name in ("hgnn", "movement_actor", "offloading_actor", "critic")
+    }
+
+
+def _load_module_state_payload(
+    modules: CleanTrainingModules,
+    payload: dict[str, dict[str, Any]],
+) -> None:
+    for name in ("hgnn", "movement_actor", "offloading_actor", "critic"):
+        getattr(modules, name).load_state_dict(payload[name])
 
 
 def _move_modules_to_device(modules: CleanTrainingModules, device: Any) -> None:

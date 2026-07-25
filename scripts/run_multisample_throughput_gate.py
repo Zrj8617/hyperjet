@@ -45,12 +45,12 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.output_dir)
     if not root.is_absolute():
         root = ROOT / root
-    gate_root = root / f"{timestamp}_multisample_background_load"
+    gate_root = root / f"{timestamp}_multisample_process_background_load"
     gate_root.mkdir(parents=True, exist_ok=False)
     cases = [_build_case(args, gate_root, value) for value in args.num_envs]
     manifest = {
         "schema": "multisample_throughput_gate_v1",
-        "label": "multisample_background_load",
+        "label": "multisample_process_background_load",
         "git_commit": _git_commit(),
         "gate_root": str(gate_root),
         "execute": bool(args.execute),
@@ -105,6 +105,8 @@ def _build_case(
         str(int(args.rollout_horizon)),
         "--num-envs",
         str(int(num_envs)),
+        "--sampler-backend",
+        "process",
         "--seed",
         str(int(args.seed)),
         "--device",
@@ -136,7 +138,7 @@ def _build_case(
     ]
     return {
         "cell_id": cell_id,
-        "label": "multisample_background_load",
+        "label": "multisample_process_background_load",
         "num_envs": int(num_envs),
         "total_environment_slots": int(args.episodes)
         * int(args.max_steps_per_episode),
@@ -251,7 +253,7 @@ def _summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
             }
         )
     return {
-        "label": "multisample_background_load",
+        "label": "multisample_process_background_load",
         "status": (
             "completed"
             if all(int(row["return_code"]) == 0 for row in results)

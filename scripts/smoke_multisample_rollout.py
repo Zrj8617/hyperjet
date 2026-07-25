@@ -149,6 +149,10 @@ def _cli_and_gate_check() -> None:
     command = case["command"]
     _assert("multisample_num_envs_8" in command, "gate run name must carry multisample")
     _assert(command[command.index("--num-envs") + 1] == "8", "gate must forward num_envs")
+    _assert(
+        command[command.index("--sampler-backend") + 1] == "process",
+        "throughput gate must exercise the true process sampler",
+    )
 
 
 def main() -> int:
