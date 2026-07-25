@@ -57,3 +57,39 @@ fixed number of environment slots. A longer learning-equivalence gate is require
 before choosing 8 for formal 1000-episode training. Recommended next comparison:
 `num_envs=1,2,4,8` with equal total environment slots, fixed evaluation checkpoints,
 and explicit update-count/batch-size reporting.
+
+## Extended scale gate: 10/15/20
+
+An extended gate was run from commit
+`87e2f7a1c2ffe601857e5dd56971219ab499067a` with same-batch controls at
+`num_envs=1` and `8`.
+
+Artifact root:
+
+`/data2/zrj2025/HyperUAV_multisample_scale_87e2f7a/runs/multisample_process_scale_gate/20260725_122024_multisample_process_background_load`
+
+Every case used 20 total episodes, 64 slots per episode, and 1280 total
+environment slots. All other model and PPO controls matched the earlier process
+gate.
+
+| num_envs | elapsed seconds | environment slots/s | speedup vs process-1 | peak GPU MiB |
+|---:|---:|---:|---:|---:|
+| 1 | 92.25 | 13.87 | 1.00x | 500 |
+| 8 | 42.12 | 30.39 | 2.19x | 554 |
+| 10 | 38.88 | 32.92 | 2.37x | 570 |
+| 15 | 38.37 | 33.36 | 2.40x | 614 |
+| 20 | 38.89 | 32.91 | 2.37x | 652 |
+
+All five cases processed 1280/1280 slots and returned zero. No traceback, runtime
+error, NaN, infinity, CUDA OOM, missing worker health, KaHyPar circuit opening,
+cleanup failure, or surviving worker was observed.
+
+Raw throughput peaks at `num_envs=15`, but scaling is effectively flat from 10 to
+20. Compared with 10, 15 uses 50% more environment processes for only about 1.3%
+more throughput; 20 is slightly slower than 15. Therefore:
+
+- `15` is the raw-throughput winner in this gate;
+- `10` is the more resource-efficient candidate;
+- `20` should be rejected for the current server/load;
+- none should enter formal learning runs until the larger effective PPO batch and
+  lower optimizer-update frequency pass a learning-quality gate.
