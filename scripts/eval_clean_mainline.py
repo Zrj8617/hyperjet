@@ -109,6 +109,7 @@ def build_eval_config(
             "offloading_lagged_q_loss_coef": 0.0,
             "offloading_lagged_q_scale_seconds": 200.0,
             "offloading_lagged_q_censor_weight": 0.25,
+            "task_encoder": "hgnn",
         }
         requested = getattr(args, "freeze_ue_mobility", None)
         freeze_ue_mobility = False if requested is None else bool(requested)
@@ -610,7 +611,7 @@ def _build_modules(
     experiment_controls: dict[str, Any],
     device: Any,
 ) -> CleanTrainingModules:
-    from marl_models.hgnn import CleanIncidenceHGNN
+    from marl_models.hgnn import CleanIncidenceHGNN, CleanIndependentTaskMLP
     from marl_models.mappo.clean_movement_actor import CleanMovementActor
     from marl_models.mappo.clean_offloading_actor import CleanOffloadingActor
     from marl_models.mappo.clean_offloading_action_value import CleanOffloadingActionValueCritic
@@ -626,8 +627,10 @@ def _build_modules(
     ).to(device)
     action_value_enabled = float(experiment_controls.get("offloading_counterfactual_coef", 0.0)) > 0.0
     lagged_q_enabled = float(experiment_controls.get("offloading_lagged_q_coef", 0.0)) > 0.0
+    encoder_type = str(experiment_controls.get("task_encoder", "hgnn"))
+    encoder_cls = CleanIncidenceHGNN if encoder_type == "hgnn" else CleanIndependentTaskMLP
     modules = CleanTrainingModules(
-        hgnn=CleanIncidenceHGNN(
+        hgnn=encoder_cls(
             task_feature_dim=int(dims["task_feature_dim"]),
             hidden_dim=int(dims["hidden_dim"]),
             output_dim=int(dims["task_embedding_dim"]),

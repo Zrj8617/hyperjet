@@ -144,6 +144,9 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
     value_clip_epsilon = float(cli.get("value_clip_epsilon", 0.0))
     if not math.isfinite(value_clip_epsilon) or value_clip_epsilon < 0.0:
         raise ValueError("checkpoint value_clip_epsilon must be finite and non-negative")
+    task_encoder = str(cli.get("task_encoder", "hgnn"))
+    if task_encoder not in {"hgnn", "mlp"}:
+        raise ValueError(f"unsupported checkpoint task encoder: {task_encoder}")
     return {
         "completed_dag_weight": _validated_completed_dag_weight(
             cli.get("completed_dag_weight", config.REWARD_COMPLETED_DAG_WEIGHT)
@@ -158,6 +161,7 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
         "offloading_lagged_q_censor_weight": lagged_q_censor_weight,
         "normalize_value_targets": normalize_value_targets,
         "value_clip_epsilon": value_clip_epsilon,
+        "task_encoder": task_encoder,
     }
 
 
@@ -236,6 +240,12 @@ def validate_resume_experiment_controls(
         raise ValueError(
             "resume checkpoint value clip mismatch: "
             f"requested {requested_value_clip}, checkpoint {saved['value_clip_epsilon']}"
+        )
+    requested_task_encoder = str(getattr(args, "task_encoder", "hgnn"))
+    if requested_task_encoder != str(saved["task_encoder"]):
+        raise ValueError(
+            "resume checkpoint task encoder mismatch: "
+            f"requested {requested_task_encoder}, checkpoint {saved['task_encoder']}"
         )
     return saved
 
@@ -325,6 +335,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", type=str, default="cuda" if _torch_cuda_available() else "cpu")
     parser.add_argument("--task-embedding-dim", type=int, default=64)
     parser.add_argument("--hidden-dim", type=int, default=128)
+    parser.add_argument(
+        "--task-encoder",
+        choices=("hgnn", "mlp"),
+        default="hgnn",
+        help="Task encoder: incidence HGNN or independent per-task MLP ablation.",
+    )
     parser.add_argument("--ppo-epochs", type=int, default=1)
     parser.add_argument("--max-grad-norm", type=float, default=0.5)
     return parser
@@ -374,6 +390,7 @@ def build_config_snapshot(args: argparse.Namespace) -> dict[str, Any]:
             "offloading_lagged_q_censor_weight": lagged_q_censor_weight,
             "normalize_value_targets": bool(args.normalize_value_targets),
             "value_clip_epsilon": float(args.value_clip_epsilon),
+            "task_encoder": str(args.task_encoder),
             "lagged_q_resume_pending_policy": "discard_restarted_episode",
         },
         "clean_scene": {
@@ -422,6 +439,7 @@ def initialize_run_files(run_dir: Path, args: argparse.Namespace) -> None:
             "run_dir": str(run_dir),
             "torch_required_for_training": True,
             "completed_dag_weight": _resolved_completed_dag_weight(args),
+            "task_encoder": str(getattr(args, "task_encoder", "hgnn")),
             "detach_critic_hgnn": bool(getattr(args, "detach_critic_hgnn", False)),
             "freeze_ue_mobility": bool(getattr(args, "freeze_ue_mobility", False)),
             "offloading_counterfactual_coef": counterfactual_coef,
@@ -456,7 +474,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     _set_seed(int(args.seed), torch=torch)
 
     from environment.dag_tasks import TASK_STATE_READY_UNSCHEDULED
-    from marl_models.hgnn import CleanIncidenceHGNN
+    from marl_models.hgnn import CleanIncidenceHGNN, CleanIndependentTaskMLP
     from marl_models.mappo.clean_movement_actor import CleanMovementActor
     from marl_models.mappo.clean_offloading_actor import CleanOffloadingActor
     from marl_models.mappo.clean_offloading_action_value import CleanOffloadingActionValueCritic
@@ -499,12 +517,21 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         if lagged_q_enabled
         else None
     )
-    modules = CleanTrainingModules(
-        hgnn=CleanIncidenceHGNN(
+    task_encoder = (
+        CleanIncidenceHGNN(
             task_feature_dim=task_feature_dim,
             hidden_dim=int(args.hidden_dim),
             output_dim=int(args.task_embedding_dim),
-        ),
+        )
+        if str(args.task_encoder) == "hgnn"
+        else CleanIndependentTaskMLP(
+            task_feature_dim=task_feature_dim,
+            hidden_dim=int(args.hidden_dim),
+            output_dim=int(args.task_embedding_dim),
+        )
+    )
+    modules = CleanTrainingModules(
+        hgnn=task_encoder,
         movement_actor=CleanMovementActor(task_embedding_dim=int(args.task_embedding_dim), hidden_dim=int(args.hidden_dim)),
         offloading_actor=offloading_actor,
         critic=CleanCentralizedCritic(
@@ -727,6 +754,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                     "latest_info": _jsonable(last_info),
                     "latest_update": None if latest_update_stats is None else asdict(latest_update_stats),
                     "completed_dag_weight": float(args.completed_dag_weight),
+                    "task_encoder": str(args.task_encoder),
                     "detach_critic_hgnn": bool(args.detach_critic_hgnn),
                     "freeze_ue_mobility": bool(args.freeze_ue_mobility),
                     "offloading_counterfactual_coef": float(args.offloading_counterfactual_coef),
