@@ -310,9 +310,11 @@ def _encode_task_embeddings(
         raise ModuleNotFoundError("torch is required to run HGNN forward")
     task_features_np = np.asarray(snapshot.task_features, dtype=np.float32).copy()
     incidence_np = np.asarray(snapshot.incidence_matrix, dtype=np.float32).copy()
+    hyperedge_type_ids_np = np.asarray(snapshot.hyperedge_type_ids, dtype=np.int64).copy()
     task_features = torch.as_tensor(task_features_np, dtype=torch.float32, device=device)
     incidence = torch.as_tensor(incidence_np, dtype=torch.float32, device=device)
-    return hgnn(task_features, incidence)
+    hyperedge_type_ids = torch.as_tensor(hyperedge_type_ids_np, dtype=torch.long, device=device)
+    return hgnn(task_features, incidence, hyperedge_type_ids)
 
 
 def _assemble_critic_input(task_embeddings: Any, critic_non_graph_input: np.ndarray, *, device: str | Any) -> Any:

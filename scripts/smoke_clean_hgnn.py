@@ -48,7 +48,7 @@ def main() -> None:
         builder = CleanGraphBuilder()
         snapshot = builder.build(env.task_manager, env.uavs, env.time_step, executor=env.executor)
         model = CleanIncidenceHGNN(task_feature_dim=snapshot.task_features.shape[1], hidden_dim=16, output_dim=8)
-        embeddings = model(snapshot.task_features, snapshot.incidence_matrix)
+        embeddings = model(snapshot.task_features, snapshot.incidence_matrix, snapshot.hyperedge_type_ids)
         _assert(embeddings.shape == (len(snapshot.task_ids), 8), "non-empty HGNN embedding shape mismatch.")
         _assert(torch.isfinite(embeddings).all().item(), "HGNN embeddings should be finite.")
 
@@ -60,7 +60,11 @@ def main() -> None:
             current_time_step=0,
             executor=empty_env.executor,
         )
-        empty_embeddings = model(empty_snapshot.task_features, empty_snapshot.incidence_matrix)
+        empty_embeddings = model(
+            empty_snapshot.task_features,
+            empty_snapshot.incidence_matrix,
+            empty_snapshot.hyperedge_type_ids,
+        )
         _assert(empty_embeddings.shape == (0, 8), "empty HGNN embedding shape mismatch.")
     finally:
         config.DAG_BASE_ARRIVAL_PROB = original_arrival_prob

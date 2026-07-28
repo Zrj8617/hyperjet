@@ -43,6 +43,28 @@ from marl_models.mappo.clean_trainer import (
     write_clean_training_log,
 )
 
+TASK_ENCODER_LEGACY_HGNN = "hgnn"
+TASK_ENCODER_MLP = "mlp"
+TASK_ENCODER_CURRENT_MEAN_HGNN = "current_mean_hgnn"
+TASK_ENCODER_STANDARD_WEIGHTED_HGNN = "standard_weighted_hgnn"
+TASK_ENCODER_TYPED_GATED_HGNN = "typed_gated_hgnn"
+TASK_ENCODER_CHOICES = (
+    TASK_ENCODER_LEGACY_HGNN,
+    TASK_ENCODER_MLP,
+    TASK_ENCODER_CURRENT_MEAN_HGNN,
+    TASK_ENCODER_STANDARD_WEIGHTED_HGNN,
+    TASK_ENCODER_TYPED_GATED_HGNN,
+)
+
+
+def _normalize_task_encoder_for_comparison(task_encoder: str) -> str:
+    value = str(task_encoder)
+    if value == TASK_ENCODER_LEGACY_HGNN:
+        return TASK_ENCODER_CURRENT_MEAN_HGNN
+    if value not in TASK_ENCODER_CHOICES:
+        raise ValueError(f"unsupported task encoder: {value}")
+    return value
+
 
 def _validated_completed_dag_weight(value: str | float) -> float:
     resolved = float(value)
@@ -156,8 +178,7 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
     if not math.isfinite(value_clip_epsilon) or value_clip_epsilon < 0.0:
         raise ValueError("checkpoint value_clip_epsilon must be finite and non-negative")
     task_encoder = str(cli.get("task_encoder", "hgnn"))
-    if task_encoder not in {"hgnn", "mlp"}:
-        raise ValueError(f"unsupported checkpoint task encoder: {task_encoder}")
+    _normalize_task_encoder_for_comparison(task_encoder)
     num_envs = int(cli.get("num_envs", 1))
     if num_envs <= 0:
         raise ValueError("checkpoint num_envs must be positive")
@@ -261,7 +282,9 @@ def validate_resume_experiment_controls(
             f"requested {requested_value_clip}, checkpoint {saved['value_clip_epsilon']}"
         )
     requested_task_encoder = str(getattr(args, "task_encoder", "hgnn"))
-    if requested_task_encoder != str(saved["task_encoder"]):
+    if _normalize_task_encoder_for_comparison(requested_task_encoder) != _normalize_task_encoder_for_comparison(
+        str(saved["task_encoder"])
+    ):
         raise ValueError(
             "resume checkpoint task encoder mismatch: "
             f"requested {requested_task_encoder}, checkpoint {saved['task_encoder']}"
@@ -380,9 +403,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hidden-dim", type=int, default=128)
     parser.add_argument(
         "--task-encoder",
-        choices=("hgnn", "mlp"),
+        choices=TASK_ENCODER_CHOICES,
         default="hgnn",
-        help="Task encoder: incidence HGNN or independent per-task MLP ablation.",
+        help=(
+            "Task encoder. 'hgnn' is the legacy alias for current_mean_hgnn; "
+            "new skeleton modes are standard_weighted_hgnn and typed_gated_hgnn."
+        ),
     )
     parser.add_argument("--ppo-epochs", type=int, default=1)
     parser.add_argument("--max-grad-norm", type=float, default=0.5)
@@ -527,7 +553,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     _set_seed(int(args.seed), torch=torch)
 
     from environment.dag_tasks import TASK_STATE_READY_UNSCHEDULED
-    from marl_models.hgnn import CleanIncidenceHGNN, CleanIndependentTaskMLP
+    from marl_models.hgnn import build_clean_task_encoder
     from marl_models.mappo.clean_movement_actor import CleanMovementActor
     from marl_models.mappo.clean_offloading_actor import CleanOffloadingActor
     from marl_models.mappo.clean_offloading_action_value import CleanOffloadingActionValueCritic
@@ -570,18 +596,11 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         if lagged_q_enabled
         else None
     )
-    task_encoder = (
-        CleanIncidenceHGNN(
-            task_feature_dim=task_feature_dim,
-            hidden_dim=int(args.hidden_dim),
-            output_dim=int(args.task_embedding_dim),
-        )
-        if str(args.task_encoder) == "hgnn"
-        else CleanIndependentTaskMLP(
-            task_feature_dim=task_feature_dim,
-            hidden_dim=int(args.hidden_dim),
-            output_dim=int(args.task_embedding_dim),
-        )
+    task_encoder = build_clean_task_encoder(
+        encoder_type=str(args.task_encoder),
+        task_feature_dim=task_feature_dim,
+        hidden_dim=int(args.hidden_dim),
+        output_dim=int(args.task_embedding_dim),
     )
     modules = CleanTrainingModules(
         hgnn=task_encoder,
@@ -2278,7 +2297,7 @@ def _build_process_worker_modules(
     task_encoder: str,
     device: Any,
 ) -> CleanTrainingModules:
-    from marl_models.hgnn import CleanIncidenceHGNN, CleanIndependentTaskMLP
+    from marl_models.hgnn import build_clean_task_encoder
     from marl_models.mappo.clean_movement_actor import CleanMovementActor
     from marl_models.mappo.clean_offloading_actor import CleanOffloadingActor
     from marl_models.mappo.clean_ppo import (
@@ -2287,18 +2306,11 @@ def _build_process_worker_modules(
     )
 
     critic_input_dim = clean_critic_input_dim(int(task_embedding_dim), config.NUM_UAVS)
-    encoder = (
-        CleanIncidenceHGNN(
-            task_feature_dim=int(task_feature_dim),
-            hidden_dim=int(hidden_dim),
-            output_dim=int(task_embedding_dim),
-        )
-        if str(task_encoder) == "hgnn"
-        else CleanIndependentTaskMLP(
-            task_feature_dim=int(task_feature_dim),
-            hidden_dim=int(hidden_dim),
-            output_dim=int(task_embedding_dim),
-        )
+    encoder = build_clean_task_encoder(
+        encoder_type=str(task_encoder),
+        task_feature_dim=int(task_feature_dim),
+        hidden_dim=int(hidden_dim),
+        output_dim=int(task_embedding_dim),
     )
     modules = CleanTrainingModules(
         hgnn=encoder,

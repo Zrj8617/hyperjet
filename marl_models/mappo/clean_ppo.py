@@ -220,7 +220,11 @@ if torch is not None:
         for slot_idx, record in enumerate(records):
             if not record.movement_records:
                 continue
-            task_embeddings = hgnn(record.graph_snapshot.task_features, record.graph_snapshot.incidence_matrix)
+            task_embeddings = hgnn(
+                record.graph_snapshot.task_features,
+                record.graph_snapshot.incidence_matrix,
+                record.graph_snapshot.hyperedge_type_ids,
+            )
             action_losses: list[torch.Tensor] = []
             action_entropies: list[torch.Tensor] = []
             for movement_record in record.movement_records:

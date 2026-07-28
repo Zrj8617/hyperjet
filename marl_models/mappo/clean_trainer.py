@@ -551,9 +551,11 @@ class CleanPPOUpdater:
         for slot_idx, record in enumerate(records):
             task_features_np = np.asarray(record.graph_snapshot.task_features, dtype=np.float32).copy()
             incidence_np = np.asarray(record.graph_snapshot.incidence_matrix, dtype=np.float32).copy()
+            hyperedge_type_ids_np = np.asarray(record.graph_snapshot.hyperedge_type_ids, dtype=np.int64).copy()
             task_features = torch.as_tensor(task_features_np, dtype=torch.float32, device=self.device)
             incidence = torch.as_tensor(incidence_np, dtype=torch.float32, device=self.device)
-            task_embeddings = self.modules.hgnn(task_features, incidence)
+            hyperedge_type_ids = torch.as_tensor(hyperedge_type_ids_np, dtype=torch.long, device=self.device)
+            task_embeddings = self.modules.hgnn(task_features, incidence, hyperedge_type_ids)
             critic_embeddings = (
                 task_embeddings.detach()
                 if bool(self.config.detach_critic_hgnn)

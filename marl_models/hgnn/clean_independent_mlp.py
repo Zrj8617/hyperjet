@@ -27,9 +27,11 @@ class CleanIndependentTaskMLP(nn.Module):
     def forward(
         self,
         task_features: torch.Tensor | np.ndarray,
-        incidence_matrix: torch.Tensor | np.ndarray,
+        incidence_matrix: torch.Tensor | np.ndarray | None = None,
+        hyperedge_type_ids: torch.Tensor | np.ndarray | None = None,
     ) -> torch.Tensor:
         del incidence_matrix
+        del hyperedge_type_ids
         if isinstance(task_features, torch.Tensor):
             features = task_features.float()
         else:

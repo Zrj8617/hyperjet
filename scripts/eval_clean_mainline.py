@@ -611,7 +611,7 @@ def _build_modules(
     experiment_controls: dict[str, Any],
     device: Any,
 ) -> CleanTrainingModules:
-    from marl_models.hgnn import CleanIncidenceHGNN, CleanIndependentTaskMLP
+    from marl_models.hgnn import build_clean_task_encoder
     from marl_models.mappo.clean_movement_actor import CleanMovementActor
     from marl_models.mappo.clean_offloading_actor import CleanOffloadingActor
     from marl_models.mappo.clean_offloading_action_value import CleanOffloadingActionValueCritic
@@ -628,9 +628,9 @@ def _build_modules(
     action_value_enabled = float(experiment_controls.get("offloading_counterfactual_coef", 0.0)) > 0.0
     lagged_q_enabled = float(experiment_controls.get("offloading_lagged_q_coef", 0.0)) > 0.0
     encoder_type = str(experiment_controls.get("task_encoder", "hgnn"))
-    encoder_cls = CleanIncidenceHGNN if encoder_type == "hgnn" else CleanIndependentTaskMLP
     modules = CleanTrainingModules(
-        hgnn=encoder_cls(
+        hgnn=build_clean_task_encoder(
+            encoder_type=encoder_type,
             task_feature_dim=int(dims["task_feature_dim"]),
             hidden_dim=int(dims["hidden_dim"]),
             output_dim=int(dims["task_embedding_dim"]),
