@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass, field
 from datetime import datetime
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -66,8 +67,11 @@ class MetricAccumulator:
     top1_count: int = 0
     top2_count: int = 0
     masked_random_accuracy_sum: float = 0.0
+    cross_entropy_sum: float = 0.0
     regret_values: list[float] = field(default_factory=list)
     rank_corr_values: list[float] = field(default_factory=list)
+    finite_loss: bool = True
+    finite_logits: bool = True
 
     def update(self, result: dict[str, Any]) -> None:
         self.decision_count += 1
@@ -82,7 +86,10 @@ class MetricAccumulator:
         self.top1_count += int(bool(result["top1_correct"]))
         self.top2_count += int(bool(result["top2_correct"]))
         self.masked_random_accuracy_sum += 1.0 / float(max(valid_count, 1))
+        self.cross_entropy_sum += float(result["cross_entropy"])
         self.regret_values.append(float(result["eft_regret"]))
+        self.finite_loss = self.finite_loss and bool(result["finite_loss"])
+        self.finite_logits = self.finite_logits and bool(result["finite_logits"])
         rank_corr = result.get("logit_neg_eft_rank_correlation")
         if rank_corr is not None and math.isfinite(float(rank_corr)):
             self.rank_corr_values.append(float(rank_corr))
@@ -100,6 +107,16 @@ class MetricAccumulator:
             "decision_count": int(self.decision_count),
             "valid_slot_count": int(len(self.valid_slot_ids)),
             "skipped_no_candidate": int(self.skipped_no_candidate),
+            "cross_entropy": (
+                float(self.cross_entropy_sum / float(self.decision_count))
+                if self.decision_count
+                else None
+            ),
+            "nll": (
+                float(self.cross_entropy_sum / float(self.decision_count))
+                if self.decision_count
+                else None
+            ),
             "top1_accuracy": float(top1),
             "top2_accuracy": float(top2),
             "masked_random_accuracy": float(random_acc),
@@ -110,6 +127,8 @@ class MetricAccumulator:
             "logit_neg_eft_rank_correlation": (
                 float(rank_corrs.mean()) if rank_corrs.size else None
             ),
+            "finite_loss": bool(self.finite_loss),
+            "finite_logits": bool(self.finite_logits),
         }
 
 
@@ -424,8 +443,15 @@ def _build_decision_sample(
         environment_seed=int(environment_seed),
         episode=int(episode),
     )
+    sample_id = _sample_id(
+        trajectory_id=trajectory_id,
+        slot=int(slot),
+        decision_order=int(decision_order),
+        task_id=str(task.task_id),
+    )
     return {
         "schema": "greedy_imitation_decision_sample_v1",
+        "sample_id": sample_id,
         "trajectory_policy": str(trajectory_policy),
         "label_mode": "behavior_conditioned_greedy_eft",
         "seed": int(environment_seed),
@@ -457,6 +483,7 @@ def _build_decision_sample(
         "pair_features": np.asarray(pair, dtype=np.float32).copy(),
         "candidate_mask": np.asarray(mask, dtype=bool).copy(),
         "candidate_uav_ids": [int(item) for item in candidate_uav_ids],
+        "candidate_uav_id_mapping": [int(item) for item in candidate_uav_ids],
         "greedy_label_idx": int(greedy_idx),
         "behavior_idx": int(behavior_idx),
         "estimated_finish_times": eft_values,
@@ -474,6 +501,10 @@ def _score_sample(modules: GateModules, sample: dict[str, Any], *, train_enabled
         label = torch.as_tensor([int(sample["greedy_label_idx"])], dtype=torch.long, device=modules.device)
         masked_logits = logits.masked_fill(~mask, torch.finfo(logits.dtype).min)
         loss = modules.functional.cross_entropy(masked_logits.unsqueeze(0), label)
+    finite_logits = bool(torch.isfinite(logits).all().item())
+    finite_loss = bool(torch.isfinite(loss).all().item())
+    if not finite_logits or not finite_loss:
+        raise FloatingPointError("non-finite imitation logits or loss")
 
     valid_indices = [idx for idx, legal in enumerate(sample["candidate_mask"]) if bool(legal)]
     valid_logits = masked_logits.detach()[valid_indices]
@@ -489,6 +520,9 @@ def _score_sample(modules: GateModules, sample: dict[str, Any], *, train_enabled
     )
     return {
         "loss": loss,
+        "cross_entropy": float(loss.detach().cpu().item()),
+        "finite_loss": finite_loss,
+        "finite_logits": finite_logits,
         "predicted_idx": prediction,
         "top1_correct": prediction == label_idx,
         "top2_correct": label_idx in top2,
@@ -522,6 +556,8 @@ class _LossAccumulator:
         self.total_loss = 0.0
         self.loss_samples = 0
         self.optimizer_steps = 0
+        self.gradient_norm_values: list[float] = []
+        self.finite_gradient_norm = True
 
     def add(self, loss: Any, modules: GateModules) -> None:
         self.loss = loss if self.loss is None else self.loss + loss
@@ -536,11 +572,14 @@ class _LossAccumulator:
             return
         modules.optimizer.zero_grad(set_to_none=True)
         (self.loss / float(self.count)).backward()
-        if modules.max_grad_norm is not None:
-            modules.torch.nn.utils.clip_grad_norm_(
-                list(modules.task_encoder.parameters()) + list(modules.offloading_actor.scorer.parameters()),
-                float(modules.max_grad_norm),
-            )
+        parameters = list(modules.task_encoder.parameters()) + list(modules.offloading_actor.scorer.parameters())
+        max_norm = float(modules.max_grad_norm) if modules.max_grad_norm is not None else float("inf")
+        gradient_norm = modules.torch.nn.utils.clip_grad_norm_(parameters, max_norm)
+        gradient_norm_value = float(gradient_norm.detach().cpu().item())
+        self.gradient_norm_values.append(gradient_norm_value)
+        self.finite_gradient_norm = self.finite_gradient_norm and math.isfinite(gradient_norm_value)
+        if not math.isfinite(gradient_norm_value):
+            raise FloatingPointError("non-finite imitation gradient norm")
         modules.optimizer.step()
         self.optimizer_steps += 1
         self.loss = None
@@ -782,7 +821,12 @@ def _rank_values(values: list[float]) -> np.ndarray:
     return ranks
 
 
-def _build_modules(args: argparse.Namespace) -> GateModules:
+def _build_modules(
+    args: argparse.Namespace,
+    *,
+    encoder_seed: int | None = None,
+    scorer_seed: int | None = None,
+) -> GateModules:
     try:
         import torch
         from torch.nn import functional
@@ -792,23 +836,30 @@ def _build_modules(args: argparse.Namespace) -> GateModules:
         raise ModuleNotFoundError("torch is required for greedy imitation training") from exc
 
     _set_seed(int(args.seed), torch=torch)
-    init_env = Env(completed_dag_weight=float(args.completed_dag_weight), freeze_ue_mobility=True)
-    graph_builder = CleanGraphBuilder()
-    try:
-        _set_seed(int(args.seed), torch=torch)
-        init_env.reset()
-        graph_builder.reset()
-        prepared = prepare_slot_state(env=init_env, graph_builder=graph_builder)
-        task_feature_dim = int(prepared.graph_snapshot.task_features.shape[1])
-    finally:
-        graph_builder.close()
+    configured_task_feature_dim = getattr(args, "task_feature_dim", None)
+    if configured_task_feature_dim is not None:
+        task_feature_dim = int(configured_task_feature_dim)
+    else:
+        init_env = Env(completed_dag_weight=float(args.completed_dag_weight), freeze_ue_mobility=True)
+        graph_builder = CleanGraphBuilder()
+        try:
+            _set_seed(int(args.seed), torch=torch)
+            init_env.reset()
+            graph_builder.reset()
+            prepared = prepare_slot_state(env=init_env, graph_builder=graph_builder)
+            task_feature_dim = int(prepared.graph_snapshot.task_features.shape[1])
+        finally:
+            graph_builder.close()
     device = torch.device(str(args.device) if str(args.device) != "cuda" or torch.cuda.is_available() else "cpu")
+    _set_seed(int(args.seed if encoder_seed is None else encoder_seed), torch=torch)
     task_encoder = build_clean_task_encoder(
         encoder_type=str(args.task_encoder),
         task_feature_dim=task_feature_dim,
         hidden_dim=int(args.hidden_dim),
         output_dim=int(args.task_embedding_dim),
     )
+    if scorer_seed is not None:
+        _set_seed(int(scorer_seed), torch=torch)
     offloading_actor = CleanOffloadingActor(
         task_embedding_dim=int(args.task_embedding_dim),
         hidden_dim=int(args.hidden_dim),
@@ -910,6 +961,17 @@ def _split_bounds(episodes: int, train_fraction: float, val_fraction: float) -> 
 
 def _trajectory_id(*, trajectory_policy: str, environment_seed: int, episode: int) -> str:
     return f"{trajectory_policy}:seed{int(environment_seed)}:episode{int(episode)}"
+
+
+def _sample_id(*, trajectory_id: str, slot: int, decision_order: int, task_id: str) -> str:
+    identity = {
+        "trajectory_id": str(trajectory_id),
+        "slot": int(slot),
+        "decision_order": int(decision_order),
+        "task_id": str(task_id),
+    }
+    payload = json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
 
 
 def _split_episode_sets(split_bounds: dict[str, tuple[int, int]]) -> dict[str, set[int]]:
