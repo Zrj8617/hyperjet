@@ -104,6 +104,14 @@ def main() -> int:
             summary["candidate_scorer_initial_hash_match"] is True,
             "all encoders must share the candidate scorer initial state",
         )
+        _assert(
+            summary["batch_plan_hash_match_across_encoders"] is True,
+            "all encoders must share graph-aware batch plans",
+        )
+        _assert(
+            summary["checksum_validation"]["post_training_dataset_scan_performed"] is False,
+            "comparison must reuse the initially validated dataset checksum",
+        )
         _assert(summary["technical_pass"] is True, "comparison technical checks should pass")
         _assert(len(rows) == 4, "smoke should emit one row for each canonical encoder")
         _assert(
@@ -122,6 +130,10 @@ def main() -> int:
             len({tuple(row["shuffle_order_hashes"]) for row in rows}) == 1,
             "all encoders must use identical epoch shuffle order",
         )
+        _assert(
+            len({tuple(row["batch_plan_hashes"]) for row in rows}) == 1,
+            "all encoders must use identical graph-aware batch plans",
+        )
         typed = next(row for row in rows if row["encoder"] == "typed_gated_hgnn")
         _assert(typed["typed_diagnostics"] is not None, "typed diagnostics must be present")
         _assert(typed["typed_diagnostics"]["layers"], "typed layer diagnostics must be non-empty")
@@ -129,6 +141,17 @@ def main() -> int:
             _assert(row["technical_pass"] is True, f"{row['encoder']} technical checks failed")
             _assert(row["finite_gradient_norm"] is True, f"{row['encoder']} gradient was non-finite")
             variant_dir = Path(row["variant_dir"])
+            train_rows = [
+                json.loads(line)
+                for line in (variant_dir / "train_metrics.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            for train_row in train_rows:
+                _assert(
+                    train_row["encoder_forward_count"] == train_row["unique_graph_count"],
+                    f"{row['encoder']} encoded a graph more than once in an epoch",
+                )
+                _assert(train_row["batch_plan_hash"], "batch plan hash must be recorded")
             for filename in ("config.json", "train_metrics.jsonl", "test_metrics.json", "checkpoint.pt"):
                 _assert((variant_dir / filename).is_file(), f"missing variant artifact {filename}")
 

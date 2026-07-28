@@ -27,6 +27,7 @@ from environment.assignment import (
 from environment.env import Env
 from environment.graph_builder import CleanGraphBuilder, CleanGraphSnapshot
 from marl_models.mappo.clean_slot_orchestrator import prepare_slot_state
+from scripts import greedy_imitation_grouped_batch as grouped_batch
 from scripts.offloading_policy_gate import RANDOM_HASH_VERSION, stable_random_hash_index
 
 
@@ -506,6 +507,78 @@ def _score_sample(modules: GateModules, sample: dict[str, Any], *, train_enabled
     if not finite_logits or not finite_loss:
         raise FloatingPointError("non-finite imitation logits or loss")
 
+    return _decision_result(
+        modules=modules,
+        sample=sample,
+        logits=logits,
+        masked_logits=masked_logits,
+        loss=loss,
+    )
+
+
+def _score_grouped_batch(
+    modules: GateModules,
+    samples: list[dict[str, Any]],
+    *,
+    train_enabled: bool,
+) -> tuple[grouped_batch.GroupedBatchForward, list[dict[str, Any]]]:
+    forward = grouped_batch.grouped_candidate_forward(
+        modules,
+        samples,
+        train_enabled=bool(train_enabled),
+    )
+    results: list[dict[str, Any]] = []
+    for index, sample in enumerate(forward.samples):
+        candidate_count = len(sample["candidate_mask"])
+        results.append(
+            _decision_result(
+                modules=modules,
+                sample=sample,
+                logits=forward.raw_logits[index],
+                masked_logits=forward.masked_logits[index, :candidate_count],
+                loss=forward.per_decision_losses[index],
+            )
+        )
+    return forward, results
+
+
+def _apply_grouped_optimizer_step(
+    modules: GateModules,
+    forward: grouped_batch.GroupedBatchForward,
+) -> float | None:
+    if forward.batch_loss is None:
+        return None
+    modules.optimizer.zero_grad(set_to_none=True)
+    forward.batch_loss.backward()
+    parameters = list(modules.task_encoder.parameters()) + list(
+        modules.offloading_actor.scorer.parameters()
+    )
+    max_norm = (
+        float(modules.max_grad_norm)
+        if modules.max_grad_norm is not None
+        else float("inf")
+    )
+    gradient_norm = modules.torch.nn.utils.clip_grad_norm_(parameters, max_norm)
+    gradient_norm_value = float(gradient_norm.detach().cpu().item())
+    if not math.isfinite(gradient_norm_value):
+        raise FloatingPointError("non-finite grouped imitation gradient norm")
+    modules.optimizer.step()
+    return gradient_norm_value
+
+
+def _decision_result(
+    *,
+    modules: GateModules,
+    sample: dict[str, Any],
+    logits: Any,
+    masked_logits: Any,
+    loss: Any,
+) -> dict[str, Any]:
+    torch = modules.torch
+    finite_logits = bool(torch.isfinite(logits).all().item())
+    finite_loss = bool(torch.isfinite(loss).all().item())
+    if not finite_logits or not finite_loss:
+        raise FloatingPointError("non-finite imitation logits or loss")
     valid_indices = [idx for idx, legal in enumerate(sample["candidate_mask"]) if bool(legal)]
     valid_logits = masked_logits.detach()[valid_indices]
     order = torch.argsort(valid_logits, descending=True).detach().cpu().numpy().tolist()

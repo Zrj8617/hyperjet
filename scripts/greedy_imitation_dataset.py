@@ -177,13 +177,17 @@ def generate_frozen_dataset(
         dag_base_arrival_prob=dag_base_arrival_prob,
     )
     write_json(dataset_dir / MANIFEST_FILENAME, manifest)
-    validate_frozen_dataset(
+    validation = validate_frozen_dataset(
         samples=hydrated_samples,
         manifest=manifest,
         samples_path=samples_path,
         graph_snapshots_path=graph_snapshots_path,
+        decision_samples_checksum=samples_checksum_value,
+        graph_snapshots_checksum=graph_checksum,
     )
-    return hydrated_samples, manifest
+    runtime_manifest = dict(manifest)
+    runtime_manifest["_runtime_validation"] = validation
+    return hydrated_samples, runtime_manifest
 
 
 def load_frozen_dataset(dataset_dir: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -194,26 +198,40 @@ def load_frozen_dataset(dataset_dir: Path) -> tuple[list[dict[str, Any]], dict[s
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     samples_path = dataset_dir / SAMPLES_FILENAME
     graph_snapshots_path = dataset_dir / GRAPH_SNAPSHOTS_FILENAME
-    compact_samples: list[dict[str, Any]] = []
-    if samples_path.is_file():
-        for line in samples_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                compact_samples.append(json.loads(line))
+    if not samples_path.is_file():
+        raise FileNotFoundError(f"decision samples file not found: {samples_path}")
+    if not graph_snapshots_path.is_file():
+        raise FileNotFoundError(f"graph snapshots file not found: {graph_snapshots_path}")
+    compact_samples, samples_checksum_value = _read_jsonl_with_checksum(samples_path)
     graph_snapshots: dict[str, dict[str, Any]] = {}
-    if graph_snapshots_path.is_file():
-        for line in graph_snapshots_path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            graph = json.loads(line)
-            graph_snapshots[str(graph["graph_snapshot_id"])] = graph
+    graph_records, graph_checksum = _read_jsonl_with_checksum(graph_snapshots_path)
+    for graph in graph_records:
+        graph_snapshots[str(graph["graph_snapshot_id"])] = graph
     samples = _hydrate_samples(compact_samples, graph_snapshots)
-    validate_frozen_dataset(
+    validation = validate_frozen_dataset(
         samples=samples,
         manifest=manifest,
         samples_path=samples_path,
         graph_snapshots_path=graph_snapshots_path,
+        decision_samples_checksum=samples_checksum_value,
+        graph_snapshots_checksum=graph_checksum,
     )
-    return samples, manifest
+    runtime_manifest = dict(manifest)
+    runtime_manifest["_runtime_validation"] = validation
+    return samples, runtime_manifest
+
+
+def _read_jsonl_with_checksum(path: Path) -> tuple[list[dict[str, Any]], str]:
+    """Stream one JSONL file while validating the exact on-disk byte content."""
+
+    records: list[dict[str, Any]] = []
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for raw_line in handle:
+            digest.update(raw_line)
+            if raw_line.strip():
+                records.append(json.loads(raw_line))
+    return records, digest.hexdigest()
 
 
 def write_samples(path: Path, samples: list[dict[str, Any]]) -> str:
@@ -247,13 +265,24 @@ def validate_frozen_dataset(
     manifest: dict[str, Any],
     samples_path: Path,
     graph_snapshots_path: Path,
+    decision_samples_checksum: str | None = None,
+    graph_snapshots_checksum: str | None = None,
 ) -> dict[str, Any]:
     if manifest.get("schema") != DATASET_SCHEMA:
         raise ValueError(f"unsupported dataset schema: {manifest.get('schema')}")
     if int(manifest.get("sample_count", -1)) != len(samples):
         raise ValueError("dataset sample_count does not match decision_samples.jsonl")
-    actual_samples_checksum = samples_checksum(samples_path)
-    actual_graph_checksum = samples_checksum(graph_snapshots_path)
+    checksum_file_scan_count = 0
+    if decision_samples_checksum is None:
+        actual_samples_checksum = samples_checksum(samples_path)
+        checksum_file_scan_count += 1
+    else:
+        actual_samples_checksum = str(decision_samples_checksum)
+    if graph_snapshots_checksum is None:
+        actual_graph_checksum = samples_checksum(graph_snapshots_path)
+        checksum_file_scan_count += 1
+    else:
+        actual_graph_checksum = str(graph_snapshots_checksum)
     actual_checksum = _combined_checksum(actual_graph_checksum, actual_samples_checksum)
     if str(manifest.get("dataset_checksum")) != actual_checksum:
         raise ValueError("dataset checksum mismatch")
@@ -286,6 +315,10 @@ def validate_frozen_dataset(
         "sample_count": len(samples),
         "dataset_checksum": actual_checksum,
         "leakage_count": leakage_count,
+        "decision_samples_checksum": actual_samples_checksum,
+        "graph_snapshots_checksum": actual_graph_checksum,
+        "checksum_file_scan_count": int(checksum_file_scan_count),
+        "checksum_reused_after_initial_validation": True,
     }
 
 

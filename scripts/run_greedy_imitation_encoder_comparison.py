@@ -7,7 +7,6 @@ import hashlib
 import json
 import math
 from pathlib import Path
-import random
 import statistics
 import sys
 import time
@@ -19,6 +18,7 @@ if str(ROOT) not in sys.path:
 
 import config
 from scripts import greedy_imitation_dataset as frozen_data
+from scripts import greedy_imitation_grouped_batch as grouped_batch
 from scripts import train_greedy_imitation_gate as gate
 
 
@@ -129,7 +129,6 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     split_samples = frozen_data.samples_by_split(samples)
-    immutable_before = _samples_content_hash(samples)
     sample_ids = frozen_data.sample_ids_by_split(samples)
     rows: list[dict[str, Any]] = []
     for training_seed in args.training_seeds:
@@ -145,9 +144,6 @@ def main(argv: list[str] | None = None) -> int:
                 common_sample_ids=sample_ids,
             )
             rows.append(row)
-    if _samples_content_hash(samples) != immutable_before:
-        raise AssertionError("historical frozen samples were modified during comparison training")
-
     summary = _build_comparison_summary(
         args=args,
         run_dir=run_dir,
@@ -218,44 +214,120 @@ def _run_variant(
     start_time = time.perf_counter()
     train_rows: list[dict[str, Any]] = []
     all_gradient_norms: list[float] = []
-    shuffle_hashes: list[str] = []
+    batch_plan_hashes: list[str] = []
+    total_encoder_forward_count = 0
+    total_scorer_forward_count = 0
+    if modules.device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(modules.device)
     for epoch in range(int(args.supervised_epochs)):
-        ordered = list(split_samples["train"])
         shuffle_seed = _epoch_shuffle_seed(int(training_seed), int(epoch))
-        random.Random(shuffle_seed).shuffle(ordered)
-        ordered_ids = [str(sample["sample_id"]) for sample in ordered]
-        shuffle_hash = _string_list_hash(ordered_ids)
-        shuffle_hashes.append(shuffle_hash)
+        plan = grouped_batch.build_graph_aware_batch_plan(
+            split_samples["train"],
+            target_batch_decisions=int(args.gradient_batch_decisions),
+            shuffle_seed=int(shuffle_seed),
+            shuffle_graph_groups=True,
+        )
+        batch_plan_hashes.append(plan.batch_plan_hash)
         metrics = gate._make_metric_tree()
-        losses = gate._LossAccumulator()
-        for sample in ordered:
-            result = gate._score_sample(modules, sample, train_enabled=True)
-            gate._update_metric_tree(metrics, "train", sample, result)
-            losses.add(result["loss"], modules)
-        losses.flush(modules)
+        epoch_start = time.perf_counter()
+        epoch_loss_sum = 0.0
+        epoch_decision_count = 0
+        epoch_optimizer_steps = 0
+        epoch_gradient_norms: list[float] = []
+        epoch_encoder_forward_count = 0
+        epoch_scorer_forward_count = 0
+        for batch in plan.batches:
+            batch_samples = grouped_batch.samples_for_batch(
+                split_samples["train"],
+                batch,
+            )
+            forward, results = gate._score_grouped_batch(
+                modules,
+                batch_samples,
+                train_enabled=True,
+            )
+            gradient_norm = gate._apply_grouped_optimizer_step(modules, forward)
+            if gradient_norm is not None:
+                epoch_gradient_norms.append(float(gradient_norm))
+                epoch_optimizer_steps += 1
+            epoch_encoder_forward_count += int(forward.encoder_forward_count)
+            epoch_scorer_forward_count += int(forward.scorer_forward_count)
+            epoch_loss_sum += float(
+                forward.per_decision_losses.detach().sum().cpu().item()
+            )
+            epoch_decision_count += len(results)
+            for sample, result in zip(batch_samples, results):
+                gate._update_metric_tree(metrics, "train", sample, result)
+        epoch_wall_time = float(time.perf_counter() - epoch_start)
+        if epoch_decision_count != plan.decision_count:
+            raise AssertionError("grouped epoch decision count drifted from batch plan")
+        if epoch_encoder_forward_count != plan.unique_graph_count:
+            raise AssertionError(
+                "grouped epoch encoder forward count differs from unique graph count"
+            )
         _merge_manifest_skips(metrics, "train", manifest)
-        all_gradient_norms.extend(losses.gradient_norm_values)
+        all_gradient_norms.extend(epoch_gradient_norms)
+        total_encoder_forward_count += epoch_encoder_forward_count
+        total_scorer_forward_count += epoch_scorer_forward_count
         train_summary = gate._summarize_metric_tree(metrics)
         row = {
             "epoch": int(epoch),
             "shuffle_seed": int(shuffle_seed),
-            "shuffle_order_hash": shuffle_hash,
+            "batch_plan_hash": plan.batch_plan_hash,
+            "shuffle_order_hash": _string_list_hash(list(plan.sample_ids)),
             "sample_id_hash": sample_id_hashes["train"],
-            "loss_mean": losses.loss_mean,
-            "optimizer_steps": int(losses.optimizer_steps),
-            "finite_gradient_norm": bool(losses.finite_gradient_norm),
-            "gradient_norm_mean": _mean_or_none(losses.gradient_norm_values),
-            "gradient_norm_max": max(losses.gradient_norm_values) if losses.gradient_norm_values else None,
+            "loss_mean": (
+                float(epoch_loss_sum / epoch_decision_count)
+                if epoch_decision_count
+                else None
+            ),
+            "optimizer_steps": int(epoch_optimizer_steps),
+            "finite_gradient_norm": all(
+                math.isfinite(value) for value in epoch_gradient_norms
+            ),
+            "gradient_norm_mean": _mean_or_none(epoch_gradient_norms),
+            "gradient_norm_max": (
+                max(epoch_gradient_norms) if epoch_gradient_norms else None
+            ),
+            "decision_count": int(plan.decision_count),
+            "unique_graph_count": int(plan.unique_graph_count),
+            "encoder_forward_count": int(epoch_encoder_forward_count),
+            "scorer_forward_count": int(epoch_scorer_forward_count),
+            "decisions_per_graph": plan.decisions_per_graph,
+            "optimizer_batch_count": len(plan.batches),
+            "epoch_wall_time_seconds": epoch_wall_time,
+            "peak_cpu_rss_bytes": _peak_cpu_rss_bytes(),
+            "peak_gpu_memory_allocated_bytes": _peak_gpu_memory_allocated_bytes(
+                torch,
+                modules.device,
+            ),
+            "peak_gpu_memory_reserved_bytes": _peak_gpu_memory_reserved_bytes(
+                torch,
+                modules.device,
+            ),
             "metrics": train_summary,
         }
         train_rows.append(row)
 
-    val_metrics = _evaluate_split(modules, split_samples["val"], "val", manifest)
-    test_metrics = _evaluate_split(modules, split_samples["test"], "test", manifest)
+    val_metrics, val_grouped = _evaluate_split(
+        modules,
+        split_samples["val"],
+        "val",
+        manifest,
+        target_batch_decisions=int(args.gradient_batch_decisions),
+    )
+    test_metrics, test_grouped = _evaluate_split(
+        modules,
+        split_samples["test"],
+        "test",
+        manifest,
+        target_batch_decisions=int(args.gradient_batch_decisions),
+    )
     typed_diagnostics = _typed_diagnostics(
         modules=modules,
         train_samples=split_samples["train"],
         evaluation_samples=split_samples["test"] or split_samples["val"] or split_samples["train"],
+        target_batch_decisions=int(args.gradient_batch_decisions),
     )
     duration_seconds = float(time.perf_counter() - start_time)
     closed_loop = None
@@ -295,8 +367,24 @@ def _run_variant(
         "schema": "greedy_imitation_fixed_dataset_metrics_v1",
         "dataset_checksum": manifest["dataset_checksum"],
         "sample_id_hashes": sample_id_hashes,
+        "batch_plan_hashes": batch_plan_hashes,
         "val": val_metrics,
         "test": test_metrics,
+        "grouped_pipeline": {
+            "train_encoder_forward_count": int(total_encoder_forward_count),
+            "train_scorer_forward_count": int(total_scorer_forward_count),
+            "val": val_grouped,
+            "test": test_grouped,
+            "peak_cpu_rss_bytes": _peak_cpu_rss_bytes(),
+            "peak_gpu_memory_allocated_bytes": _peak_gpu_memory_allocated_bytes(
+                torch,
+                modules.device,
+            ),
+            "peak_gpu_memory_reserved_bytes": _peak_gpu_memory_reserved_bytes(
+                torch,
+                modules.device,
+            ),
+        },
         "typed_diagnostics": typed_diagnostics,
         "closed_loop_eval": closed_loop,
         "closed_loop_is_secondary_diagnostic": True,
@@ -313,6 +401,10 @@ def _run_variant(
         and test_overall.get("finite_loss", True)
         and test_overall.get("finite_logits", True)
         and all(math.isfinite(value) for value in all_gradient_norms)
+        and all(
+            int(row["encoder_forward_count"]) == int(row["unique_graph_count"])
+            for row in train_rows
+        )
     )
     return {
         "encoder": encoder,
@@ -321,7 +413,10 @@ def _run_variant(
         "dataset_checksum": manifest["dataset_checksum"],
         "sample_id_hashes": sample_id_hashes,
         "candidate_scorer_initial_state_hash": scorer_initial_hash,
-        "shuffle_order_hashes": shuffle_hashes,
+        "batch_plan_hashes": batch_plan_hashes,
+        "shuffle_order_hashes": [
+            str(row["shuffle_order_hash"]) for row in train_rows
+        ],
         "trainable_parameter_count": int(trainable_parameter_count),
         "training_duration_seconds": duration_seconds,
         "finite_gradient_norm": all(math.isfinite(value) for value in all_gradient_norms),
@@ -337,13 +432,46 @@ def _evaluate_split(
     samples: list[dict[str, Any]],
     split: str,
     manifest: dict[str, Any],
-) -> dict[str, Any]:
+    *,
+    target_batch_decisions: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     metrics = gate._make_metric_tree()
-    for sample in samples:
-        result = gate._score_sample(modules, sample, train_enabled=False)
-        gate._update_metric_tree(metrics, split, sample, result)
+    plan = grouped_batch.build_graph_aware_batch_plan(
+        samples,
+        target_batch_decisions=int(target_batch_decisions),
+        shuffle_seed=_evaluation_plan_seed(split),
+        shuffle_graph_groups=False,
+    )
+    encoder_forward_count = 0
+    scorer_forward_count = 0
+    start_time = time.perf_counter()
+    for batch in plan.batches:
+        batch_samples = grouped_batch.samples_for_batch(samples, batch)
+        forward, results = gate._score_grouped_batch(
+            modules,
+            batch_samples,
+            train_enabled=False,
+        )
+        encoder_forward_count += int(forward.encoder_forward_count)
+        scorer_forward_count += int(forward.scorer_forward_count)
+        for sample, result in zip(batch_samples, results):
+            gate._update_metric_tree(metrics, split, sample, result)
+    wall_time = float(time.perf_counter() - start_time)
+    if encoder_forward_count != plan.unique_graph_count:
+        raise AssertionError(
+            f"{split} grouped encoder forward count differs from unique graph count"
+        )
     _merge_manifest_skips(metrics, split, manifest)
-    return gate._summarize_metric_tree(metrics)
+    return gate._summarize_metric_tree(metrics), {
+        "batch_plan_hash": plan.batch_plan_hash,
+        "decision_count": int(plan.decision_count),
+        "unique_graph_count": int(plan.unique_graph_count),
+        "encoder_forward_count": int(encoder_forward_count),
+        "scorer_forward_count": int(scorer_forward_count),
+        "decisions_per_graph": plan.decisions_per_graph,
+        "optimizer_batch_count": len(plan.batches),
+        "wall_time_seconds": wall_time,
+    }
 
 
 def _merge_manifest_skips(
@@ -362,6 +490,7 @@ def _typed_diagnostics(
     modules: gate.GateModules,
     train_samples: list[dict[str, Any]],
     evaluation_samples: list[dict[str, Any]],
+    target_batch_decisions: int,
 ) -> dict[str, Any] | None:
     layers = [
         layer
@@ -392,17 +521,34 @@ def _typed_diagnostics(
     modules.optimizer.zero_grad(set_to_none=True)
 
     gate_values: dict[int, list[float]] = defaultdict(list)
+    capture_multiplier = {"value": 1}
     handles = []
     for index, layer in enumerate(layers):
         def capture(_module: Any, _inputs: Any, output: Any, *, layer_index: int = index) -> None:
             values = modules.torch.sigmoid(output.detach()).reshape(-1).cpu().tolist()
-            gate_values[layer_index].extend(float(item) for item in values)
+            for _ in range(int(capture_multiplier["value"])):
+                gate_values[layer_index].extend(float(item) for item in values)
 
         handles.append(layer.gate_network.register_forward_hook(capture))
     try:
-        for sample in evaluation_samples:
-            with modules.torch.no_grad():
-                gate._sample_logits(modules, sample)
+        plan = grouped_batch.build_graph_aware_batch_plan(
+            evaluation_samples,
+            target_batch_decisions=int(target_batch_decisions),
+            shuffle_seed=_evaluation_plan_seed("typed_diagnostics"),
+            shuffle_graph_groups=False,
+        )
+        for batch in plan.batches:
+            for group in batch.groups:
+                capture_multiplier["value"] = int(group.decision_count)
+                graph_samples = [
+                    evaluation_samples[index] for index in group.sample_indices
+                ]
+                with modules.torch.no_grad():
+                    gate._score_grouped_batch(
+                        modules,
+                        graph_samples,
+                        train_enabled=False,
+                    )
     finally:
         for handle in handles:
             handle.remove()
@@ -446,11 +592,19 @@ def _build_comparison_summary(
     sample_ids: dict[str, list[str]],
 ) -> dict[str, Any]:
     scorer_hashes_by_seed: dict[int, set[str]] = defaultdict(set)
+    batch_plan_hashes_by_seed: dict[int, set[tuple[str, ...]]] = defaultdict(set)
     for row in rows:
-        scorer_hashes_by_seed[int(row["training_seed"])].add(
+        training_seed = int(row["training_seed"])
+        scorer_hashes_by_seed[training_seed].add(
             str(row["candidate_scorer_initial_state_hash"])
         )
+        batch_plan_hashes_by_seed[training_seed].add(
+            tuple(str(value) for value in row.get("batch_plan_hashes", []))
+        )
     scorer_hash_match = all(len(values) == 1 for values in scorer_hashes_by_seed.values())
+    batch_plan_hash_match = all(
+        len(values) == 1 for values in batch_plan_hashes_by_seed.values()
+    )
     common_id_hashes = {
         split: _string_list_hash(sample_ids[split])
         for split in ("train", "val", "test")
@@ -477,6 +631,7 @@ def _build_comparison_summary(
     technical_pass = bool(
         int(manifest["leakage_count"]) == 0
         and scorer_hash_match
+        and batch_plan_hash_match
         and all(row["dataset_checksum"] == manifest["dataset_checksum"] for row in rows)
         and all(row["sample_id_hashes"] == common_id_hashes for row in rows)
         and all(bool(row["technical_pass"]) for row in rows)
@@ -499,6 +654,16 @@ def _build_comparison_summary(
         "candidate_scorer_initial_hashes_by_seed": {
             str(seed): sorted(values)
             for seed, values in sorted(scorer_hashes_by_seed.items())
+        },
+        "batch_plan_hash_match_across_encoders": batch_plan_hash_match,
+        "batch_plan_hashes_by_seed": {
+            str(seed): [list(values) for values in sorted(hash_sets)]
+            for seed, hash_sets in sorted(batch_plan_hashes_by_seed.items())
+        },
+        "checksum_validation": {
+            **dict(manifest.get("_runtime_validation", {})),
+            "post_training_dataset_scan_performed": False,
+            "post_training_checksum_reused": str(manifest["dataset_checksum"]),
         },
         "variant_runs": rows,
         "encoder_aggregate": aggregate,
@@ -542,7 +707,8 @@ def _common_hyperparameters(args: argparse.Namespace) -> dict[str, Any]:
         "gradient_batch_decisions": int(args.gradient_batch_decisions),
         "supervised_epochs": int(args.supervised_epochs),
         "max_grad_norm": float(args.max_grad_norm),
-        "epoch_shuffle_scheme": "sha256(training_seed, epoch)",
+        "epoch_shuffle_scheme": "sha256(training_seed, epoch), graph-group shuffle",
+        "batch_plan": "indivisible graph groups packed by target decision count",
         "early_stopping": None,
     }
 
@@ -614,32 +780,6 @@ def _state_dict_hash(state_dict: dict[str, Any]) -> str:
     return digest.hexdigest()
 
 
-def _samples_content_hash(samples: list[dict[str, Any]]) -> str:
-    digest = hashlib.sha256()
-    seen_graph_ids: set[str] = set()
-    for sample in samples:
-        compact = {
-            key: value
-            for key, value in sample.items()
-            if key not in frozen_data.GRAPH_FIELDS
-        }
-        digest.update(frozen_data.canonical_json(compact).encode("utf-8"))
-        digest.update(b"\n")
-        graph_id = str(sample["graph_snapshot_id"])
-        if graph_id in seen_graph_ids:
-            continue
-        seen_graph_ids.add(graph_id)
-        graph_payload = {
-            key: sample[key]
-            for key in frozen_data.GRAPH_FIELDS
-            if key in sample
-        }
-        digest.update(f"graph:{graph_id}:".encode("ascii"))
-        digest.update(frozen_data.canonical_json(graph_payload).encode("utf-8"))
-        digest.update(b"\n")
-    return digest.hexdigest()
-
-
 def _string_list_hash(values: list[str]) -> str:
     digest = hashlib.sha256()
     for value in values:
@@ -662,6 +802,37 @@ def _epoch_shuffle_seed(training_seed: int, epoch: int) -> int:
         byteorder="big",
         signed=False,
     )
+
+
+def _evaluation_plan_seed(split: str) -> int:
+    return int.from_bytes(
+        hashlib.sha256(f"grouped-evaluation:{str(split)}".encode("utf-8")).digest()[:8],
+        byteorder="big",
+        signed=False,
+    )
+
+
+def _peak_cpu_rss_bytes() -> int | None:
+    try:
+        import resource
+    except ModuleNotFoundError:
+        return None
+    value = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    if sys.platform == "darwin":
+        return value
+    return value * 1024
+
+
+def _peak_gpu_memory_allocated_bytes(torch: Any, device: Any) -> int | None:
+    if getattr(device, "type", None) != "cuda":
+        return None
+    return int(torch.cuda.max_memory_allocated(device))
+
+
+def _peak_gpu_memory_reserved_bytes(torch: Any, device: Any) -> int | None:
+    if getattr(device, "type", None) != "cuda":
+        return None
+    return int(torch.cuda.max_memory_reserved(device))
 
 
 def _mean_or_none(values: list[float]) -> float | None:

@@ -40,6 +40,15 @@ def main() -> int:
         _assert(second_manifest["leakage_count"] == 0, "second dataset must have zero leakage")
 
         loaded_samples, loaded_manifest = dataset.load_frozen_dataset(first_dir)
+        runtime_validation = loaded_manifest.get("_runtime_validation", {})
+        _assert(
+            runtime_validation.get("checksum_file_scan_count") == 0,
+            "streaming dataset load must reuse checksums computed during JSONL parsing",
+        )
+        _assert(
+            runtime_validation.get("dataset_checksum") == first_manifest["dataset_checksum"],
+            "runtime checksum validation receipt mismatch",
+        )
         _assert(
             dataset.canonical_json(loaded_samples) == dataset.canonical_json(first_samples),
             "dataset load/save round trip changed samples",
@@ -47,6 +56,22 @@ def main() -> int:
         _assert(
             loaded_manifest["dataset_checksum"] == first_manifest["dataset_checksum"],
             "round-trip manifest checksum mismatch",
+        )
+        original_checksum_scan = dataset.samples_checksum
+        dataset.samples_checksum = lambda _path: (_ for _ in ()).throw(
+            AssertionError("load_frozen_dataset performed a second checksum file scan")
+        )
+        try:
+            no_rescan_samples, no_rescan_manifest = dataset.load_frozen_dataset(first_dir)
+        finally:
+            dataset.samples_checksum = original_checksum_scan
+        _assert(
+            len(no_rescan_samples) == len(loaded_samples),
+            "no-rescan load changed the sample count",
+        )
+        _assert(
+            no_rescan_manifest["_runtime_validation"]["checksum_file_scan_count"] == 0,
+            "no-rescan load did not report checksum reuse",
         )
         if loaded_samples:
             original_value = loaded_samples[0]["task_features"][0][0]
@@ -59,6 +84,10 @@ def main() -> int:
 
         manifest_disk = json.loads(
             (first_dir / dataset.MANIFEST_FILENAME).read_text(encoding="utf-8")
+        )
+        _assert(
+            "_runtime_validation" not in manifest_disk,
+            "runtime checksum receipt must not modify the frozen manifest",
         )
         for key in (
             "schema",
