@@ -237,8 +237,10 @@ def copy_clean_graph_snapshot(snapshot: CleanGraphSnapshot) -> CleanGraphSnapsho
     """Create an independent historical GraphSnapshot input copy for rollout storage."""
     task_features = np.asarray(snapshot.task_features, dtype=np.float32).copy()
     incidence_matrix = np.asarray(snapshot.incidence_matrix, dtype=np.float32).copy()
+    hyperedge_type_ids = np.asarray(snapshot.hyperedge_type_ids, dtype=np.int64).copy()
     task_features.setflags(write=False)
     incidence_matrix.setflags(write=False)
+    hyperedge_type_ids.setflags(write=False)
     return CleanGraphSnapshot(
         current_time_step=int(snapshot.current_time_step),
         active_task_ids=list(snapshot.active_task_ids),
@@ -252,6 +254,7 @@ def copy_clean_graph_snapshot(snapshot: CleanGraphSnapshot) -> CleanGraphSnapsho
         attribute_hyperedges=[list(edge) for edge in snapshot.attribute_hyperedges],
         partition_hyperedges=[list(edge) for edge in snapshot.partition_hyperedges],
         incidence_matrix=incidence_matrix,
+        hyperedge_type_ids=hyperedge_type_ids,
         partition_status=str(getattr(snapshot, "partition_status", "disabled")),
     )
 

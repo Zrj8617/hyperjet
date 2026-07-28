@@ -25,6 +25,7 @@ class CleanGraphSnapshot:
     attribute_hyperedges: list[list[int]]
     partition_hyperedges: list[list[int]]
     incidence_matrix: np.ndarray
+    hyperedge_type_ids: np.ndarray
     # KaHyPar engineering-degrade state for this slot. One of:
     #   "disabled"          -> ENABLE_KAHYPAR_PARTITION_HYPEREDGES off or < 2 active tasks
     #   "success"           -> KaHyPar re-partitioned this slot; cache updated
@@ -192,10 +193,22 @@ class CleanGraphBuilder:
             force_update=attribute_updated,
         )
         self._last_seen_dag_arrival_version = max(self._last_seen_dag_arrival_version, current_arrival_version)
+        final_hyperedges = [
+            *dag_hyperedges,
+            *khop_hyperedges,
+            *attribute_hyperedges,
+            *partition_hyperedges,
+        ]
+        hyperedge_type_ids = self._build_hyperedge_type_ids(
+            dag_count=len(dag_hyperedges),
+            khop_count=len(khop_hyperedges),
+            attribute_count=len(attribute_hyperedges),
+            partition_count=len(partition_hyperedges),
+        )
         # 最后把全部超边合并成节点—超边关联矩阵，作为 HGNN 的结构输入。
         incidence_matrix = self._build_incidence_matrix(
             node_count=len(active_task_ids),
-            hyperedges=[*dag_hyperedges, *khop_hyperedges, *attribute_hyperedges, *partition_hyperedges],
+            hyperedges=final_hyperedges,
         )
 
         return CleanGraphSnapshot(
@@ -211,6 +224,7 @@ class CleanGraphBuilder:
             attribute_hyperedges=attribute_hyperedges,
             partition_hyperedges=partition_hyperedges,
             incidence_matrix=incidence_matrix,
+            hyperedge_type_ids=hyperedge_type_ids,
             partition_status=str(self._last_partition_status),
         )
 
@@ -492,6 +506,27 @@ class CleanGraphBuilder:
                 if 0 <= int(node_idx) < node_count:
                     incidence[int(node_idx), edge_idx] = 1.0
         return incidence
+
+    def _build_hyperedge_type_ids(
+        self,
+        *,
+        dag_count: int,
+        khop_count: int,
+        attribute_count: int,
+        partition_count: int,
+    ) -> np.ndarray:
+        """返回与最终 incidence matrix 列一一对应的超边类型元数据。
+
+        0 = DAG dependency, 1 = k-hop, 2 = attribute, 3 = KaHyPar partition.
+        类型 id 根据最终拼接各类超边时的顺序同步生成，不根据节点集合反推。
+        """
+        return np.asarray(
+            [0] * int(dag_count)
+            + [1] * int(khop_count)
+            + [2] * int(attribute_count)
+            + [3] * int(partition_count),
+            dtype=np.int64,
+        )
 
     def _build_attribute_vectors(
         self,
