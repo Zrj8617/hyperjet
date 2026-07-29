@@ -262,22 +262,30 @@ class DecisionBanditPPOUpdater:
     def _current_distribution(self, record: DecisionBanditRecord) -> Any:
         torch = self.torch
         task_features = torch.as_tensor(
-            np.asarray(record.task_features), dtype=torch.float32, device=self.device
+            np.array(record.task_features, dtype=np.float32, copy=True),
+            dtype=torch.float32,
+            device=self.device,
         )
         task_embeddings = self.encoder(task_features)
         task_index = int(record.task_local_index)
         if task_index < 0 or task_index >= int(task_embeddings.shape[0]):
             raise ValueError("historical task_local_index is outside MLP output")
         dynamic = torch.as_tensor(
-            np.asarray(record.dynamic_uav_features), dtype=torch.float32, device=self.device
+            np.array(record.dynamic_uav_features, dtype=np.float32, copy=True),
+            dtype=torch.float32,
+            device=self.device,
         )
         pair = torch.as_tensor(
-            np.asarray(record.pair_features), dtype=torch.float32, device=self.device
+            np.array(record.pair_features, dtype=np.float32, copy=True),
+            dtype=torch.float32,
+            device=self.device,
         )
         task = task_embeddings[task_index].reshape(1, -1).expand(dynamic.shape[0], -1)
         features = torch.cat([task, dynamic, pair], dim=1)
         mask = torch.as_tensor(
-            np.asarray(record.candidate_mask), dtype=torch.bool, device=self.device
+            np.array(record.candidate_mask, dtype=bool, copy=True),
+            dtype=torch.bool,
+            device=self.device,
         )
         logits = self.scorer(features)
         masked_logits = logits.masked_fill(~mask, torch.finfo(logits.dtype).min)

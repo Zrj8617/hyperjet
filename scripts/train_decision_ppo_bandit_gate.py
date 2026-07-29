@@ -148,7 +148,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         for _ in range(int(args.slots_per_update)):
             snapshot = current_prepared.graph_snapshot
             task_features = torch.as_tensor(
-                np.asarray(snapshot.task_features),
+                np.array(snapshot.task_features, dtype=np.float32, copy=True),
                 dtype=torch.float32,
                 device=device,
             )

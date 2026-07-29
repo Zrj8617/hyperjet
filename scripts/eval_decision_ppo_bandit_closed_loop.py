@@ -112,7 +112,11 @@ def evaluate_checkpoint(args: argparse.Namespace) -> tuple[list[dict[str, Any]],
                     prepared = prepare_slot_state(env=env, graph_builder=builder)
                     env.apply_movement({})
                     task_features = torch.as_tensor(
-                        np.asarray(prepared.graph_snapshot.task_features),
+                        np.array(
+                            prepared.graph_snapshot.task_features,
+                            dtype=np.float32,
+                            copy=True,
+                        ),
                         dtype=torch.float32,
                         device=device,
                     )
