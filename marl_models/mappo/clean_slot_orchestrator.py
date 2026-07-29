@@ -83,6 +83,7 @@ class CleanOffloadingRolloutRecord:
     critic_global_context: np.ndarray | None = None
     selected_estimated_finish_time: float | None = None
     selected_estimated_incremental_delay: float | None = None
+    candidate_estimated_finish_times: np.ndarray | None = None
 
 
 @dataclass(slots=True)

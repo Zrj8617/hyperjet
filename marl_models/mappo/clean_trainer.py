@@ -8,6 +8,11 @@ from typing import Any, Iterable
 
 import numpy as np
 
+from marl_models.mappo.clean_eft_auxiliary import (
+    compute_eft_auxiliary_objective,
+    eft_auxiliary_lambda,
+    summarize_historical_eft_items,
+)
 from marl_models.mappo.clean_slot_orchestrator import (
     CleanEncodedSlotState,
     CleanSlotRolloutBuffer,
@@ -52,6 +57,12 @@ class CleanPPOUpdateConfig:
     offloading_action_value_loss_coef: float = 0.0
     offloading_lagged_q_coef: float = 0.0
     offloading_lagged_q_loss_coef: float = 0.0
+    # Phase-1 diagnostic only. Zero preserves the clean MAPPO baseline.
+    eft_auxiliary_lambda_initial: float = 0.0
+    eft_auxiliary_regret_scale: float = 1.0
+    eft_auxiliary_constant_through_update: int = 8
+    eft_auxiliary_zero_at_update: int = 20
+    eft_auxiliary_sampling_seed: int = 0
     # Diagnostics-only: every N-th update, decompose the HGNN gradient into its
     # actor-loss and value-loss components via torch.autograd.grad (never
     # touches .grad). 0 disables the decomposition.
@@ -232,6 +243,7 @@ class CleanPPOUpdater:
         self.update_step = 0
         _validate_action_value_configuration(self.config, self.modules)
         _validate_value_configuration(self.config)
+        _validate_eft_auxiliary_configuration(self.config)
 
     def update(
         self,
@@ -328,6 +340,14 @@ class CleanPPOUpdater:
         decompose_interval = int(getattr(self.config, "hgnn_grad_decomposition_interval", 0))
         decompose_due = decompose_interval > 0 and (self.update_step % decompose_interval == 0)
         for epoch_index in range(max(int(self.config.ppo_epochs), 1)):
+            auxiliary_generator = None
+            if float(self.config.eft_auxiliary_lambda_initial) > 0.0:
+                auxiliary_generator = torch.Generator(device=self.device)
+                auxiliary_generator.manual_seed(
+                    int(self.config.eft_auxiliary_sampling_seed)
+                    + int(self.update_step) * max(int(self.config.ppo_epochs), 1)
+                    + int(epoch_index)
+                )
             loss_parts = self._loss(
                 records=records,
                 returns=returns,
@@ -337,10 +357,42 @@ class CleanPPOUpdater:
                 advantages=advantages,
                 lagged_q_samples=lagged_samples,
                 frozen_lagged_corrections=frozen_lagged_corrections,
+                eft_auxiliary_generator=auxiliary_generator,
             )
             diagnostics.update(loss_parts.get("action_value_diagnostics", {}))
             diagnostics.update(loss_parts.get("lagged_q_diagnostics", {}))
             diagnostics.update(loss_parts.get("value_diagnostics", {}))
+            diagnostics.update(loss_parts.get("eft_auxiliary_diagnostics", {}))
+            if epoch_index == 0:
+                target_parameters = _unique_parameters(
+                    [self.modules.hgnn, self.modules.offloading_actor]
+                )
+                ppo_target_grad = _loss_to_parameter_grad_norm(
+                    loss_parts["offloading_loss"], target_parameters
+                )
+                raw_eft_target_grad = _loss_to_parameter_grad_norm(
+                    loss_parts["eft_auxiliary_loss"], target_parameters
+                )
+                weighted_eft_target_grad = _loss_to_parameter_grad_norm(
+                    loss_parts["weighted_eft_auxiliary_loss"], target_parameters
+                )
+                diagnostics.update(
+                    {
+                        "eft_aux_target_grad_epoch": int(epoch_index),
+                        "offloading_ppo_target_grad_norm": float(ppo_target_grad),
+                        "eft_aux_raw_target_grad_norm": float(raw_eft_target_grad),
+                        "eft_aux_weighted_target_grad_norm": float(weighted_eft_target_grad),
+                        "eft_aux_weighted_to_ppo_grad_ratio": float(
+                            weighted_eft_target_grad / max(ppo_target_grad, 1e-12)
+                        ),
+                        "eft_aux_direct_critic_grad_norm": _loss_to_module_grad_norm(
+                            loss_parts["eft_auxiliary_loss"], self.modules.critic
+                        ),
+                        "eft_aux_direct_movement_grad_norm": _loss_to_module_grad_norm(
+                            loss_parts["eft_auxiliary_loss"], self.modules.movement_actor
+                        ),
+                    }
+                )
             if decompose_due and epoch_index == 0:
                 # torch.autograd.grad reads the live graph without writing .grad,
                 # so this is behavior-neutral for the optimizer step below.
@@ -533,12 +585,14 @@ class CleanPPOUpdater:
         advantages: Any,
         lagged_q_samples: list[Any] | None = None,
         frozen_lagged_corrections: list[Any] | None = None,
+        eft_auxiliary_generator: Any | None = None,
     ) -> dict[str, Any]:
         per_slot_move_losses: list[Any] = []
         per_slot_move_entropies: list[Any] = []
         value_losses: list[Any] = []
         value_clip_indicators: list[Any] = []
         offloading_items: list[dict[str, Any]] = []
+        eft_auxiliary_items: list[dict[str, Any]] = []
         action_value_losses_by_slot: dict[int, list[Any]] = {}
         action_value_targets: list[Any] = []
         selected_action_values: list[Any] = []
@@ -639,6 +693,31 @@ class CleanPPOUpdater:
                     "old_log_prob": old_log_prob,
                     "entropy": dist.entropy(),
                 }
+                eft_values_np = offloading_record.candidate_estimated_finish_times
+                if eft_values_np is None:
+                    if float(self.config.eft_auxiliary_lambda_initial) > 0.0:
+                        raise ValueError(
+                            "offloading rollout record lacks decision-time candidate EFT vector"
+                        )
+                else:
+                    eft_values = torch.as_tensor(
+                        np.asarray(eft_values_np, dtype=np.float32).copy(),
+                        dtype=torch.float32,
+                        device=self.device,
+                    ).detach()
+                    if eft_values.shape != mask.shape:
+                        raise ValueError(
+                            "offloading candidate EFT vector shape is inconsistent"
+                        )
+                    eft_auxiliary_items.append(
+                        {
+                            "masked_logits": logits,
+                            "candidate_mask": mask,
+                            "candidate_estimated_finish_times": eft_values,
+                            "rollout_action": int(action_index),
+                            "decision_order": int(offloading_record.decision_order),
+                        }
+                    )
                 if action_value_enabled:
                     global_context = critic_input.detach().reshape(1, -1).expand(candidate_count, -1)
                     action_value_input = torch.cat([features.detach(), global_context], dim=1)
@@ -731,12 +810,67 @@ class CleanPPOUpdater:
         lagged_q_diagnostics["offloading_lagged_q_label_coverage"] = float(
             len(list(lagged_q_samples or [])) / max(len(offloading_items), 1)
         )
+        eft_lambda = eft_auxiliary_lambda(
+            self.update_step,
+            lambda_initial=float(self.config.eft_auxiliary_lambda_initial),
+            constant_through_update=int(
+                self.config.eft_auxiliary_constant_through_update
+            ),
+            zero_at_update=int(self.config.eft_auxiliary_zero_at_update),
+        )
+        eft_rollout_diagnostics = summarize_historical_eft_items(eft_auxiliary_items)
+        if (
+            float(self.config.eft_auxiliary_lambda_initial) > 0.0
+            and eft_auxiliary_items
+        ):
+            eft_auxiliary_loss, eft_auxiliary_diagnostics = (
+                compute_eft_auxiliary_objective(
+                    eft_auxiliary_items,
+                    regret_scale=float(self.config.eft_auxiliary_regret_scale),
+                    categorical_cls=Categorical,
+                    generator=eft_auxiliary_generator,
+                )
+            )
+        else:
+            eft_auxiliary_loss = zero
+            eft_auxiliary_diagnostics = {
+                "eft_aux_effective_decision_count": 0,
+                "eft_aux_excluded_zero_legal_count": 0,
+                "eft_aux_excluded_single_legal_count": 0,
+                "eft_aux_invalid_action_count": 0,
+                "eft_aux_sampled_raw_regret_mean": 0.0,
+                "eft_aux_sampled_raw_regret_p95": 0.0,
+                "eft_aux_greedy_agreement": 0.0,
+                "eft_aux_margin_ge_5s_accuracy": None,
+                "eft_aux_margin_ge_20s_accuracy": None,
+                "eft_aux_entropy_mean": 0.0,
+            }
+        weighted_eft_auxiliary_loss = float(eft_lambda) * eft_auxiliary_loss
+        eft_auxiliary_diagnostics.update(eft_rollout_diagnostics)
+        eft_auxiliary_diagnostics.update(
+            {
+                "eft_aux_lambda": float(eft_lambda),
+                "eft_aux_lambda_initial": float(
+                    self.config.eft_auxiliary_lambda_initial
+                ),
+                "eft_aux_regret_scale": float(
+                    self.config.eft_auxiliary_regret_scale
+                ),
+                "eft_aux_raw_loss": float(
+                    eft_auxiliary_loss.detach().cpu().item()
+                ),
+                "eft_aux_weighted_loss": float(
+                    weighted_eft_auxiliary_loss.detach().cpu().item()
+                ),
+            }
+        )
         total_loss = (
             movement_loss
             + offloading_loss
             + float(self.config.value_coef) * value_loss
             + float(self.config.offloading_action_value_loss_coef) * offloading_action_value_loss
             + float(self.config.offloading_lagged_q_loss_coef) * offloading_lagged_q_loss
+            + weighted_eft_auxiliary_loss
             - float(self.config.movement_entropy_coef) * movement_entropy
             - float(self.config.offloading_entropy_coef) * offloading_entropy
         )
@@ -746,6 +880,8 @@ class CleanPPOUpdater:
             ("value_loss", value_loss),
             ("offloading_action_value_loss", offloading_action_value_loss),
             ("offloading_lagged_q_loss", offloading_lagged_q_loss),
+            ("eft_auxiliary_loss", eft_auxiliary_loss),
+            ("weighted_eft_auxiliary_loss", weighted_eft_auxiliary_loss),
             ("total_loss", total_loss),
         ):
             if not bool(torch.isfinite(loss_value).item()):
@@ -766,9 +902,12 @@ class CleanPPOUpdater:
             "value_loss": value_loss,
             "offloading_action_value_loss": offloading_action_value_loss,
             "offloading_lagged_q_loss": offloading_lagged_q_loss,
+            "eft_auxiliary_loss": eft_auxiliary_loss,
+            "weighted_eft_auxiliary_loss": weighted_eft_auxiliary_loss,
             "total_loss": total_loss,
             "action_value_diagnostics": action_value_diagnostics,
             "lagged_q_diagnostics": lagged_q_diagnostics,
+            "eft_auxiliary_diagnostics": eft_auxiliary_diagnostics,
             "value_diagnostics": {
                 "value_clip_fraction": float(
                     torch.stack(value_clip_indicators).mean().detach().cpu().item()
@@ -853,6 +992,32 @@ def _validate_value_configuration(config: CleanPPOUpdateConfig) -> None:
     clip_epsilon = float(config.value_clip_epsilon)
     if not np.isfinite(clip_epsilon) or clip_epsilon < 0.0:
         raise ValueError("value clip epsilon must be finite and non-negative")
+
+
+def _validate_eft_auxiliary_configuration(config: CleanPPOUpdateConfig) -> None:
+    initial = float(config.eft_auxiliary_lambda_initial)
+    scale = float(config.eft_auxiliary_regret_scale)
+    if not np.isfinite(initial) or initial < 0.0:
+        raise ValueError("EFT auxiliary lambda must be finite and non-negative")
+    if not np.isfinite(scale) or scale <= 0.0:
+        raise ValueError("EFT auxiliary regret scale must be finite and positive")
+    # Validate the full schedule even when disabled, so saved controls are
+    # unambiguous and resume checks can reject malformed configurations.
+    eft_auxiliary_lambda(
+        0,
+        lambda_initial=initial,
+        constant_through_update=int(config.eft_auxiliary_constant_through_update),
+        zero_at_update=int(config.eft_auxiliary_zero_at_update),
+    )
+    if initial > 0.0 and (
+        float(config.offloading_counterfactual_coef) > 0.0
+        or float(config.offloading_action_value_loss_coef) > 0.0
+        or float(config.offloading_lagged_q_coef) > 0.0
+        or float(config.offloading_lagged_q_loss_coef) > 0.0
+    ):
+        raise ValueError(
+            "EFT auxiliary diagnostic cannot be combined with counterfactual or lagged-Q paths"
+        )
 
 
 def _normalized_clipped_value_loss(
@@ -1040,6 +1205,21 @@ def _loss_to_module_grad_norm(loss: Any, module: Any) -> float:
     return float(total ** 0.5)
 
 
+def _loss_to_parameter_grad_norm(loss: Any, parameters: list[Any]) -> float:
+    params = [param for param in parameters if param.requires_grad]
+    if not params or not (
+        isinstance(loss, torch.Tensor) and loss.requires_grad and loss.grad_fn is not None
+    ):
+        return 0.0
+    grads = torch.autograd.grad(loss, params, retain_graph=True, allow_unused=True)
+    total = sum(
+        float(grad.detach().pow(2).sum().cpu().item())
+        for grad in grads
+        if grad is not None
+    )
+    return float(total ** 0.5)
+
+
 def build_single_optimizer(
     modules: CleanTrainingModules,
     *,
@@ -1176,6 +1356,19 @@ def write_clean_training_log(
         "completed_DAG_count": info.get("completed_dag_count"),
         "DAG_completion_rate": info.get("dag_completion_rate"),
         "DAG_throughput": info.get("dag_throughput"),
+        "average_dag_flowtime": info.get(
+            "average_dag_flowtime", info.get("avg_dag_flowtime")
+        ),
+        "arrival_attempt_count": info.get("arrival_attempt_count"),
+        "arrival_admitted_count": info.get("arrival_admitted_count"),
+        "arrival_blocked_count": info.get("arrival_blocked_count"),
+        "arrival_blocked_reasons": info.get("arrival_blocked_reasons", {}),
+        "step_arrival_attempt_count": info.get("step_arrival_attempt_count"),
+        "step_arrival_admitted_count": info.get("step_arrival_admitted_count"),
+        "step_arrival_blocked_count": info.get("step_arrival_blocked_count"),
+        "step_arrival_blocked_reasons": info.get(
+            "step_arrival_blocked_reasons", {}
+        ),
         "invalid_assignment_count": info.get("invalid_assignment_count"),
         "invalid_assignment_rate": info.get("invalid_assignment_rate"),
         "action_executed_rate": info.get("action_executed_rate"),

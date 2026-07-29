@@ -4,6 +4,7 @@ import argparse
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+import hashlib
 import json
 import math
 import multiprocessing
@@ -48,6 +49,7 @@ TASK_ENCODER_MLP = "mlp"
 TASK_ENCODER_CURRENT_MEAN_HGNN = "current_mean_hgnn"
 TASK_ENCODER_STANDARD_WEIGHTED_HGNN = "standard_weighted_hgnn"
 TASK_ENCODER_TYPED_GATED_HGNN = "typed_gated_hgnn"
+BANDIT_CHECKPOINT_SCHEMA = "greedy_eft_contextual_bandit_checkpoint_v1"
 TASK_ENCODER_CHOICES = (
     TASK_ENCODER_LEGACY_HGNN,
     TASK_ENCODER_MLP,
@@ -85,6 +87,123 @@ def _positive_int(value: str | int) -> int:
     if resolved <= 0:
         raise argparse.ArgumentTypeError("value must be a positive integer")
     return resolved
+
+
+def _nonnegative_int(value: str | int) -> int:
+    resolved = int(value)
+    if resolved < 0:
+        raise argparse.ArgumentTypeError("value must be a non-negative integer")
+    return resolved
+
+
+def _positive_finite_float(value: str | float) -> float:
+    resolved = float(value)
+    if not math.isfinite(resolved) or resolved <= 0.0:
+        raise argparse.ArgumentTypeError("value must be finite and positive")
+    return resolved
+
+
+def _parse_update_counts(value: str) -> set[int]:
+    text = str(value).strip()
+    if not text:
+        return set()
+    counts: set[int] = set()
+    for token in text.split(","):
+        count = int(token.strip())
+        if count < 0:
+            raise ValueError("checkpoint update counts must be non-negative")
+        counts.add(count)
+    return counts
+
+
+def _module_state_sha256(module: Any) -> str:
+    digest = hashlib.sha256()
+    for key, tensor in sorted(module.state_dict().items()):
+        value = tensor.detach().cpu().contiguous()
+        digest.update(str(key).encode("utf-8"))
+        digest.update(str(value.dtype).encode("utf-8"))
+        digest.update(str(tuple(value.shape)).encode("utf-8"))
+        digest.update(value.numpy().tobytes())
+    return digest.hexdigest()
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _initialize_offloading_policy(
+    *,
+    args: argparse.Namespace,
+    modules: CleanTrainingModules,
+    torch: Any,
+) -> dict[str, Any]:
+    checkpoint = getattr(args, "offloading_init_bandit_checkpoint", None)
+    expected_checksum = getattr(
+        args, "offloading_init_bandit_dataset_checksum", None
+    )
+    if checkpoint is None:
+        if expected_checksum is not None:
+            raise ValueError(
+                "bandit dataset checksum requires --offloading-init-bandit-checkpoint"
+            )
+        return {
+            "mode": "random",
+            "training_seed": int(args.seed),
+            "task_encoder_state_sha256": _module_state_sha256(modules.hgnn),
+            "candidate_scorer_state_sha256": _module_state_sha256(
+                modules.offloading_actor.scorer
+            ),
+        }
+    checkpoint_path = Path(checkpoint)
+    if not checkpoint_path.is_file():
+        raise FileNotFoundError(
+            f"bandit initialization checkpoint is missing: {checkpoint_path}"
+        )
+    if str(args.task_encoder) != "mlp":
+        raise ValueError("bandit initialization requires the MLP task encoder")
+    if expected_checksum is None or not str(expected_checksum):
+        raise ValueError(
+            "strict bandit initialization requires a dataset checksum"
+        )
+    try:
+        payload = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    except TypeError:
+        payload = torch.load(checkpoint_path, map_location="cpu")
+    expected = {
+        "schema": BANDIT_CHECKPOINT_SCHEMA,
+        "stage": "trained",
+        "encoder": "mlp",
+        "training_seed": int(args.seed),
+        "dataset_checksum": str(expected_checksum),
+        "task_embedding_dim": int(args.task_embedding_dim),
+        "hidden_dim": int(args.hidden_dim),
+    }
+    for key, value in expected.items():
+        if payload.get(key) != value:
+            raise ValueError(
+                f"bandit initialization {key} mismatch: "
+                f"expected {value!r}, got {payload.get(key)!r}"
+            )
+    modules.hgnn.load_state_dict(payload["task_encoder_state_dict"], strict=True)
+    modules.offloading_actor.scorer.load_state_dict(
+        payload["candidate_scorer_state_dict"], strict=True
+    )
+    return {
+        "mode": "bandit_checkpoint",
+        "training_seed": int(args.seed),
+        "dataset_checksum": str(expected_checksum),
+        "checkpoint_path": str(checkpoint_path),
+        "checkpoint_sha256": _file_sha256(checkpoint_path),
+        "task_encoder_state_sha256": _module_state_sha256(modules.hgnn),
+        "candidate_scorer_state_sha256": _module_state_sha256(
+            modules.offloading_actor.scorer
+        ),
+        "optimizer_state_loaded": False,
+    }
 
 
 def _resolved_completed_dag_weight(args: argparse.Namespace) -> float:
@@ -149,8 +268,15 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
     """Resolve experiment controls from new or legacy clean checkpoints."""
     checkpoint_config = payload.get("config", {})
     cli = checkpoint_config.get("cli", {}) if isinstance(checkpoint_config, dict) else {}
+    experiment_controls = (
+        checkpoint_config.get("experiment_controls", {})
+        if isinstance(checkpoint_config, dict)
+        else {}
+    )
     if not isinstance(cli, dict):
         cli = {}
+    if not isinstance(experiment_controls, dict):
+        experiment_controls = {}
     detach_critic_hgnn = cli.get("detach_critic_hgnn", False)
     if not isinstance(detach_critic_hgnn, bool):
         raise ValueError("checkpoint detach_critic_hgnn must be boolean")
@@ -185,6 +311,24 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
     sampler_backend = str(cli.get("sampler_backend", "synchronous"))
     if sampler_backend not in {"synchronous", "process"}:
         raise ValueError(f"unsupported checkpoint sampler backend: {sampler_backend}")
+    eft_auxiliary_lambda_initial = float(
+        cli.get("eft_auxiliary_lambda_initial", 0.0)
+    )
+    eft_auxiliary_regret_scale = float(
+        cli.get("eft_auxiliary_regret_scale", 1.0)
+    )
+    if not math.isfinite(eft_auxiliary_lambda_initial) or eft_auxiliary_lambda_initial < 0.0:
+        raise ValueError("checkpoint EFT auxiliary lambda must be finite and non-negative")
+    if not math.isfinite(eft_auxiliary_regret_scale) or eft_auxiliary_regret_scale <= 0.0:
+        raise ValueError("checkpoint EFT auxiliary scale must be finite and positive")
+    freeze_movement = cli.get("freeze_movement", False)
+    if not isinstance(freeze_movement, bool):
+        raise ValueError("checkpoint freeze_movement must be boolean")
+    offloading_initialization = experiment_controls.get(
+        "offloading_initialization", {"mode": "random"}
+    )
+    if not isinstance(offloading_initialization, dict):
+        raise ValueError("checkpoint offloading initialization identity must be a mapping")
     return {
         "completed_dag_weight": _validated_completed_dag_weight(
             cli.get("completed_dag_weight", config.REWARD_COMPLETED_DAG_WEIGHT)
@@ -202,6 +346,10 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
         "task_encoder": task_encoder,
         "num_envs": num_envs,
         "sampler_backend": sampler_backend,
+        "freeze_movement": freeze_movement,
+        "eft_auxiliary_lambda_initial": eft_auxiliary_lambda_initial,
+        "eft_auxiliary_regret_scale": eft_auxiliary_regret_scale,
+        "offloading_initialization": dict(offloading_initialization),
     }
 
 
@@ -301,6 +449,43 @@ def validate_resume_experiment_controls(
             "resume checkpoint sampler backend mismatch: "
             f"requested {requested_sampler_backend}, checkpoint {saved['sampler_backend']}"
         )
+    requested_freeze_movement = bool(getattr(args, "freeze_movement", False))
+    if requested_freeze_movement != bool(saved["freeze_movement"]):
+        raise ValueError(
+            "resume checkpoint forced-movement mode mismatch: "
+            f"requested freeze={requested_freeze_movement}, "
+            f"checkpoint freeze={saved['freeze_movement']}"
+        )
+    for key, requested in (
+        (
+            "eft_auxiliary_lambda_initial",
+            float(getattr(args, "eft_auxiliary_lambda_initial", 0.0)),
+        ),
+        (
+            "eft_auxiliary_regret_scale",
+            float(getattr(args, "eft_auxiliary_regret_scale", 1.0)),
+        ),
+    ):
+        if not math.isclose(requested, float(saved[key]), rel_tol=0.0, abs_tol=1e-12):
+            raise ValueError(
+                f"resume checkpoint {key.replace('_', ' ')} mismatch: "
+                f"requested {requested}, checkpoint {saved[key]}"
+            )
+    requested_identity = getattr(args, "_offloading_initialization_identity", {})
+    saved_identity = dict(saved["offloading_initialization"])
+    for key in (
+        "mode",
+        "training_seed",
+        "task_encoder_state_sha256",
+        "candidate_scorer_state_sha256",
+        "checkpoint_sha256",
+        "dataset_checksum",
+    ):
+        if key in requested_identity or key in saved_identity:
+            if requested_identity.get(key) != saved_identity.get(key):
+                raise ValueError(
+                    f"resume checkpoint offloading initialization {key} mismatch"
+                )
     return saved
 
 
@@ -412,6 +597,48 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--ppo-epochs", type=int, default=1)
     parser.add_argument("--max-grad-norm", type=float, default=0.5)
+    parser.add_argument(
+        "--max-updates",
+        type=_nonnegative_int,
+        default=None,
+        help="Optional exact outer PPO update limit for short diagnostics.",
+    )
+    parser.add_argument(
+        "--checkpoint-update-counts",
+        type=str,
+        default="",
+        help="Comma-separated completed-update counts to checkpoint.",
+    )
+    parser.add_argument(
+        "--eft-auxiliary-lambda-initial",
+        type=_nonnegative_finite_float,
+        default=0.0,
+        help="Diagnostic per-decision EFT auxiliary coefficient; zero preserves baseline MAPPO.",
+    )
+    parser.add_argument(
+        "--eft-auxiliary-regret-scale",
+        type=_positive_finite_float,
+        default=1.0,
+        help="Frozen train-split RMS raw-EFT regret scale from the validated bandit gate.",
+    )
+    parser.add_argument(
+        "--eft-auxiliary-sampling-seed",
+        type=int,
+        default=0,
+        help="Independent auxiliary-action RNG seed.",
+    )
+    parser.add_argument(
+        "--offloading-init-bandit-checkpoint",
+        type=Path,
+        default=None,
+        help="Strictly import matching-seed MLP encoder/scorer weights only.",
+    )
+    parser.add_argument(
+        "--offloading-init-bandit-dataset-checksum",
+        type=str,
+        default=None,
+        help="Required frozen dataset checksum for bandit initialization.",
+    )
     return parser
 
 
@@ -457,6 +684,22 @@ def build_config_snapshot(args: argparse.Namespace) -> dict[str, Any]:
             "offloading_lagged_q_loss_coef": lagged_q_loss_coef,
             "offloading_lagged_q_scale_seconds": lagged_q_scale_seconds,
             "offloading_lagged_q_censor_weight": lagged_q_censor_weight,
+            "eft_auxiliary_lambda_initial": float(
+                getattr(args, "eft_auxiliary_lambda_initial", 0.0)
+            ),
+            "eft_auxiliary_regret_scale": float(
+                getattr(args, "eft_auxiliary_regret_scale", 1.0)
+            ),
+            "eft_auxiliary_schedule": {
+                "constant_through_update_index": 8,
+                "zero_at_update_index": 20,
+            },
+            "eft_auxiliary_sampling_seed": int(
+                getattr(args, "eft_auxiliary_sampling_seed", 0)
+            ),
+            "offloading_initialization": getattr(
+                args, "_offloading_initialization_identity", {"mode": "random"}
+            ),
             "normalize_value_targets": bool(args.normalize_value_targets),
             "value_clip_epsilon": float(args.value_clip_epsilon),
             "task_encoder": str(args.task_encoder),
@@ -527,6 +770,15 @@ def initialize_run_files(run_dir: Path, args: argparse.Namespace) -> None:
             "offloading_lagged_q_loss_coef": lagged_q_loss_coef,
             "offloading_lagged_q_scale_seconds": lagged_q_scale_seconds,
             "offloading_lagged_q_censor_weight": lagged_q_censor_weight,
+            "eft_auxiliary_lambda_initial": float(
+                getattr(args, "eft_auxiliary_lambda_initial", 0.0)
+            ),
+            "eft_auxiliary_regret_scale": float(
+                getattr(args, "eft_auxiliary_regret_scale", 1.0)
+            ),
+            "offloading_initialization": getattr(
+                args, "_offloading_initialization_identity", {"mode": "pending"}
+            ),
             "lagged_q_resume_pending_policy": "discard_restarted_episode",
             "resume_semantics": "restart_from_new_episode_only",
         },
@@ -546,8 +798,25 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         args.offloading_lagged_q_scale_seconds,
         args.offloading_lagged_q_censor_weight,
     ) = _resolved_offloading_lagged_q_controls(args)
+    if getattr(args, "max_updates", None) is not None and int(args.num_envs) != 1:
+        raise ValueError("--max-updates diagnostic control currently requires --num-envs 1")
+    if float(args.eft_auxiliary_lambda_initial) > 0.0 and str(args.task_encoder) != "mlp":
+        raise ValueError("EFT auxiliary diagnostic requires --task-encoder mlp")
+    if float(args.eft_auxiliary_lambda_initial) > 0.0 and not bool(args.freeze_movement):
+        raise ValueError("EFT auxiliary diagnostic requires --freeze-movement")
+    if (
+        float(args.eft_auxiliary_lambda_initial) > 0.0
+        and (
+            float(args.offloading_counterfactual_coef) > 0.0
+            or float(args.offloading_action_value_loss_coef) > 0.0
+            or float(args.offloading_lagged_q_coef) > 0.0
+            or float(args.offloading_lagged_q_loss_coef) > 0.0
+        )
+    ):
+        raise ValueError(
+            "EFT auxiliary diagnostic cannot combine with counterfactual or lagged-Q controls"
+        )
     run_dir = create_run_directory(args)
-    initialize_run_files(run_dir, args)
 
     torch, Categorical = _require_torch()
     _set_seed(int(args.seed), torch=torch)
@@ -613,6 +882,15 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         offloading_action_value_critic=offloading_action_value_critic,
         offloading_lagged_q_critic=offloading_lagged_q_critic,
     )
+    args._offloading_initialization_identity = _initialize_offloading_policy(
+        args=args,
+        modules=modules,
+        torch=torch,
+    )
+    if bool(args.freeze_movement):
+        for parameter in modules.movement_actor.parameters():
+            parameter.requires_grad_(False)
+    initialize_run_files(run_dir, args)
     device = torch.device(str(args.device))
     _move_modules_to_device(modules, device)
     optimizer = build_single_optimizer(modules, lr=float(args.lr))
@@ -635,6 +913,11 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             offloading_action_value_loss_coef=float(args.offloading_action_value_loss_coef),
             offloading_lagged_q_coef=float(args.offloading_lagged_q_coef),
             offloading_lagged_q_loss_coef=float(args.offloading_lagged_q_loss_coef),
+            eft_auxiliary_lambda_initial=float(args.eft_auxiliary_lambda_initial),
+            eft_auxiliary_regret_scale=float(args.eft_auxiliary_regret_scale),
+            eft_auxiliary_constant_through_update=8,
+            eft_auxiliary_zero_at_update=20,
+            eft_auxiliary_sampling_seed=int(args.eft_auxiliary_sampling_seed),
         ),
         device=device,
     )
@@ -651,6 +934,40 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         start_episode = int(payload.get("episode", -1)) + 1
         global_slot = int(payload.get("global_slot", 0))
         updater.update_step = int(payload.get("update_step", 0))
+
+    checkpoint_update_counts = _parse_update_counts(
+        str(args.checkpoint_update_counts)
+    )
+    if int(updater.update_step) == 0:
+        checkpoint_manager.save(
+            modules=modules,
+            optimizer=optimizer,
+            episode=-1,
+            global_slot=global_slot,
+            update_step=0,
+            config_snapshot=build_config_snapshot(args),
+            safe_boundary=True,
+            filename="checkpoint_update_0000.pt",
+        )
+    if args.max_updates is not None and int(args.max_updates) == 0:
+        _write_json(
+            run_dir / "run_summary.json",
+            {
+                "status": "completed",
+                "completion_reason": "max_updates",
+                "global_slot": int(global_slot),
+                "completed_update_count": int(updater.update_step),
+                "offloading_initialization": args._offloading_initialization_identity,
+            },
+        )
+        graph_builder.close()
+        return {
+            "run_dir": str(run_dir),
+            "global_slot": int(global_slot),
+            "latest_update": None,
+            "completed_update_count": int(updater.update_step),
+            "offloading_initialization": args._offloading_initialization_identity,
+        }
 
     if str(args.sampler_backend) == "process":
         if float(args.offloading_counterfactual_coef) > 0.0 or float(
@@ -701,6 +1018,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         else None
     )
     progress = _make_progress_bar(total=max(int(args.episodes) - start_episode, 0) * int(args.max_steps_per_episode))
+    max_updates_reached = False
     try:
         for episode in range(start_episode, int(args.episodes)):
             env.reset()
@@ -823,6 +1141,24 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                         safe_boundary=buffer.checkpoint_safe,
                         filename="latest.pt",
                     )
+                    if int(updater.update_step) in checkpoint_update_counts:
+                        checkpoint_manager.save(
+                            modules=modules,
+                            optimizer=optimizer,
+                            episode=episode,
+                            global_slot=global_slot,
+                            update_step=updater.update_step,
+                            config_snapshot=build_config_snapshot(args),
+                            safe_boundary=buffer.checkpoint_safe,
+                            filename=f"checkpoint_update_{int(updater.update_step):04d}.pt",
+                        )
+                    max_updates_reached = (
+                        args.max_updates is not None
+                        and int(updater.update_step) >= int(args.max_updates)
+                    )
+                    if max_updates_reached:
+                        last_info = info
+                        break
                     if not done and not truncated and next_prepared is not None:
                         current_prepared = next_prepared
                         current_encoded = reencode_prepared_after_update(
@@ -859,7 +1195,15 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             _write_json(
                 run_dir / "run_summary.json",
                 {
-                    "status": "running" if episode + 1 < int(args.episodes) else "completed",
+                    "status": (
+                        "completed"
+                        if max_updates_reached or episode + 1 >= int(args.episodes)
+                        else "running"
+                    ),
+                    "completion_reason": (
+                        "max_updates" if max_updates_reached else "episodes"
+                    ),
+                    "completed_update_count": int(updater.update_step),
                     "episode": episode,
                     "global_slot": global_slot,
                     "episode_reward": episode_reward,
@@ -879,6 +1223,8 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                     "resume_semantics": "restart_from_new_episode_only",
                 },
             )
+            if max_updates_reached:
+                break
     finally:
         progress.close()
         graph_builder.close()
@@ -886,6 +1232,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "run_dir": str(run_dir),
         "global_slot": global_slot,
+        "completed_update_count": int(updater.update_step),
         "latest_update": None if latest_update_stats is None else asdict(latest_update_stats),
         "completed_dag_weight": float(args.completed_dag_weight),
         "detach_critic_hgnn": bool(args.detach_critic_hgnn),
@@ -896,6 +1243,9 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         "offloading_lagged_q_loss_coef": float(args.offloading_lagged_q_loss_coef),
         "offloading_lagged_q_scale_seconds": float(args.offloading_lagged_q_scale_seconds),
         "offloading_lagged_q_censor_weight": float(args.offloading_lagged_q_censor_weight),
+        "eft_auxiliary_lambda_initial": float(args.eft_auxiliary_lambda_initial),
+        "eft_auxiliary_regret_scale": float(args.eft_auxiliary_regret_scale),
+        "offloading_initialization": args._offloading_initialization_identity,
         "kahypar_circuit_open": bool(graph_builder.kahypar_circuit_open),
         "kahypar_last_failure_reason": graph_builder.kahypar_last_failure_reason,
         "kahypar_cleanup_failed": bool(graph_builder.kahypar_cleanup_failed),
@@ -2107,9 +2457,18 @@ def _finish_collect_clean_slot(
             task_local_index=int(record.task_local_index),
             decision_order=int(record.decision_order),
             candidate_uav_ids=list(record.candidate_uav_ids),
-            dynamic_uav_features=record.dynamic_uav_features.detach().cpu().numpy().copy(),
-            pair_features=record.pair_features.detach().cpu().numpy().copy(),
-            candidate_mask=record.candidate_mask.detach().cpu().numpy().astype(bool, copy=True),
+            dynamic_uav_features=_immutable_numpy_copy(
+                record.dynamic_uav_features, dtype=np.float32
+            ),
+            pair_features=_immutable_numpy_copy(
+                record.pair_features, dtype=np.float32
+            ),
+            candidate_mask=_immutable_numpy_copy(
+                record.candidate_mask, dtype=bool
+            ),
+            candidate_estimated_finish_times=_immutable_numpy_copy(
+                record.candidate_estimated_finish_times, dtype=np.float32
+            ),
             selected_action=int(record.selected_action),
             selected_uav_id=int(record.selected_uav_id),
             old_log_probability=float(record.old_log_prob),
@@ -2161,6 +2520,14 @@ def _finish_collect_clean_slot(
     if partition_status.startswith("degraded"):
         info["kahypar_degraded_label"] = str(config.KAHYPAR_DEGRADED_EXPERIMENT_LABEL)
     return slot_record, bool(done), info
+
+
+def _immutable_numpy_copy(value: Any, *, dtype: Any) -> np.ndarray:
+    if hasattr(value, "detach"):
+        value = value.detach().cpu().numpy()
+    copied = np.asarray(value, dtype=dtype).copy()
+    copied.setflags(write=False)
+    return copied
 
 
 def _episode_diagnostics_payload(

@@ -28,6 +28,7 @@ class CleanOffloadingActionRecord:
     dynamic_uav_features: torch.Tensor
     pair_features: torch.Tensor
     candidate_mask: torch.Tensor
+    candidate_estimated_finish_times: torch.Tensor
     selected_action: int
     selected_uav_id: int
     old_log_prob: float
@@ -130,6 +131,15 @@ class CleanOffloadingActor(nn.Module):
             dynamic_features = torch.as_tensor(dynamic_features_np, dtype=torch.float32, device=device)
             pair_features = torch.as_tensor(pair_features_np, dtype=torch.float32, device=device)
             candidate_mask = torch.as_tensor(candidate_mask_np, dtype=torch.bool, device=device)
+            candidate_estimated_finish_times = torch.as_tensor(
+                [float(estimate.estimated_finish_time) for estimate in estimates],
+                dtype=torch.float32,
+                device=device,
+            )
+            if candidate_estimated_finish_times.shape != candidate_mask.shape:
+                raise ValueError("candidate EFT vector shape does not match candidate mask")
+            if not bool(torch.isfinite(candidate_estimated_finish_times[candidate_mask]).all().item()):
+                raise FloatingPointError("legal candidate EFT values must be finite")
             logits = self.scorer(candidate_features)
             masked_logits = logits.masked_fill(~candidate_mask, torch.finfo(logits.dtype).min)
             dist = Categorical(logits=masked_logits)
@@ -155,6 +165,9 @@ class CleanOffloadingActor(nn.Module):
                     dynamic_uav_features=dynamic_features.detach().cpu().clone(),
                     pair_features=pair_features.detach().cpu().clone(),
                     candidate_mask=candidate_mask.detach().cpu().clone(),
+                    candidate_estimated_finish_times=(
+                        candidate_estimated_finish_times.detach().cpu().clone()
+                    ),
                     selected_action=selected_action,
                     selected_uav_id=selected_uav_id,
                     old_log_prob=float(dist.log_prob(selected).item()),
