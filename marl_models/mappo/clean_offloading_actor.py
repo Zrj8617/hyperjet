@@ -31,10 +31,20 @@ class CleanOffloadingActionRecord:
     candidate_estimated_finish_times: torch.Tensor
     selected_action: int
     selected_uav_id: int
+    old_masked_probabilities: torch.Tensor
     old_log_prob: float
     entropy: float
     selected_estimated_finish_time: float
     selected_estimated_incremental_delay: float
+
+
+@dataclass(slots=True)
+class CleanOffloadingSkipEvent:
+    task_id: str
+    dag_id: str
+    decision_order: int
+    valid_candidate_count: int
+    skip_reason: str
 
 
 class SharedOffloadingCandidateScorer(nn.Module):
@@ -73,6 +83,7 @@ class CleanOffloadingActor(nn.Module):
         )
         self.scorer = SharedOffloadingCandidateScorer(self.candidate_feature_dim, hidden_dim=hidden_dim)
         self.latest_records: list[CleanOffloadingActionRecord] = []
+        self.latest_skip_events: list[CleanOffloadingSkipEvent] = []
 
     @torch.no_grad()
     def act(
@@ -98,9 +109,19 @@ class CleanOffloadingActor(nn.Module):
         reservation = TemporaryReservationState.from_executor(uavs, executor)
         assignments = CleanAssignmentBuffer()
         records: list[CleanOffloadingActionRecord] = []
+        skip_events: list[CleanOffloadingSkipEvent] = []
         for decision_order, task in enumerate(frozen_ready_tasks):
             task_idx = graph_snapshot.task_id_to_idx.get(task.task_id)
             if task_idx is None:
+                skip_events.append(
+                    CleanOffloadingSkipEvent(
+                        task_id=str(task.task_id),
+                        dag_id=str(task.dag_id),
+                        decision_order=int(decision_order),
+                        valid_candidate_count=0,
+                        skip_reason="task_missing_from_graph_snapshot",
+                    )
+                )
                 continue
             dynamic_features_np, pair_features_np, candidate_mask_np, candidate_uav_ids, estimates = build_offloading_candidate_components(
                 task=task,
@@ -114,6 +135,15 @@ class CleanOffloadingActor(nn.Module):
                 ues=ues,
             )
             if dynamic_features_np.shape[0] == 0:
+                skip_events.append(
+                    CleanOffloadingSkipEvent(
+                        task_id=str(task.task_id),
+                        dag_id=str(task.dag_id),
+                        decision_order=int(decision_order),
+                        valid_candidate_count=0,
+                        skip_reason="no_candidate_rows",
+                    )
+                )
                 continue
             task_embedding_np = task_embeddings_tensor[int(task_idx)].detach().cpu().numpy().reshape(1, -1)
             candidate_features_np = np.concatenate(
@@ -125,6 +155,15 @@ class CleanOffloadingActor(nn.Module):
                 axis=1,
             ).astype(np.float32)
             if candidate_features_np.shape[0] == 0 or not bool(candidate_mask_np.any()):
+                skip_events.append(
+                    CleanOffloadingSkipEvent(
+                        task_id=str(task.task_id),
+                        dag_id=str(task.dag_id),
+                        decision_order=int(decision_order),
+                        valid_candidate_count=0,
+                        skip_reason="no_legal_candidate",
+                    )
+                )
                 continue
 
             candidate_features = torch.as_tensor(candidate_features_np, dtype=torch.float32, device=device)
@@ -144,6 +183,7 @@ class CleanOffloadingActor(nn.Module):
             masked_logits = logits.masked_fill(~candidate_mask, torch.finfo(logits.dtype).min)
             dist = Categorical(logits=masked_logits)
             selected = torch.argmax(masked_logits) if deterministic else dist.sample()
+            old_masked_probabilities = dist.probs.detach().cpu().clone()
             selected_action = int(selected.item())
             selected_uav_id = int(candidate_uav_ids[selected_action])
             selected_estimate = estimates[selected_action]
@@ -170,6 +210,7 @@ class CleanOffloadingActor(nn.Module):
                     ),
                     selected_action=selected_action,
                     selected_uav_id=selected_uav_id,
+                    old_masked_probabilities=old_masked_probabilities,
                     old_log_prob=float(dist.log_prob(selected).item()),
                     entropy=float(dist.entropy().item()),
                     selected_estimated_finish_time=float(selected_estimate.estimated_finish_time),
@@ -182,4 +223,5 @@ class CleanOffloadingActor(nn.Module):
             )
 
         self.latest_records = records
+        self.latest_skip_events = skip_events
         return assignments
