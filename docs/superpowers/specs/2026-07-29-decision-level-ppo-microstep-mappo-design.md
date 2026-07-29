@@ -21,11 +21,11 @@ the formal algorithm change:
    residual-Q remain out of scope. They may be designed separately only if
    both stages are technically correct and Stage 2 still fails.
 
-Stage 2 removes the implementation error of copying one scalar advantage to
-all decisions in a slot. It does not claim to calculate each assignment's
-exact causal contribution. Decisions in one slot still share a downstream
-return sample; their advantages differ mainly through their state-dependent
-value baselines.
+Stage 2 replaces the coarse slot-level shared-advantage design with
+decision-state-dependent value baselines and advantages. It does not claim to
+calculate each assignment's exact causal contribution. Decisions in one slot
+still share a downstream return sample; their advantages differ mainly
+through their state-dependent value baselines.
 
 ## 2. Fixed Boundaries
 
@@ -166,6 +166,14 @@ sample is silently dropped when batch sizes do not divide sample count.
 
 Entropy is recorded but its coefficient is fixed to zero in the Stage 1 main
 gate.
+
+If an entire Stage 1 rollout contains no valid `DecisionBanditRecord`, the
+trainer does not calculate an advantage mean, actor loss, entropy statistic,
+KL, or clip fraction over an empty tensor. It sets the actor loss path to an
+explicit no-op, skips the actor optimizer step, records
+`empty_actor_batch = true`, and represents unavailable diagnostics as null
+rather than a fabricated zero. The rollout must remain finite and must not
+produce NaN.
 
 ### 3.5 Zero and Single Legal Candidates
 
@@ -313,6 +321,14 @@ The boundary must not connect to:
 - a state constructed after observing the current reward;
 - a reset state from a new episode.
 
+When rollout collection ends immediately after a boundary, the prepared
+next-slot state used for bootstrap is retained unchanged across PPO
+optimization and becomes the first state of the next rollout. It must not be
+reconstructed, refreshed, or externally advanced a second time. In
+particular, UE movement, DAG arrival, ready refresh, and frozen-ready
+construction must not execute twice merely because an optimizer update
+occurs between the boundary and the next collected transition.
+
 ### 4.4 Rewards, Discount, and GAE Parameters
 
 For `CHOICE_DECISION`, `FORCED_DECISION`, and `SKIP_DECISION`:
@@ -435,6 +451,14 @@ seed. The frozen normalized advantages are reused for every PPO epoch.
 
 Critic returns are not actor-advantage normalized.
 
+If a Stage 2 rollout contains no `CHOICE_DECISION`, actor-advantage
+normalization is skipped, `L_actor` is an explicit no-op, and no actor
+optimizer contribution is created. The critic still trains on forced,
+skipped, and boundary states. Entropy, KL, clip fraction, and other
+choice-action diagnostics are null rather than zero. The shared optimizer may
+still step for a non-empty critic loss, but actor parameters must receive no
+gradient from a fabricated empty actor objective.
+
 ### 4.9 Value Loss and Shared Optimization
 
 The fixed first diagnostic uses:
@@ -508,6 +532,16 @@ dynamics, reward, or training.
 The scenario-tape implementation requires an equivalence smoke showing that
 its marginal distributions match the current evaluator on a large read-only
 sample. Formal paired comparisons must report the scenario-tape checksum.
+The smoke covers more than the aggregate arrival mean:
+
+- per-UE arrival success rates;
+- conditional arrival rates inside and outside the hotspot;
+- DAG type, size, and other generated-content distributions;
+- absence of accidental key reuse across UE and slot identifiers;
+- exact reproducibility under the same scenario-tape checksum.
+
+This is a lightweight distribution and determinism check, not a new
+statistical-testing framework.
 
 ## 6. Stage 2 Controls
 
@@ -527,6 +561,23 @@ The current legacy slot-level MAPPO remains **S2-A0**, a historical or
 separately rerun reference. S2-A versus S2-B is the causal comparison for
 decision granularity; S2-A0 shows how the matched control relates to the
 existing mainline.
+
+S2-A and S2-B use the same:
+
+- critic backbone and input-slot layout;
+- total critic input dimension;
+- hidden dimension and layer count;
+- critic parameter count and initialization hash;
+- value-loss coefficient;
+- optimizer configuration;
+- gradient-clipping configuration.
+
+S2-A evaluates the critic once at the slot-start state. S2-B evaluates the
+same critic architecture at choice, forced, skipped, and boundary
+micro-states. When S2-A has no current task, it fills the same task-local
+input slots with zero and sets `task_present = 0`; it does not use a narrower
+or shallower critic. No S2-B performance difference may be attributed solely
+to decision granularity unless these matched-critic invariants pass.
 
 All groups fix:
 
@@ -600,6 +651,12 @@ Additional smokes prove:
 - no stream crosses episode reset;
 - scenario-tape keys and checksums are deterministic;
 - no reward duplication, transition loss, silent sample drop, or NaN/Inf.
+- prepared next-slot bootstrap state is reused across an optimizer update
+  without duplicate movement, arrival, ready refresh, or frozen-ready work;
+- an empty Stage 1 or Stage 2 actor batch follows the explicit no-op/null
+  diagnostic semantics;
+- S2-A and S2-B critic dimensions, topology, parameter count, initialization,
+  optimizer, value coefficient, and clipping controls match exactly.
 
 ## 8. Metrics and Interpretation
 
