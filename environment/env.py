@@ -71,6 +71,8 @@ class Env:
         self._last_movement_action_count: int = 0
         self._prepared_slot_open: bool = False
         self._prepared_slot_context: dict[str, Any] = {}
+        self._latest_arrival_funnel: dict[str, Any] = self._empty_arrival_funnel()
+        self._arrival_funnel_totals: dict[str, Any] = self._empty_arrival_funnel()
 
     @property
     def uavs(self) -> list[UAV]:
@@ -205,6 +207,8 @@ class Env:
         self._last_movement_action_count = 0
         self._prepared_slot_open = False
         self._prepared_slot_context = {}
+        self._latest_arrival_funnel = self._empty_arrival_funnel()
+        self._arrival_funnel_totals = self._empty_arrival_funnel()
 
         # 用 x_0^- 表示任何决策和执行发生前的初始内部状态。
         self._latest_slot_boundary = {
@@ -221,6 +225,7 @@ class Env:
             "freeze_ue_mobility": bool(self.freeze_ue_mobility),
             "max_active_dags_per_ue": int(self.max_active_dags_per_ue),
             "initial_hotspot_ue_count": int(self._initial_hotspot_ue_count),
+            **self._arrival_funnel_info(),
         }
         return self._get_obs()
 
@@ -423,6 +428,7 @@ class Env:
             "frozen_ready_task_count": len(self._frozen_ready_task_ids),
             "assignment_buffer_entry_count": assignment_buffer.entry_count,
             "offloading_skipped_no_candidate": offloading_skip_count,
+            **self._arrival_funnel_info(),
         }
         info.update(metric_info)
         self._latest_info = info
@@ -475,14 +481,21 @@ class Env:
             self._ue_service_positions = {int(ue.id): ue.pos[:2].copy() for ue in self._ues}
         version_before = self._task_manager.dag_arrival_version
         created_count = 0
+        funnel = self._empty_arrival_funnel()
 
         # 每个空闲用户根据其相对热点的位置独立计算任务到达概率。
         for ue in self._ues:
+            funnel["arrival_attempt_count"] += 1
             if not self._task_manager.can_accept_dag_for_ue(ue.id):
+                funnel["arrival_blocked_count"] += 1
+                funnel["arrival_blocked_reasons"]["active_dag_cap"] += 1
                 continue
+            funnel["arrival_draw_count"] += 1
             arrival_prob = ue.get_arrival_probability(self.hotspot_center, self.hotspot_radius)
             if np.random.random() >= arrival_prob:
+                funnel["arrival_no_event_count"] += 1
                 continue
+            funnel["arrival_sampled_event_count"] += 1
 
             # DAG 的源位置使用本时隙冻结的用户位置，避免移动后位置造成时间口径混乱。
             job = self._task_manager.create_dag_for_ue(
@@ -492,12 +505,52 @@ class Env:
             )
             ue.enter_service_waiting(job.dag_id)
             created_count += 1
+            funnel["arrival_admitted_count"] += 1
 
         # 版本号供图构建器等下游组件判断是否需要刷新缓存。
         version_after = self._task_manager.dag_arrival_version
+        self._latest_arrival_funnel = funnel
+        self._accumulate_arrival_funnel(funnel)
         self._last_new_dag_arrived = version_after > version_before or created_count > 0
         self._latest_dag_arrival_version = version_after
         return created_count
+
+    @staticmethod
+    def _empty_arrival_funnel() -> dict[str, Any]:
+        return {
+            "arrival_attempt_count": 0,
+            "arrival_draw_count": 0,
+            "arrival_sampled_event_count": 0,
+            "arrival_admitted_count": 0,
+            "arrival_blocked_count": 0,
+            "arrival_no_event_count": 0,
+            "arrival_blocked_reasons": {"active_dag_cap": 0},
+        }
+
+    def _accumulate_arrival_funnel(self, step: dict[str, Any]) -> None:
+        for key in (
+            "arrival_attempt_count",
+            "arrival_draw_count",
+            "arrival_sampled_event_count",
+            "arrival_admitted_count",
+            "arrival_blocked_count",
+            "arrival_no_event_count",
+        ):
+            self._arrival_funnel_totals[key] += int(step[key])
+        for reason, count in step["arrival_blocked_reasons"].items():
+            self._arrival_funnel_totals["arrival_blocked_reasons"][str(reason)] = (
+                int(self._arrival_funnel_totals["arrival_blocked_reasons"].get(str(reason), 0))
+                + int(count)
+            )
+
+    def _arrival_funnel_info(self) -> dict[str, Any]:
+        info: dict[str, Any] = {}
+        for key, value in self._arrival_funnel_totals.items():
+            info[key] = dict(value) if isinstance(value, dict) else int(value)
+        for key, value in self._latest_arrival_funnel.items():
+            step_key = f"step_{key}"
+            info[step_key] = dict(value) if isinstance(value, dict) else int(value)
+        return info
 
     def release_ue_after_dag_completed(self, dag_id: str) -> None:
         """在 DAG 完成后解除对应用户设备的等待状态。"""

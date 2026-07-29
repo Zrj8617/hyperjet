@@ -191,6 +191,7 @@ def grouped_candidate_forward(
     samples: list[dict[str, Any]],
     *,
     train_enabled: bool,
+    compute_supervised_loss: bool = True,
 ) -> GroupedBatchForward:
     """Encode each graph once, then score every decision/candidate together."""
 
@@ -266,7 +267,8 @@ def grouped_candidate_forward(
             candidate_rows.append(torch.cat([repeated, dynamic, pair], dim=1))
             candidate_counts.append(count)
             masks.append(mask)
-            labels.append(int(sample["greedy_label_idx"]))
+            if compute_supervised_loss:
+                labels.append(int(sample["greedy_label_idx"]))
 
         flat_candidate_features = torch.cat(candidate_rows, dim=0)
         flat_logits = modules.offloading_actor.scorer(flat_candidate_features)
@@ -290,17 +292,21 @@ def grouped_candidate_forward(
             ~mask_matrix,
             torch.finfo(logits_matrix.dtype).min,
         )
-        label_tensor = torch.as_tensor(labels, dtype=torch.long, device=modules.device)
-        per_losses = modules.functional.cross_entropy(
-            masked_logits,
-            label_tensor,
-            reduction="none",
-        )
-        batch_loss = per_losses.mean()
+        if compute_supervised_loss:
+            label_tensor = torch.as_tensor(labels, dtype=torch.long, device=modules.device)
+            per_losses = modules.functional.cross_entropy(
+                masked_logits,
+                label_tensor,
+                reduction="none",
+            )
+            batch_loss = per_losses.mean()
+        else:
+            per_losses = None
+            batch_loss = None
 
     if not bool(torch.isfinite(masked_logits).all().item()):
         raise FloatingPointError("non-finite grouped imitation logits")
-    if not bool(torch.isfinite(per_losses).all().item()):
+    if per_losses is not None and not bool(torch.isfinite(per_losses).all().item()):
         raise FloatingPointError("non-finite grouped imitation loss")
     return GroupedBatchForward(
         samples=list(samples),
