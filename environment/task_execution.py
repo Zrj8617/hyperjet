@@ -7,6 +7,7 @@ import config
 from environment.assignment import CleanAssignmentBuffer, TemporaryReservationState, is_assignment_legal
 from environment import comm_model
 from environment.dag_tasks import DAGTaskManager, TaskNode
+from environment.diagnostic_capacity import DiagnosticCapacityContext
 
 
 @dataclass(slots=True)
@@ -95,6 +96,7 @@ class CleanTaskExecutor:
         current_time_seconds: float,
         uav_service_positions: dict[int, Any] | None = None,
         ue_service_positions: dict[int, Any] | None = None,
+        capacity_context: DiagnosticCapacityContext | None = None,
     ) -> CleanExecutionStepStats:
         """校验并接收本时隙的任务分配，生成预计执行记录。
 
@@ -124,6 +126,7 @@ class CleanTaskExecutor:
                 valid_uav_ids=valid_uav_ids,
                 executor=self,
                 service_positions=uav_service_positions,
+                capacity_context=capacity_context,
             ):
                 self.latest_stats.record_invalid_assignment("illegal_assignment")
                 continue

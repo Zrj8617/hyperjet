@@ -11,6 +11,7 @@ from environment.assignment import (
     legal_candidate_uav_ids,
 )
 from environment.dag_tasks import DAGTaskManager
+from environment.diagnostic_capacity import DiagnosticCapacityContext
 from environment.metrics import CleanMetricsTracker
 from environment.task_execution import CleanTaskExecutor
 from environment.user_equipments import UE
@@ -35,6 +36,7 @@ class Env:
         completed_dag_weight: float | None = None,
         freeze_ue_mobility: bool = False,
         max_active_dags_per_ue: int = 1,
+        diagnostic_capacity_context: DiagnosticCapacityContext | None = None,
     ) -> None:
         """初始化环境状态、任务管理器和指标组件。"""
         self._time_step: int = 0
@@ -43,6 +45,7 @@ class Env:
         if not isinstance(freeze_ue_mobility, bool):
             raise ValueError("freeze_ue_mobility must be boolean")
         self.freeze_ue_mobility: bool = freeze_ue_mobility
+        self._diagnostic_capacity_context = diagnostic_capacity_context
         self._initial_hotspot_ue_count: int = 0
         self._ues: list[UE] = []
         self._uavs: list[UAV] = []
@@ -349,6 +352,7 @@ class Env:
             current_time_seconds=self.current_time_seconds,
             uav_service_positions=self._uav_service_positions,
             ue_service_positions=self._ue_service_positions,
+            capacity_context=self._diagnostic_capacity_context,
         )
         execution_stats = self._executor.advance_one_slot(
             task_manager=self._task_manager,
@@ -627,6 +631,7 @@ class Env:
                 state_view=reservation,
                 executor=self._executor,
                 service_positions=self._uav_service_positions,
+                capacity_context=self._diagnostic_capacity_context,
             )
             if not legal_candidates:
                 skipped_no_candidate += 1
@@ -646,6 +651,7 @@ class Env:
                 valid_uav_ids=valid_uav_ids,
                 executor=self._executor,
                 service_positions=self._uav_service_positions,
+                capacity_context=self._diagnostic_capacity_context,
             ):
                 continue
             buffer.append(task.task_id, selected_uav_id, decision_order)

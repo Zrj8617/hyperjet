@@ -7,6 +7,7 @@ import config
 import numpy as np
 from environment import comm_model
 from environment.dag_tasks import DAGTaskManager, TaskNode
+from environment.diagnostic_capacity import DiagnosticCapacityContext, queue_cap_from_context
 
 
 CLEAN_OFFLOADING_UAV_FEATURE_DIM = 7
@@ -78,10 +79,15 @@ class TemporaryReservationState:
             slot_assigned_counts={int(uav.id): 0 for uav in uavs},
         )
 
-    def remaining_slots(self, uav_id: int) -> int:
+    def remaining_slots(
+        self,
+        uav_id: int,
+        capacity_context: DiagnosticCapacityContext | None = None,
+    ) -> int:
         """返回指定 UAV 队列还能接收多少个任务。"""
         used = int(self.queue_lengths.get(int(uav_id), 0))
-        return max(int(config.CLEAN_MAX_QUEUE_PER_UAV) - used, 0)
+        hard_cap = queue_cap_from_context(capacity_context, int(config.CLEAN_MAX_QUEUE_PER_UAV))
+        return max(hard_cap - used, 0)
 
     def reserve(
         self,
@@ -127,6 +133,7 @@ def is_assignment_legal(
     valid_uav_ids: set[int],
     executor: Any,
     service_positions: dict[int, Any] | None = None,
+    capacity_context: DiagnosticCapacityContext | None = None,
 ) -> bool:
     """Minimal shared clean assignment legality.
 
@@ -145,7 +152,7 @@ def is_assignment_legal(
         return False
     if hasattr(executor, "is_task_scheduled") and executor.is_task_scheduled(task.task_id):
         return False
-    return state_view.remaining_slots(int(uav_id)) > 0
+    return state_view.remaining_slots(int(uav_id), capacity_context) > 0
 
 
 def legal_candidate_uav_ids(
@@ -154,13 +161,22 @@ def legal_candidate_uav_ids(
     state_view: TemporaryReservationState,
     executor: Any,
     service_positions: dict[int, Any] | None = None,
+    capacity_context: DiagnosticCapacityContext | None = None,
 ) -> list[int]:
     """从给定 UAV 列表中筛出当前可以合法接收任务的候选 ID。"""
     valid_uav_ids = set(int(uav_id) for uav_id in uav_ids)
     return [
         int(uav_id)
         for uav_id in uav_ids
-        if is_assignment_legal(task, int(uav_id), state_view, valid_uav_ids, executor, service_positions)
+        if is_assignment_legal(
+            task,
+            int(uav_id),
+            state_view,
+            valid_uav_ids,
+            executor,
+            service_positions,
+            capacity_context,
+        )
     ]
 
 
@@ -176,6 +192,7 @@ def build_offloading_candidate_batch(
     uav_service_positions: dict[int, Any] | None = None,
     ue_service_positions: dict[int, Any] | None = None,
     ues: list[Any] | None = None,
+    capacity_context: DiagnosticCapacityContext | None = None,
 ) -> tuple[np.ndarray, np.ndarray, list[int], list[OffloadingCandidateEstimate]]:
     """为一个任务构建卸载策略需要的完整候选批次。
 
@@ -192,6 +209,7 @@ def build_offloading_candidate_batch(
         uav_service_positions=uav_service_positions,
         ue_service_positions=ue_service_positions,
         ues=ues,
+        capacity_context=capacity_context,
     )
     task_embedding = np.asarray(task_embedding, dtype=np.float32).reshape(1, -1)
     if dynamic_uav_features.shape[0] == 0:
@@ -217,6 +235,7 @@ def build_offloading_candidate_components(
     uav_service_positions: dict[int, Any] | None = None,
     ue_service_positions: dict[int, Any] | None = None,
     ues: list[Any] | None = None,
+    capacity_context: DiagnosticCapacityContext | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[int], list[OffloadingCandidateEstimate]]:
     """Build candidate dynamic non-graph inputs without task embeddings.
 
@@ -240,6 +259,7 @@ def build_offloading_candidate_components(
             valid_uav_ids=valid_uav_ids,
             executor=executor,
             service_positions=uav_service_positions,
+            capacity_context=capacity_context,
         )
         estimate = estimate_offloading_candidate(
             task=task,
@@ -253,6 +273,7 @@ def build_offloading_candidate_components(
             ue_service_positions=ue_service_positions,
             ues=ues,
             legal=legal,
+            capacity_context=capacity_context,
         )
         dynamic_rows.append(np.asarray(estimate.dynamic_uav_features, dtype=np.float32).reshape(-1))
         pair_rows.append(np.asarray(estimate.pair_features, dtype=np.float32).reshape(-1))
@@ -289,6 +310,7 @@ def estimate_offloading_candidate(
     ue_service_positions: dict[int, Any] | None = None,
     ues: list[Any] | None = None,
     legal: bool = True,
+    capacity_context: DiagnosticCapacityContext | None = None,
 ) -> OffloadingCandidateEstimate:
     """估算把任务交给指定 UAV 后的传输、排队、计算、回传时间和能耗。
 
@@ -301,6 +323,7 @@ def estimate_offloading_candidate(
         state_view=state_view,
         current_time_seconds=current_time_seconds,
         uav_service_positions=uav_service_positions,
+        capacity_context=capacity_context,
     )
     zero_pair = np.zeros((CLEAN_OFFLOADING_PAIR_FEATURE_DIM,), dtype=np.float32)
     if not legal or uav is None:
@@ -412,17 +435,48 @@ def _dynamic_uav_features(
     state_view: TemporaryReservationState,
     current_time_seconds: float,
     uav_service_positions: dict[int, Any] | None,
+    capacity_context: DiagnosticCapacityContext | None = None,
 ) -> np.ndarray:
     """把 UAV 位置、队列、空闲时间和工作量整理为 7 维归一化动态特征。"""
     if uav is None:
         service_pos = np.zeros((2,), dtype=np.float32)
     else:
         service_pos = np.asarray(_service_position(uav_service_positions, uav_id, getattr(uav, "pos")), dtype=np.float32)
-    max_queue = max(float(config.CLEAN_MAX_QUEUE_PER_UAV), 1.0)
+    max_queue = max(
+        float(
+            capacity_context.queue_length_norm_ref
+            if capacity_context is not None
+            else config.CLEAN_MAX_QUEUE_PER_UAV
+        ),
+        1.0,
+    )
+    remaining_ref = max(
+        float(
+            capacity_context.remaining_slots_feature_ref
+            if capacity_context is not None
+            else config.CLEAN_MAX_QUEUE_PER_UAV
+        ),
+        1.0,
+    )
+    assigned_ref = max(
+        float(
+            capacity_context.slot_assigned_norm_ref
+            if capacity_context is not None
+            else config.CLEAN_MAX_QUEUE_PER_UAV
+        ),
+        1.0,
+    )
     max_available_time = max(float(config.CLEAN_NORM_AVAIL_TIME_REF), 1.0)
-    max_workload = max(float(config.CLEAN_NORM_QUEUE_WORKLOAD_REF), 1.0)
+    max_workload = max(
+        float(
+            capacity_context.queue_workload_norm_ref
+            if capacity_context is not None
+            else config.CLEAN_NORM_QUEUE_WORKLOAD_REF
+        ),
+        1.0,
+    )
     queue_length = float(state_view.queue_lengths.get(uav_id, 0))
-    remaining_slots = float(state_view.remaining_slots(uav_id))
+    remaining_slots = max(remaining_ref - queue_length, 0.0)
     available_delta = max(float(state_view.available_times.get(uav_id, current_time_seconds)) - float(current_time_seconds), 0.0)
     queued_workload = float(state_view.queued_workloads.get(uav_id, 0.0))
     slot_assigned = float(state_view.slot_assigned_counts.get(uav_id, 0))
@@ -431,10 +485,10 @@ def _dynamic_uav_features(
             np.clip(float(service_pos.reshape(-1)[0]) / float(config.AREA_WIDTH), 0.0, 1.0),
             np.clip(float(service_pos.reshape(-1)[1]) / float(config.AREA_HEIGHT), 0.0, 1.0),
             np.clip(queue_length / max_queue, 0.0, 1.0),
-            np.clip(remaining_slots / max_queue, 0.0, 1.0),
+            np.clip(remaining_slots / remaining_ref, 0.0, 1.0),
             np.clip(available_delta / max_available_time, 0.0, 1.0),
             np.clip(queued_workload / max_workload, 0.0, 1.0),
-            np.clip(slot_assigned / max_queue, 0.0, 1.0),
+            np.clip(slot_assigned / assigned_ref, 0.0, 1.0),
         ],
         dtype=np.float32,
     )
