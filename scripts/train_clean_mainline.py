@@ -317,6 +317,12 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
     eft_auxiliary_regret_scale = float(
         cli.get("eft_auxiliary_regret_scale", 1.0)
     )
+    offloading_eft_advantage = cli.get("offloading_eft_advantage", False)
+    if not isinstance(offloading_eft_advantage, bool):
+        raise ValueError("checkpoint offloading_eft_advantage must be boolean")
+    offloading_lr_scale = float(cli.get("offloading_lr_scale", 1.0))
+    if not math.isfinite(offloading_lr_scale) or offloading_lr_scale <= 0.0:
+        raise ValueError("checkpoint offloading_lr_scale must be finite and positive")
     if not math.isfinite(eft_auxiliary_lambda_initial) or eft_auxiliary_lambda_initial < 0.0:
         raise ValueError("checkpoint EFT auxiliary lambda must be finite and non-negative")
     if not math.isfinite(eft_auxiliary_regret_scale) or eft_auxiliary_regret_scale <= 0.0:
@@ -349,6 +355,8 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
         "freeze_movement": freeze_movement,
         "eft_auxiliary_lambda_initial": eft_auxiliary_lambda_initial,
         "eft_auxiliary_regret_scale": eft_auxiliary_regret_scale,
+        "offloading_eft_advantage": offloading_eft_advantage,
+        "offloading_lr_scale": offloading_lr_scale,
         "offloading_initialization": dict(offloading_initialization),
     }
 
@@ -465,8 +473,22 @@ def validate_resume_experiment_controls(
             "eft_auxiliary_regret_scale",
             float(getattr(args, "eft_auxiliary_regret_scale", 1.0)),
         ),
+        (
+            "offloading_eft_advantage",
+            bool(getattr(args, "offloading_eft_advantage", False)),
+        ),
+        (
+            "offloading_lr_scale",
+            float(getattr(args, "offloading_lr_scale", 1.0)),
+        ),
     ):
-        if not math.isclose(requested, float(saved[key]), rel_tol=0.0, abs_tol=1e-12):
+        if isinstance(requested, bool):
+            if requested != bool(saved[key]):
+                raise ValueError(
+                    f"resume checkpoint {key.replace('_', ' ')} mismatch: "
+                    f"requested {requested}, checkpoint {bool(saved[key])}"
+                )
+        elif not math.isclose(requested, float(saved[key]), rel_tol=0.0, abs_tol=1e-12):
             raise ValueError(
                 f"resume checkpoint {key.replace('_', ' ')} mismatch: "
                 f"requested {requested}, checkpoint {saved[key]}"
@@ -628,6 +650,29 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Independent auxiliary-action RNG seed.",
     )
     parser.add_argument(
+        "--offloading-eft-advantage",
+        action="store_true",
+        default=False,
+        help=(
+            "Per-decision offloading PPO advantage gate: replace the shared "
+            "slot-level GAE advantage for the offloading head with each "
+            "decision's own detached decision-time EFT-regret advantage "
+            "(batch-standardized). Recommended with --freeze-movement for the "
+            "offloading-only diagnostic; off preserves the MAPPO baseline."
+        ),
+    )
+    parser.add_argument(
+        "--offloading-lr-scale",
+        type=_positive_finite_float,
+        default=1.0,
+        help=(
+            "Multiplier applied to the shared learning rate for the offloading "
+            "scorer parameters only (other modules keep the base --lr). Values "
+            "above 1.0 accelerate the offloading head when its per-decision "
+            "PPO gradients are small relative to the critic."
+        ),
+    )
+    parser.add_argument(
         "--offloading-init-bandit-checkpoint",
         type=Path,
         default=None,
@@ -689,6 +734,12 @@ def build_config_snapshot(args: argparse.Namespace) -> dict[str, Any]:
             ),
             "eft_auxiliary_regret_scale": float(
                 getattr(args, "eft_auxiliary_regret_scale", 1.0)
+            ),
+            "offloading_eft_advantage": bool(
+                getattr(args, "offloading_eft_advantage", False)
+            ),
+            "offloading_lr_scale": float(
+                getattr(args, "offloading_lr_scale", 1.0)
             ),
             "eft_auxiliary_schedule": {
                 "constant_through_update_index": 8,
@@ -775,6 +826,12 @@ def initialize_run_files(run_dir: Path, args: argparse.Namespace) -> None:
             ),
             "eft_auxiliary_regret_scale": float(
                 getattr(args, "eft_auxiliary_regret_scale", 1.0)
+            ),
+            "offloading_eft_advantage": bool(
+                getattr(args, "offloading_eft_advantage", False)
+            ),
+            "offloading_lr_scale": float(
+                getattr(args, "offloading_lr_scale", 1.0)
             ),
             "offloading_initialization": getattr(
                 args, "_offloading_initialization_identity", {"mode": "pending"}
@@ -893,7 +950,11 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     initialize_run_files(run_dir, args)
     device = torch.device(str(args.device))
     _move_modules_to_device(modules, device)
-    optimizer = build_single_optimizer(modules, lr=float(args.lr))
+    optimizer = build_single_optimizer(
+        modules,
+        lr=float(args.lr),
+        offloading_lr_scale=float(args.offloading_lr_scale),
+    )
     updater = CleanPPOUpdater(
         modules=modules,
         optimizer=optimizer,
@@ -909,6 +970,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             offloading_entropy_coef=float(args.entropy_coef),
             max_grad_norm=float(args.max_grad_norm),
             detach_critic_hgnn=bool(args.detach_critic_hgnn),
+            offloading_eft_advantage=bool(args.offloading_eft_advantage),
             offloading_counterfactual_coef=float(args.offloading_counterfactual_coef),
             offloading_action_value_loss_coef=float(args.offloading_action_value_loss_coef),
             offloading_lagged_q_coef=float(args.offloading_lagged_q_coef),

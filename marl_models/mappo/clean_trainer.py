@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, asdict, field
 import json
+import math
 import random
 from pathlib import Path
 from typing import Any, Iterable
@@ -63,6 +64,11 @@ class CleanPPOUpdateConfig:
     eft_auxiliary_constant_through_update: int = 8
     eft_auxiliary_zero_at_update: int = 20
     eft_auxiliary_sampling_seed: int = 0
+    # Per-decision offloading PPO advantage gate. When enabled, each
+    # offloading decision's PPO loss uses its own detached decision-time EFT
+    # regret advantage (batch-standardized) instead of the shared slot-level
+    # GAE advantage. Off preserves the clean MAPPO baseline.
+    offloading_eft_advantage: bool = False
     # Diagnostics-only: every N-th update, decompose the HGNN gradient into its
     # actor-loss and value-loss components via torch.autograd.grad (never
     # touches .grad). 0 disables the decomposition.
@@ -363,6 +369,7 @@ class CleanPPOUpdater:
             diagnostics.update(loss_parts.get("lagged_q_diagnostics", {}))
             diagnostics.update(loss_parts.get("value_diagnostics", {}))
             diagnostics.update(loss_parts.get("eft_auxiliary_diagnostics", {}))
+            diagnostics.update(loss_parts.get("offloading_eft_diagnostics", {}))
             if epoch_index == 0:
                 target_parameters = _unique_parameters(
                     [self.modules.hgnn, self.modules.offloading_actor]
@@ -699,6 +706,11 @@ class CleanPPOUpdater:
                         raise ValueError(
                             "offloading rollout record lacks decision-time candidate EFT vector"
                         )
+                    if bool(self.config.offloading_eft_advantage):
+                        raise ValueError(
+                            "offloading_eft_advantage requires decision-time "
+                            "candidate EFT vectors"
+                        )
                 else:
                     eft_values = torch.as_tensor(
                         np.asarray(eft_values_np, dtype=np.float32).copy(),
@@ -718,6 +730,15 @@ class CleanPPOUpdater:
                             "decision_order": int(offloading_record.decision_order),
                         }
                     )
+                    if bool(self.config.offloading_eft_advantage):
+                        best_eft = eft_values[mask].min()
+                        regret = (eft_values[action_index] - best_eft).clamp_min(0.0)
+                        regret_scale = max(
+                            float(self.config.eft_auxiliary_regret_scale), 1e-8
+                        )
+                        item["per_decision_eft_advantage"] = (
+                            (-regret / regret_scale).detach()
+                        )
                 if action_value_enabled:
                     global_context = critic_input.detach().reshape(1, -1).expand(candidate_count, -1)
                     action_value_input = torch.cat([features.detach(), global_context], dim=1)
@@ -758,11 +779,55 @@ class CleanPPOUpdater:
                 "frozen lagged-Q correction count must equal current PPO offloading action count"
             )
 
+        offloading_eft_diagnostics: dict[str, Any] = {
+            "offloading_eft_advantage_enabled": bool(
+                self.config.offloading_eft_advantage
+            ),
+            "offloading_eft_advantage_mean": 0.0,
+            "offloading_eft_advantage_std": 0.0,
+            "offloading_eft_advantage_decision_count": 0,
+        }
+        if bool(self.config.offloading_eft_advantage):
+            per_decision_advantages: list[Any] = []
+            for item in offloading_items:
+                item_advantage = item.get("per_decision_eft_advantage")
+                if item_advantage is None:
+                    raise ValueError(
+                        "offloading_eft_advantage enabled but an offloading "
+                        "decision lacks its per-decision EFT advantage"
+                    )
+                per_decision_advantages.append(item_advantage)
+            if per_decision_advantages:
+                stacked_advantages = torch.stack(per_decision_advantages)
+                raw_std = stacked_advantages.std(unbiased=False)
+                advantage_mean = stacked_advantages.mean()
+                advantage_std = raw_std.clamp_min(1e-8)
+                standardized = (stacked_advantages - advantage_mean) / advantage_std
+                offloading_eft_diagnostics.update(
+                    {
+                        "offloading_eft_advantage_mean": float(
+                            advantage_mean.detach().cpu().item()
+                        ),
+                        "offloading_eft_advantage_std": float(
+                            raw_std.detach().cpu().item()
+                        ),
+                        "offloading_eft_advantage_decision_count": int(
+                            len(per_decision_advantages)
+                        ),
+                    }
+                )
+                for item_index, item in enumerate(offloading_items):
+                    item["per_decision_eft_advantage"] = (
+                        standardized[item_index].detach()
+                    )
+
         off_losses_by_slot: dict[int, list[Any]] = {}
         off_entropies_by_slot: dict[int, list[Any]] = {}
         for item_index, item in enumerate(offloading_items):
             slot_idx = int(item["slot_idx"])
             offloading_advantage = advantages[slot_idx]
+            if bool(self.config.offloading_eft_advantage):
+                offloading_advantage = item["per_decision_eft_advantage"]
             if action_value_enabled:
                 offloading_advantage = offloading_advantage + float(
                     self.config.offloading_counterfactual_coef
@@ -908,6 +973,7 @@ class CleanPPOUpdater:
             "action_value_diagnostics": action_value_diagnostics,
             "lagged_q_diagnostics": lagged_q_diagnostics,
             "eft_auxiliary_diagnostics": eft_auxiliary_diagnostics,
+            "offloading_eft_diagnostics": offloading_eft_diagnostics,
             "value_diagnostics": {
                 "value_clip_fraction": float(
                     torch.stack(value_clip_indicators).mean().detach().cpu().item()
@@ -1225,22 +1291,41 @@ def build_single_optimizer(
     *,
     lr: float = 3e-4,
     optimizer_cls: Any | None = None,
+    offloading_lr_scale: float = 1.0,
 ) -> Any:
     if torch is None:
         raise ModuleNotFoundError("torch is required to build clean PPO optimizer")
     optimizer_type = optimizer_cls or torch.optim.Adam
+    offloading_scale = float(offloading_lr_scale)
+    if not math.isfinite(offloading_scale) or offloading_scale <= 0.0:
+        raise ValueError("offloading_lr_scale must be finite and positive")
+    all_params = _unique_parameters(
+        [
+            modules.hgnn,
+            modules.movement_actor,
+            modules.offloading_actor,
+            modules.critic,
+            modules.offloading_action_value_critic,
+            modules.offloading_lagged_q_critic,
+        ]
+    )
+    if math.isclose(offloading_scale, 1.0):
+        return optimizer_type(all_params, lr=float(lr))
+    offloading_params = _unique_parameters([modules.offloading_actor])
+    offloading_param_ids = {id(parameter) for parameter in offloading_params}
+    other_params = [
+        parameter
+        for parameter in all_params
+        if id(parameter) not in offloading_param_ids
+    ]
     return optimizer_type(
-        _unique_parameters(
-            [
-                modules.hgnn,
-                modules.movement_actor,
-                modules.offloading_actor,
-                modules.critic,
-                modules.offloading_action_value_critic,
-                modules.offloading_lagged_q_critic,
-            ]
-        ),
-        lr=float(lr),
+        [
+            {"params": other_params, "lr": float(lr)},
+            {
+                "params": offloading_params,
+                "lr": float(lr) * offloading_scale,
+            },
+        ]
     )
 
 
