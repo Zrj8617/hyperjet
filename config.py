@@ -97,7 +97,7 @@ ENABLE_ATTRIBUTE_HYPEREDGES: bool = True
 ATTRIBUTE_HYPEREDGE_UPDATE_INTERVAL: int = 5
 ATTRIBUTE_HYPEREDGE_CLUSTER_NUM: int = 4
 KHOP_K: int = 2
-ENABLE_KAHYPAR_PARTITION_HYPEREDGES: bool = True
+ENABLE_KAHYPAR_PARTITION_HYPEREDGES: bool = False  # 调优v2: 关闭KaHyPar，避免反复尝试失败浪费时间
 KAHYPAR_PARTITION_UPDATE_INTERVAL: int = 5
 KAHYPAR_DEGRADED_EXPERIMENT_LABEL: str = "no-KaHyPar / degraded"
 KAHYPAR_INI_RELATIVE_PATH: str = "third_party/kahypar/cut_rKaHyPar_sea20.ini"
@@ -110,10 +110,11 @@ KAHYPAR_MAX_CONSECUTIVE_FAILURES: int = 3
 
 # ===================== zrj_3 clean 主线：奖励 =====================
 # 时间和能耗权重越大，惩罚越重；完成 DAG 权重越大，完成奖励越高。
-REWARD_TIME_WEIGHT: float = 1.0
-REWARD_ENERGY_WEIGHT: float = 0.1
-REWARD_MOVEMENT_ENERGY_WEIGHT: float = 0.05
-REWARD_COMPLETED_DAG_WEIGHT: float = 2.0
+# 调优v8: 系统性收敛方案 - 强化任务信号 + 适度移动惩罚
+REWARD_TIME_WEIGHT: float = 0.5
+REWARD_ENERGY_WEIGHT: float = 0.05
+REWARD_MOVEMENT_ENERGY_WEIGHT: float = 0.08  # 中高惩罚，抑制无效横跳但允许必要移动
+REWARD_COMPLETED_DAG_WEIGHT: float = 8.0   # 大幅提高完成奖励，让任务信号主导
 CRITICAL_TASK_WEIGHT: float = 1.0
 NONCRITICAL_TASK_WEIGHT: float = 0.5
 # 时间参考值和截断上限只用于奖励归一化，避免长队列产生的极端时延压过 DAG 完成奖励。
@@ -123,11 +124,11 @@ CLEAN_REWARD_TIME_CLIP: float = 10.0
 CLEAN_REWARD_TASK_ENERGY_REF: float = P_UAV_COMPUTE * TIME_SLOT_DURATION
 CLEAN_REWARD_MOVE_ENERGY_REF: float = NUM_UAVS * CLEAN_POWER_MOVE * TIME_SLOT_DURATION
 
-# --- 可选的位置塑形奖励（基线默认关闭） ---------------------
-# 打开后，UAV 覆盖更多就绪任务源位置会得到额外奖励。基线实验保持 False；
-# 只有改进消融实验才打开，并把 REWARD_MOVEMENT_POSITION_WEIGHT 设为正数。
-ENABLE_MOVEMENT_POSITION_SHAPING: bool = False
-REWARD_MOVEMENT_POSITION_WEIGHT: float = 0.0
+# --- 可选的位置塑形奖励（已开启，鼓励无人机移动覆盖用户） ---------------------
+# 打开后，UAV 覆盖更多就绪任务源位置会得到额外奖励。
+# 调优v8: 位置塑形奖励保持，但权重适中，避免诱导无效移动
+ENABLE_MOVEMENT_POSITION_SHAPING: bool = True
+REWARD_MOVEMENT_POSITION_WEIGHT: float = 0.5  # 适中奖励，覆盖即得分但不过度诱导
 
 # 日志记录频率（单位：回合）
 LOG_FREQ: int = 1
