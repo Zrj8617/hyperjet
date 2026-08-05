@@ -754,6 +754,139 @@ class Env:
             return 0.0
         return float(covered) / float(counted)
 
+    def compute_per_uav_ready_task_coverage(
+        self,
+        ready_task_ids: list[str],
+        positions: dict[int, np.ndarray] | None = None,
+    ) -> dict[int, float]:
+        """Per-UAV coverage of the given frozen ready task demand origins.
+
+        中文：对每个 UAV 单独计算它就绪任务覆盖比例（该 UAV 的服务位置
+        到任务源点的距离 <= UAV_COVERAGE_RADIUS 的比例）。与全局
+        _compute_movement_position_signal 的区别是只统计"这一架 UAV 自己"
+        的覆盖，不把其他 UAV 算进来，用于给每架 UAV 独立的移动优势。
+        positions 参数用于在移动前的位置上计算覆盖（移动增量信号），
+        缺省时使用当前服务位置。
+
+        Returns a mapping from UAV id to coverage fraction in [0.0, 1.0].
+        """
+        result: dict[int, float] = {
+            int(uav.id): 0.0 for uav in self._uavs
+        }
+        if not ready_task_ids:
+            return result
+        position_source = (
+            positions if positions is not None else self._uav_service_positions
+        )
+        if not position_source:
+            return result
+        coverage_radius = float(config.UAV_COVERAGE_RADIUS)
+        for uav in self._uavs:
+            uav_id = int(uav.id)
+            uav_position = np.asarray(
+                position_source.get(uav_id, uav.pos),
+                dtype=np.float32,
+            ).reshape(-1)[:2]
+            covered = 0
+            counted = 0
+            for task_id in ready_task_ids:
+                task = self._task_manager.get_task(task_id)
+                if task is None:
+                    continue
+                counted += 1
+                source_xy = np.asarray(
+                    task.source_pos, dtype=np.float32
+                ).reshape(-1)[:2]
+                if float(np.linalg.norm(uav_position - source_xy)) <= coverage_radius:
+                    covered += 1
+            if counted > 0:
+                result[uav_id] = float(covered) / float(counted)
+        return result
+
+    def compute_per_uav_ready_task_mean_distance(
+        self,
+        ready_task_ids: list[str],
+        positions: dict[int, np.ndarray] | None = None,
+    ) -> dict[int, float]:
+        """Per-UAV mean distance (meters) to the given ready task sources.
+
+        中文：对每个 UAV 单独计算它到就绪任务源点的平均距离（米），作为
+        稠密的移动位置信号（覆盖率是稀疏的，距离是稠密的）。positions
+        参数用于在移动前的位置上计算，缺省时使用当前服务位置。
+        """
+        result: dict[int, float] = {
+            int(uav.id): 0.0 for uav in self._uavs
+        }
+        if not ready_task_ids:
+            return result
+        position_source = (
+            positions if positions is not None else self._uav_service_positions
+        )
+        if not position_source:
+            return result
+        for uav in self._uavs:
+            uav_id = int(uav.id)
+            uav_position = np.asarray(
+                position_source.get(uav_id, uav.pos),
+                dtype=np.float32,
+            ).reshape(-1)[:2]
+            distances: list[float] = []
+            for task_id in ready_task_ids:
+                task = self._task_manager.get_task(task_id)
+                if task is None:
+                    continue
+                source_xy = np.asarray(
+                    task.source_pos, dtype=np.float32
+                ).reshape(-1)[:2]
+                distances.append(
+                    float(np.linalg.norm(uav_position - source_xy))
+                )
+            if distances:
+                result[uav_id] = float(sum(distances)) / float(len(distances))
+        return result
+
+    def compute_per_uav_ready_task_nearest_distance(
+        self,
+        ready_task_ids: list[str],
+        positions: dict[int, np.ndarray] | None = None,
+    ) -> dict[int, float]:
+        """Per-UAV distance (meters) to the NEAREST ready task source.
+
+        中文：对每个 UAV 单独计算它到最近就绪任务源点的距离（米）。与
+        平均距离相比，最近距离不会被任务数量稀释：一次移动最多改变
+        CLEAN_UAV_MOVEMENT_SPEED * TIME_SLOT_DURATION 米，移动信号更强。
+        """
+        result: dict[int, float] = {
+            int(uav.id): 0.0 for uav in self._uavs
+        }
+        if not ready_task_ids:
+            return result
+        position_source = (
+            positions if positions is not None else self._uav_service_positions
+        )
+        if not position_source:
+            return result
+        for uav in self._uavs:
+            uav_id = int(uav.id)
+            uav_position = np.asarray(
+                position_source.get(uav_id, uav.pos),
+                dtype=np.float32,
+            ).reshape(-1)[:2]
+            nearest: float | None = None
+            for task_id in ready_task_ids:
+                task = self._task_manager.get_task(task_id)
+                if task is None:
+                    continue
+                source_xy = np.asarray(
+                    task.source_pos, dtype=np.float32
+                ).reshape(-1)[:2]
+                distance = float(np.linalg.norm(uav_position - source_xy))
+                if nearest is None or distance < nearest:
+                    nearest = distance
+            if nearest is not None:
+                result[uav_id] = nearest
+        return result
+
     def _movement_delta(self, action: int | str) -> np.ndarray:
         """把悬停或四个方向的离散动作换成本时隙实际移动的二维距离。"""
         step_distance = float(config.CLEAN_UAV_MOVEMENT_SPEED) * float(config.TIME_SLOT_DURATION)

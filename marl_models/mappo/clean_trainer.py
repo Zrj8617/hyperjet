@@ -69,6 +69,11 @@ class CleanPPOUpdateConfig:
     # regret advantage (batch-standardized) instead of the shared slot-level
     # GAE advantage. Off preserves the clean MAPPO baseline.
     offloading_eft_advantage: bool = False
+    # Per-UAV movement PPO advantage gate. When enabled, each UAV's movement
+    # PPO loss uses its own detached post-move ready-task coverage signal
+    # (batch-standardized) instead of the shared slot-level GAE advantage. Off
+    # preserves the clean MAPPO baseline.
+    movement_position_advantage: bool = False
     # Diagnostics-only: every N-th update, decompose the HGNN gradient into its
     # actor-loss and value-loss components via torch.autograd.grad (never
     # touches .grad). 0 disables the decomposition.
@@ -370,6 +375,7 @@ class CleanPPOUpdater:
             diagnostics.update(loss_parts.get("value_diagnostics", {}))
             diagnostics.update(loss_parts.get("eft_auxiliary_diagnostics", {}))
             diagnostics.update(loss_parts.get("offloading_eft_diagnostics", {}))
+            diagnostics.update(loss_parts.get("movement_position_diagnostics", {}))
             if epoch_index == 0:
                 target_parameters = _unique_parameters(
                     [self.modules.hgnn, self.modules.offloading_actor]
@@ -598,6 +604,7 @@ class CleanPPOUpdater:
         per_slot_move_entropies: list[Any] = []
         value_losses: list[Any] = []
         value_clip_indicators: list[Any] = []
+        movement_items: list[dict[str, Any]] = []
         offloading_items: list[dict[str, Any]] = []
         eft_auxiliary_items: list[dict[str, Any]] = []
         action_value_losses_by_slot: dict[int, list[Any]] = {}
@@ -635,8 +642,6 @@ class CleanPPOUpdater:
             value_losses.append(value_loss)
             value_clip_indicators.append(was_clipped)
 
-            move_losses: list[Any] = []
-            move_entropies: list[Any] = []
             for movement_record in record.movement_records:
                 logits = self.modules.movement_actor(
                     uav_features=torch.as_tensor(movement_record.uav_features, dtype=torch.float32, device=self.device).reshape(1, -1),
@@ -650,18 +655,18 @@ class CleanPPOUpdater:
                 dist = Categorical(logits=logits)
                 action = torch.as_tensor(int(movement_record.selected_action), dtype=torch.long, device=self.device)
                 old_log_prob = torch.as_tensor(float(movement_record.old_log_probability), dtype=torch.float32, device=self.device)
-                move_losses.append(
-                    _ppo_action_loss(
-                        new_log_prob=dist.log_prob(action),
-                        old_log_prob=old_log_prob,
-                        advantage=advantages[slot_idx],
-                        clip_epsilon=self.config.clip_epsilon,
-                    )
+                movement_items.append(
+                    {
+                        "slot_idx": int(slot_idx),
+                        "dist": dist,
+                        "action": action,
+                        "old_log_prob": old_log_prob,
+                        "entropy": dist.entropy(),
+                        "movement_position_signal": float(
+                            movement_record.movement_position_signal
+                        ),
+                    }
                 )
-                move_entropies.append(dist.entropy())
-            if move_losses:
-                per_slot_move_losses.append(torch.stack(move_losses).mean())
-                per_slot_move_entropies.append(torch.stack(move_entropies).mean())
 
             for offloading_record in record.offloading_records:
                 task_idx = int(offloading_record.task_local_index)
@@ -764,6 +769,71 @@ class CleanPPOUpdater:
                     legal_q_spreads.append(q_spread)
                     raw_counterfactual_values.append(counterfactual)
                 offloading_items.append(item)
+
+        movement_position_diagnostics: dict[str, Any] = {
+            "movement_position_advantage_enabled": bool(
+                self.config.movement_position_advantage
+            ),
+            "movement_position_advantage_mean": 0.0,
+            "movement_position_advantage_std": 0.0,
+            "movement_position_advantage_count": 0,
+        }
+        if bool(self.config.movement_position_advantage) and movement_items:
+            signal_values = torch.as_tensor(
+                [item["movement_position_signal"] for item in movement_items],
+                dtype=torch.float32,
+                device=self.device,
+            )
+            raw_std = signal_values.std(unbiased=False)
+            signal_mean = signal_values.mean()
+            signal_std = raw_std.clamp_min(1e-8)
+            standardized_signals = (
+                (signal_values - signal_mean) / signal_std
+            ).detach()
+            movement_position_diagnostics.update(
+                {
+                    "movement_position_advantage_mean": float(
+                        signal_mean.detach().cpu().item()
+                    ),
+                    "movement_position_advantage_std": float(
+                        raw_std.detach().cpu().item()
+                    ),
+                    "movement_position_advantage_count": int(
+                        len(movement_items)
+                    ),
+                }
+            )
+            for item_index, item in enumerate(movement_items):
+                item["per_uav_movement_advantage"] = standardized_signals[
+                    item_index
+                ]
+
+        move_losses_by_slot: dict[int, list[Any]] = {}
+        move_entropies_by_slot: dict[int, list[Any]] = {}
+        for item in movement_items:
+            slot_idx = int(item["slot_idx"])
+            movement_advantage = advantages[slot_idx]
+            if bool(self.config.movement_position_advantage):
+                movement_advantage = item["per_uav_movement_advantage"]
+            move_losses_by_slot.setdefault(slot_idx, []).append(
+                _ppo_action_loss(
+                    new_log_prob=item["dist"].log_prob(item["action"]),
+                    old_log_prob=item["old_log_prob"],
+                    advantage=movement_advantage.detach(),
+                    clip_epsilon=self.config.clip_epsilon,
+                )
+            )
+            move_entropies_by_slot.setdefault(slot_idx, []).append(
+                item["entropy"]
+            )
+        per_slot_move_losses = [
+            torch.stack(move_losses_by_slot[idx]).mean()
+            for idx in sorted(move_losses_by_slot)
+        ]
+        per_slot_move_entropies = [
+            torch.stack(move_entropies_by_slot[idx]).mean()
+            for idx in sorted(move_entropies_by_slot)
+        ]
 
         normalized_counterfactual, counterfactual_diagnostics = normalize_counterfactual_values(
             raw_counterfactual_values
@@ -974,6 +1044,7 @@ class CleanPPOUpdater:
             "lagged_q_diagnostics": lagged_q_diagnostics,
             "eft_auxiliary_diagnostics": eft_auxiliary_diagnostics,
             "offloading_eft_diagnostics": offloading_eft_diagnostics,
+            "movement_position_diagnostics": movement_position_diagnostics,
             "value_diagnostics": {
                 "value_clip_fraction": float(
                     torch.stack(value_clip_indicators).mean().detach().cpu().item()
@@ -1292,6 +1363,7 @@ def build_single_optimizer(
     lr: float = 3e-4,
     optimizer_cls: Any | None = None,
     offloading_lr_scale: float = 1.0,
+    movement_lr_scale: float = 1.0,
 ) -> Any:
     if torch is None:
         raise ModuleNotFoundError("torch is required to build clean PPO optimizer")
@@ -1299,6 +1371,9 @@ def build_single_optimizer(
     offloading_scale = float(offloading_lr_scale)
     if not math.isfinite(offloading_scale) or offloading_scale <= 0.0:
         raise ValueError("offloading_lr_scale must be finite and positive")
+    movement_scale = float(movement_lr_scale)
+    if not math.isfinite(movement_scale) or movement_scale <= 0.0:
+        raise ValueError("movement_lr_scale must be finite and positive")
     all_params = _unique_parameters(
         [
             modules.hgnn,
@@ -1309,24 +1384,36 @@ def build_single_optimizer(
             modules.offloading_lagged_q_critic,
         ]
     )
-    if math.isclose(offloading_scale, 1.0):
+    if math.isclose(offloading_scale, 1.0) and math.isclose(movement_scale, 1.0):
         return optimizer_type(all_params, lr=float(lr))
     offloading_params = _unique_parameters([modules.offloading_actor])
     offloading_param_ids = {id(parameter) for parameter in offloading_params}
+    movement_params = _unique_parameters([modules.movement_actor])
+    movement_param_ids = {id(parameter) for parameter in movement_params}
     other_params = [
         parameter
         for parameter in all_params
         if id(parameter) not in offloading_param_ids
+        and id(parameter) not in movement_param_ids
     ]
-    return optimizer_type(
-        [
-            {"params": other_params, "lr": float(lr)},
+    groups: list[dict[str, Any]] = [
+        {"params": other_params, "lr": float(lr)},
+    ]
+    if offloading_params:
+        groups.append(
             {
                 "params": offloading_params,
                 "lr": float(lr) * offloading_scale,
-            },
-        ]
-    )
+            }
+        )
+    if movement_params:
+        groups.append(
+            {
+                "params": movement_params,
+                "lr": float(lr) * movement_scale,
+            }
+        )
+    return optimizer_type(groups)
 
 
 def close_rollout_with_bootstrap(

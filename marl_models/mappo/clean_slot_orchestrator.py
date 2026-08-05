@@ -62,6 +62,12 @@ class CleanMovementRolloutRecord:
     selected_action: int
     old_log_probability: float
     entropy: float
+    # Optional per-UAV movement signal: negative normalized post-move distance
+    # to the nearest ready task source (distance / map diagonal) minus a fixed
+    # movement-energy penalty for non-hover actions. Used as the per-UAV
+    # movement PPO advantage when the movement-position-advantage gate is
+    # enabled; zero when the field is not populated.
+    movement_position_signal: float = 0.0
 
 
 @dataclass(slots=True)

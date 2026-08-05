@@ -323,6 +323,12 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
     offloading_lr_scale = float(cli.get("offloading_lr_scale", 1.0))
     if not math.isfinite(offloading_lr_scale) or offloading_lr_scale <= 0.0:
         raise ValueError("checkpoint offloading_lr_scale must be finite and positive")
+    movement_position_advantage = cli.get("movement_position_advantage", False)
+    if not isinstance(movement_position_advantage, bool):
+        raise ValueError("checkpoint movement_position_advantage must be boolean")
+    movement_lr_scale = float(cli.get("movement_lr_scale", 1.0))
+    if not math.isfinite(movement_lr_scale) or movement_lr_scale <= 0.0:
+        raise ValueError("checkpoint movement_lr_scale must be finite and positive")
     if not math.isfinite(eft_auxiliary_lambda_initial) or eft_auxiliary_lambda_initial < 0.0:
         raise ValueError("checkpoint EFT auxiliary lambda must be finite and non-negative")
     if not math.isfinite(eft_auxiliary_regret_scale) or eft_auxiliary_regret_scale <= 0.0:
@@ -357,6 +363,8 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
         "eft_auxiliary_regret_scale": eft_auxiliary_regret_scale,
         "offloading_eft_advantage": offloading_eft_advantage,
         "offloading_lr_scale": offloading_lr_scale,
+        "movement_position_advantage": movement_position_advantage,
+        "movement_lr_scale": movement_lr_scale,
         "offloading_initialization": dict(offloading_initialization),
     }
 
@@ -480,6 +488,14 @@ def validate_resume_experiment_controls(
         (
             "offloading_lr_scale",
             float(getattr(args, "offloading_lr_scale", 1.0)),
+        ),
+        (
+            "movement_position_advantage",
+            bool(getattr(args, "movement_position_advantage", False)),
+        ),
+        (
+            "movement_lr_scale",
+            float(getattr(args, "movement_lr_scale", 1.0)),
         ),
     ):
         if isinstance(requested, bool):
@@ -673,6 +689,28 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--movement-position-advantage",
+        action="store_true",
+        default=False,
+        help=(
+            "Per-UAV movement PPO advantage gate: replace the shared slot-level "
+            "GAE advantage for the movement head with each UAV's own detached "
+            "post-move ready-task coverage signal (batch-standardized). Use "
+            "without --freeze-movement; off preserves the MAPPO baseline."
+        ),
+    )
+    parser.add_argument(
+        "--movement-lr-scale",
+        type=_positive_finite_float,
+        default=1.0,
+        help=(
+            "Multiplier applied to the shared learning rate for the movement "
+            "actor parameters only (other modules keep the base --lr). Values "
+            "above 1.0 accelerate the movement head when its per-UAV PPO "
+            "gradients are small."
+        ),
+    )
+    parser.add_argument(
         "--offloading-init-bandit-checkpoint",
         type=Path,
         default=None,
@@ -740,6 +778,12 @@ def build_config_snapshot(args: argparse.Namespace) -> dict[str, Any]:
             ),
             "offloading_lr_scale": float(
                 getattr(args, "offloading_lr_scale", 1.0)
+            ),
+            "movement_position_advantage": bool(
+                getattr(args, "movement_position_advantage", False)
+            ),
+            "movement_lr_scale": float(
+                getattr(args, "movement_lr_scale", 1.0)
             ),
             "eft_auxiliary_schedule": {
                 "constant_through_update_index": 8,
@@ -832,6 +876,12 @@ def initialize_run_files(run_dir: Path, args: argparse.Namespace) -> None:
             ),
             "offloading_lr_scale": float(
                 getattr(args, "offloading_lr_scale", 1.0)
+            ),
+            "movement_position_advantage": bool(
+                getattr(args, "movement_position_advantage", False)
+            ),
+            "movement_lr_scale": float(
+                getattr(args, "movement_lr_scale", 1.0)
             ),
             "offloading_initialization": getattr(
                 args, "_offloading_initialization_identity", {"mode": "pending"}
@@ -954,6 +1004,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         modules,
         lr=float(args.lr),
         offloading_lr_scale=float(args.offloading_lr_scale),
+        movement_lr_scale=float(args.movement_lr_scale),
     )
     updater = CleanPPOUpdater(
         modules=modules,
@@ -971,6 +1022,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             max_grad_norm=float(args.max_grad_norm),
             detach_critic_hgnn=bool(args.detach_critic_hgnn),
             offloading_eft_advantage=bool(args.offloading_eft_advantage),
+            movement_position_advantage=bool(args.movement_position_advantage),
             offloading_counterfactual_coef=float(args.offloading_counterfactual_coef),
             offloading_action_value_loss_coef=float(args.offloading_action_value_loss_coef),
             offloading_lagged_q_coef=float(args.offloading_lagged_q_coef),
@@ -2497,7 +2549,41 @@ def _finish_collect_clean_slot(
     lagged_q_enabled: bool = False,
 ) -> tuple[Any, bool, dict[str, Any]]:
     assignment_time_seconds = float(env.current_time_seconds)
-    env.apply_movement(movement_actions)
+    if movement_records:
+        ready_task_ids_for_movement = list(
+            encoded_state.prepared_state.frozen_ready_task_ids
+        )
+        env.apply_movement(movement_actions)
+        post_move_nearest = env.compute_per_uav_ready_task_nearest_distance(
+            ready_task_ids_for_movement
+        )
+        area_diagonal = float(
+            (config.AREA_WIDTH ** 2 + config.AREA_HEIGHT ** 2) ** 0.5
+        )
+        hover_action = config.CLEAN_MOVEMENT_ACTIONS.index(
+            config.CLEAN_MOVEMENT_HOVER_ACTION
+        )
+        # Movement signal = -(post-move nearest ready-task distance / map
+        # diagonal) minus a fixed movement-energy penalty for non-hover
+        # actions (~7 m of equivalent distance, ~10% of one movement step).
+        # The absolute distance term makes "hovering far from tasks" clearly
+        # worse than "hovering near tasks"; the energy term stops constant
+        # flying. Without the absolute term the policy collapses to hover
+        # because hovering is safer than the average random move.
+        movement_energy_penalty_signal = 0.01
+        for movement_record in movement_records:
+            uav_id = int(movement_record.uav_id)
+            energy_penalty = (
+                movement_energy_penalty_signal
+                if int(movement_record.selected_action) != int(hover_action)
+                else 0.0
+            )
+            movement_record.movement_position_signal = float(
+                -post_move_nearest.get(uav_id, 0.0) / area_diagonal
+                - energy_penalty
+            )
+    else:
+        env.apply_movement(movement_actions)
     frozen_ready_tasks = [env.task_manager.get_task(task_id) for task_id in encoded_state.prepared_state.frozen_ready_task_ids]
     frozen_ready_tasks = [task for task in frozen_ready_tasks if task is not None and task.state == task_state_ready]
     assignment_buffer = modules.offloading_actor.act(
