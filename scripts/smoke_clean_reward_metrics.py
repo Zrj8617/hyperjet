@@ -190,6 +190,7 @@ def _check_completed_dag_weight_injection() -> None:
 
 def _check_reward_control_provenance() -> None:
     train_args = build_train_arg_parser().parse_args(["--completed-dag-weight", "16"])
+    train_args._offloading_initialization_identity = {"mode": "random"}
     snapshot = build_config_snapshot(train_args)
     _assert(
         snapshot["cli"]["completed_dag_weight"] == 16.0,
