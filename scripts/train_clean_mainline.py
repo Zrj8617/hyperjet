@@ -2564,13 +2564,15 @@ def _finish_collect_clean_slot(
             config.CLEAN_MOVEMENT_HOVER_ACTION
         )
         # Movement signal = -(post-move nearest ready-task distance / map
-        # diagonal) minus a fixed movement-energy penalty for non-hover
-        # actions (~7 m of equivalent distance, ~10% of one movement step).
+        # diagonal) minus a config-tunable movement-energy penalty for
+        # non-hover actions.
         # The absolute distance term makes "hovering far from tasks" clearly
         # worse than "hovering near tasks"; the energy term stops constant
         # flying. Without the absolute term the policy collapses to hover
         # because hovering is safer than the average random move.
-        movement_energy_penalty_signal = 0.01
+        movement_energy_penalty_signal = float(
+            config.CLEAN_MOVEMENT_ENERGY_PENALTY_SIGNAL
+        )
         for movement_record in movement_records:
             uav_id = int(movement_record.uav_id)
             energy_penalty = (
