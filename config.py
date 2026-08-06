@@ -126,7 +126,7 @@ CLEAN_REWARD_MOVE_ENERGY_REF: float = NUM_UAVS * CLEAN_POWER_MOVE * TIME_SLOT_DU
 
 # 每 UAV 移动优势中的能耗惩罚（归一化距离单位）。0.01 约等于 7 米等价距离；
 # 调低（如 0.003）让"显著缩短距离的移动"不被惩罚掉，鼓励主动重新定位。
-CLEAN_MOVEMENT_ENERGY_PENALTY_SIGNAL: float = 0.003
+CLEAN_MOVEMENT_ENERGY_PENALTY_SIGNAL: float = 0.0045
 
 # --- 可选的位置塑形奖励（已开启，鼓励无人机移动覆盖用户） ---------------------
 # 打开后，UAV 覆盖更多就绪任务源位置会得到额外奖励。
