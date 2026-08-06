@@ -137,3 +137,60 @@ python scripts/plot_clean_metrics.py --run-dir <train_run_dir> --no-show
 - `logs/` 已被 `.gitignore` 忽略（720MB 实验产物），结果请从本地日志读取。
 - critic 至今仍未学会（explained variance ≈0），当前方案绕开了它；若后续要
   恢复 slot-level MAPPO 或实现 decision micro-step，仍需解决 critic 问题。
+
+---
+
+## 10. 实验进度更新（2026-08-06）：HGNN 超图对照 + KaHyPar 状态
+
+### 10.1 HGNN 对照实验（论文核心贡献的直接证据）
+
+目的：验证"超图辅助"是否真的带来收益。使用与 MLP 完全相同的配方
+（每决策 EFT 优势 + 每 UAV 移动优势 + 双头 10 倍学习率），仅把
+`--task-encoder` 从 `mlp` 换成 `hgnn`，3 个种子 × 120 次更新 + 正式评估。
+
+| 指标 | MLP（3 种子均值±std） | HGNN（3 种子均值±std） |
+|---|---:|---:|
+| 平均流时间 (s) | **149.8 ± 14.0** | 161.4 ± 28.0 |
+| 到达阶段完成率 | **0.846 ± 0.010** | 0.833 ± 0.015 |
+| 能耗/DAG | **154.7 ± 1.5** | 156.4 ± 7.4 |
+| 无效分配率 | 0 | 0 |
+
+分种子细节：
+
+| 种子 | MLP 流时间 | HGNN 流时间 | MLP 完成率 | HGNN 完成率 |
+|---:|---:|---:|---:|---:|
+| 0 | 164.6s | **142.5s** | 0.836 | **0.848** |
+| 1 | **136.7s** | 193.6s | **0.857** | 0.818 |
+| 2 | 148.2s | **148.1s** | **0.845** | 0.834 |
+
+**诚实结论**：在 120 次更新的训练量下，HGNN 没有稳定超过 MLP——
+seed 0 超图更好，但 seed 1 明显更差，整体 MLP 更稳、HGNN 波动更大。
+这个结果不能直接写成"超图优于 MLP"。两个可能原因：
+
+1. **KaHyPar 分区超边当时未启用**——超图方法"完整形态"的优势没有发挥；
+2. HGNN 参数更多、学得更慢，可能需要 240+ 次更新才能到公平对比。
+
+运行目录：`logs/clean_mainline/formal_hgnn_seed*`（曲线在 `plots/`）。
+
+### 10.2 KaHyPar 状态（2026-08-06 修复动作）
+
+- `config.ENABLE_KAHYPAR_PARTITION_HYPEREDGES` 已重新启用为 `True`，
+  分区超边代码路径激活；
+- **`kahypar==1.3.7` 仅提供 Linux wheel**：`pip install kahypar==1.3.7`
+  在 Windows/Python 3.14 上无可用版本（`from versions: none`）；
+- Windows 开发机上 worker 会因缺少 `kahypar` 模块优雅降级：
+  `partition_status = degraded_no_cache / degraded_cache`，训练不中断；
+- **真实分区需要 Linux 训练服务器**：按 `third_party/kahypar/README.md`
+  在服务器上 `pip install kahypar==1.3.7`，正式运行即可产出分区超边。
+
+### 10.3 当前最稳健可写论文的结果
+
+仍是 MLP 配置：流时间 149.8s（贪心 177s、随机 459s）、到达完成率 0.846
+（贪心 0.735、随机 0.505）、能耗 154.7/DAG、无效分配率 0。
+
+### 10.4 下一步（更新后）
+
+1. 在 Linux 服务器上安装 kahypar 并重跑 HGNN 对照，验证超图完整形态
+   （含分区超边）是否超过 MLP；
+2. 或先在本机把 HGNN 训练量加到 240 次更新，排除"学得慢"的干扰；
+3. 论文图表整理：3 种子收敛曲线 + 基线对比 + MLP/HGNN 表。
