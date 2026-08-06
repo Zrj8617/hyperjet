@@ -174,8 +174,9 @@ seed 0 超图更好，但 seed 1 明显更差，整体 MLP 更稳、HGNN 波动�
 
 ### 10.2 KaHyPar 状态（2026-08-06 修复动作）
 
-- `config.ENABLE_KAHYPAR_PARTITION_HYPEREDGES` 已重新启用为 `True`，
-  分区超边代码路径激活；
+- 2026-08-06 曾重新启用 `ENABLE_KAHYPAR_PARTITION_HYPEREDGES = True`
+  并验证优雅降级；随后决策改为**收敛调优阶段暂不启用（=False）**，
+  与 MLP/HGNN 基线配置保持一致；
 - **`kahypar==1.3.7` 仅提供 Linux wheel**：`pip install kahypar==1.3.7`
   在 Windows/Python 3.14 上无可用版本（`from versions: none`）；
 - Windows 开发机上 worker 会因缺少 `kahypar` 模块优雅降级：

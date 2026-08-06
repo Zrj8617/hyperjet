@@ -97,7 +97,7 @@ ENABLE_ATTRIBUTE_HYPEREDGES: bool = True
 ATTRIBUTE_HYPEREDGE_UPDATE_INTERVAL: int = 5
 ATTRIBUTE_HYPEREDGE_CLUSTER_NUM: int = 4
 KHOP_K: int = 2
-ENABLE_KAHYPAR_PARTITION_HYPEREDGES: bool = True  # 正式主方法启用分区超边；Windows 无 kahypar wheel 时优雅降级为 degraded
+ENABLE_KAHYPAR_PARTITION_HYPEREDGES: bool = False  # 收敛调优阶段暂不启用（2026-08-06 决策）；Linux 服务器装 kahypar==1.3.7 后开启
 KAHYPAR_PARTITION_UPDATE_INTERVAL: int = 5
 KAHYPAR_DEGRADED_EXPERIMENT_LABEL: str = "no-KaHyPar / degraded"
 KAHYPAR_INI_RELATIVE_PATH: str = "third_party/kahypar/cut_rKaHyPar_sea20.ini"
