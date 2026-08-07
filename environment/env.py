@@ -887,6 +887,36 @@ class Env:
                 result[uav_id] = nearest
         return result
 
+    def compute_service_demand_centroid(self) -> np.ndarray | None:
+        """Weighted centroid of UEs currently waiting for service.
+
+        中文：以"正在等待服务（有 active DAG）的 UE"的位置计算服务需求质心，
+        让无人机飞向真正需要计算服务的用户聚集区。没有等待服务的 UE 时退回
+        热点中心，再退回全部 UE 均值。质心随用户缓慢移动而缓慢变化，不会像
+        "最近就绪任务"那样逐时隙跳变导致无人机追着任务乱飞。
+        """
+        waiting = [
+            ue for ue in self._ues if bool(getattr(ue, "service_waiting", False))
+        ]
+        if waiting:
+            positions = np.asarray(
+                [np.asarray(ue.pos, dtype=np.float32).reshape(-1)[:2] for ue in waiting],
+                dtype=np.float32,
+            )
+            return positions.mean(axis=0).astype(np.float32, copy=True)
+        hotspot = getattr(self, "hotspot_center", None)
+        if hotspot is not None:
+            hotspot_arr = np.asarray(hotspot, dtype=np.float32).reshape(-1)
+            if hotspot_arr.size >= 2:
+                return hotspot_arr[:2].copy()
+        if self._ues:
+            positions = np.asarray(
+                [np.asarray(ue.pos, dtype=np.float32).reshape(-1)[:2] for ue in self._ues],
+                dtype=np.float32,
+            )
+            return positions.mean(axis=0).astype(np.float32, copy=True)
+        return None
+
     def _movement_delta(self, action: int | str) -> np.ndarray:
         """把悬停或四个方向的离散动作换成本时隙实际移动的二维距离。"""
         step_distance = float(config.CLEAN_UAV_MOVEMENT_SPEED) * float(config.TIME_SLOT_DURATION)

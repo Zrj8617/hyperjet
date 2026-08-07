@@ -2554,22 +2554,20 @@ def _finish_collect_clean_slot(
             encoded_state.prepared_state.frozen_ready_task_ids
         )
         env.apply_movement(movement_actions)
-        post_move_nearest = env.compute_per_uav_ready_task_nearest_distance(
-            ready_task_ids_for_movement
-        )
+        service_centroid = env.compute_service_demand_centroid()
+        post_move_positions = env.uav_service_positions
         area_diagonal = float(
             (config.AREA_WIDTH ** 2 + config.AREA_HEIGHT ** 2) ** 0.5
         )
         hover_action = config.CLEAN_MOVEMENT_ACTIONS.index(
             config.CLEAN_MOVEMENT_HOVER_ACTION
         )
-        # Movement signal = -(post-move nearest ready-task distance / map
-        # diagonal) minus a config-tunable movement-energy penalty for
-        # non-hover actions.
-        # The absolute distance term makes "hovering far from tasks" clearly
-        # worse than "hovering near tasks"; the energy term stops constant
-        # flying. Without the absolute term the policy collapses to hover
-        # because hovering is safer than the average random move.
+        # Movement signal = -(post-move distance to the service-demand centroid
+        # / map diagonal) minus a config-tunable movement-energy penalty for
+        # non-hover actions. The centroid tracks users currently waiting for
+        # service (hotspot-weighted), so UAVs learn to fly to the user-dense
+        # area once and then hover to serve them; the energy term stops
+        # constant chasing.
         movement_energy_penalty_signal = float(
             config.CLEAN_MOVEMENT_ENERGY_PENALTY_SIGNAL
         )
@@ -2580,9 +2578,19 @@ def _finish_collect_clean_slot(
                 if int(movement_record.selected_action) != int(hover_action)
                 else 0.0
             )
+            distance_signal = 0.0
+            if service_centroid is not None:
+                uav_position = np.asarray(
+                    post_move_positions.get(
+                        uav_id, np.zeros((2,), dtype=np.float32)
+                    ),
+                    dtype=np.float32,
+                ).reshape(-1)[:2]
+                distance_signal = -float(
+                    np.linalg.norm(uav_position - service_centroid)
+                ) / area_diagonal
             movement_record.movement_position_signal = float(
-                -post_move_nearest.get(uav_id, 0.0) / area_diagonal
-                - energy_penalty
+                distance_signal - energy_penalty
             )
     else:
         env.apply_movement(movement_actions)
