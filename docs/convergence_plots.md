@@ -24,7 +24,7 @@
 
 ### 2.1 DAG 完成率与吞吐（最直观的收敛证据）
 
-![MLP 完成率与吞吐](../logs/clean_mainline/20260807_162005_formal_mlp_centroid_seed0_seed0/plots/train_completion_throughput.png)
+![MLP 完成率与吞吐](figures/mlp_centroid_seed0_completion_throughput.png)
 
 **怎么看**：完成率从第 1 次更新的 ~0.2 快速爬升，约 30 次更新后进入
 **0.90~0.95 的平台期**，之后不再上升——策略"定型"了。吞吐（每秒完成的
@@ -32,14 +32,14 @@ DAG 数）同步上升并稳定。
 
 ### 2.2 流时间与能耗（性能收敛）
 
-![MLP 流时间与能耗](../logs/clean_mainline/20260807_162005_formal_mlp_centroid_seed0_seed0/plots/train_energy_flowtime.png)
+![MLP 流时间与能耗](figures/mlp_centroid_seed0_energy_flowtime.png)
 
 **怎么看**：平均流时间从 ~450s 一路掉到 **~60s** 后稳住；能耗在低位小幅波动。
 "快速下降 → 平台"说明无人机学会了飞到用户区、卸载学会了选对 UAV。
 
 ### 2.3 奖励曲线（最"抖"的一张，用滑动平均看趋势）
 
-![MLP 奖励曲线](../logs/clean_mainline/20260807_162005_formal_mlp_centroid_seed0_seed0/plots/train_reward.png)
+![MLP 奖励曲线](figures/mlp_centroid_seed0_reward.png)
 
 **怎么看**：每个点是单次 rollout 的总奖励，噪声很大（DAG 完成奖励稀疏 +
 时间惩罚波动），但整体**趋势向上并围绕平台波动**。论文里对这条曲线做
@@ -47,7 +47,7 @@ DAG 数）同步上升并稳定。
 
 ### 2.4 奖励曲线（滑动平均后，窗口 20）
 
-![MLP 奖励曲线（滑动平均）](../logs/clean_mainline/20260807_162005_formal_mlp_centroid_seed0_seed0/plots_smooth/smooth20_train_reward.png)
+![MLP 奖励曲线（滑动平均）](figures/mlp_centroid_seed0_reward_smooth.png)
 
 **这张图是干什么的**：原始奖励曲线每个点是"单次 rollout"的采样，方差很大，
 看不出趋势。滑动平均（窗口 20）把相邻 20 次更新的奖励取平均，**滤掉单点
@@ -63,7 +63,7 @@ python scripts/plot_clean_metrics.py --run-dir <run_dir> --smooth-window 20 --pr
 
 ### 2.5 损失曲线（训练稳定性）
 
-![MLP 损失曲线](../logs/clean_mainline/20260807_162005_formal_mlp_centroid_seed0_seed0/plots/train_losses.png)
+![MLP 损失曲线](figures/mlp_centroid_seed0_losses.png)
 
 **怎么看**：策略损失/值损失全程有限、无发散（单次波动属于正常），说明优化
 过程稳定，没有出现梯度爆炸或 NaN。
@@ -73,13 +73,13 @@ python scripts/plot_clean_metrics.py --run-dir <run_dir> --smooth-window 20 --pr
 seed 0，120 次更新。曲线形状与 MLP 完全一致（快速收敛 → 平台），只是最终
 平台略高。
 
-![HGNN 完成率与吞吐](../logs/clean_mainline/20260807_120142_formal_hgnn_centroid_seed0_seed0/plots/train_completion_throughput.png)
+![HGNN 完成率与吞吐](figures/hgnn_centroid_seed0_completion_throughput.png)
 
-![HGNN 流时间与能耗](../logs/clean_mainline/20260807_120142_formal_hgnn_centroid_seed0_seed0/plots/train_energy_flowtime.png)
+![HGNN 流时间与能耗](figures/hgnn_centroid_seed0_energy_flowtime.png)
 
 HGNN 的奖励曲线同样需要看滑动平均版（原始点图一样是"纯震荡"）：
 
-![HGNN 奖励曲线（滑动平均）](../logs/clean_mainline/20260807_120142_formal_hgnn_centroid_seed0_seed0/plots_smooth/smooth20_train_reward.png)
+![HGNN 奖励曲线（滑动平均）](figures/hgnn_centroid_seed0_reward_smooth.png)
 
 ## 3.1 为什么奖励曲线"震荡"但仍然是收敛的
 
@@ -104,7 +104,7 @@ HGNN 的奖励曲线同样需要看滑动平均版（原始点图一样是"纯�
 
 以 MLP 的完成率/流时间为例，seed 1 的曲线与 seed 0 几乎重合：
 
-![MLP seed1 流时间与能耗](../logs/clean_mainline/20260807_172021_formal_mlp_centroid_seed1_seed1/plots/train_energy_flowtime.png)
+![MLP seed1 流时间与能耗](figures/mlp_centroid_seed1_energy_flowtime.png)
 
 3 种子正式评估汇总：
 
@@ -127,5 +127,6 @@ HGNN 的奖励曲线同样需要看滑动平均版（原始点图一样是"纯�
 | 损失 | 有限、无发散 | 训练稳定 |
 | 多种子 | 曲线/指标几乎重合 | 结果可复现 |
 
-> 如需在 Git 仓库外共享本文档，请连同 `logs/clean_mainline/formal_*` 的
-> `plots/` 目录一起拷贝（`logs/` 已在 `.gitignore` 中，不随仓库分发）。
+> 本文档使用的图片已放在 `docs/figures/`（随仓库分发），同事 checkout 即可
+> 直接查看；如需重新生成，见第 2.4 节命令（原始图在
+> `logs/clean_mainline/formal_*/plots/`，`logs/` 不随仓库分发）。

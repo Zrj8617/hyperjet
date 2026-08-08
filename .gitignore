@@ -43,3 +43,7 @@ checkpoints/
 
 # 实验日志/检查点（可再生成，不进入仓库）
 logs/
+
+# 允许收敛图进入仓库（docs/figures 下的图片随文档分发）
+!docs/figures/
+!docs/figures/*.png
