@@ -45,7 +45,23 @@ DAG 数）同步上升并稳定。
 时间惩罚波动），但整体**趋势向上并围绕平台波动**。论文里对这条曲线做
 滑动平均后就是平滑的收敛曲线。
 
-### 2.4 损失曲线（训练稳定性）
+### 2.4 奖励曲线（滑动平均后，窗口 20）
+
+![MLP 奖励曲线（滑动平均）](../logs/clean_mainline/20260807_162005_formal_mlp_centroid_seed0_seed0/plots_smooth/smooth20_train_reward.png)
+
+**这张图是干什么的**：原始奖励曲线每个点是"单次 rollout"的采样，方差很大，
+看不出趋势。滑动平均（窗口 20）把相邻 20 次更新的奖励取平均，**滤掉单点
+噪声、露出均值趋势**：前 30 次更新均值从约 −3 快速升到约 +7，之后进入
+平台不再上升/下降——这是"均值收敛"的直接可视化。论文/报告中汇报奖励
+曲线时请使用这张平滑图，而不是原始点图。
+
+复现命令：
+
+```powershell
+python scripts/plot_clean_metrics.py --run-dir <run_dir> --smooth-window 20 --prefix smooth20_ --output-dir <run_dir>\plots_smooth --no-show
+```
+
+### 2.5 损失曲线（训练稳定性）
 
 ![MLP 损失曲线](../logs/clean_mainline/20260807_162005_formal_mlp_centroid_seed0_seed0/plots/train_losses.png)
 
@@ -60,6 +76,29 @@ seed 0，120 次更新。曲线形状与 MLP 完全一致（快速收敛 → 平
 ![HGNN 完成率与吞吐](../logs/clean_mainline/20260807_120142_formal_hgnn_centroid_seed0_seed0/plots/train_completion_throughput.png)
 
 ![HGNN 流时间与能耗](../logs/clean_mainline/20260807_120142_formal_hgnn_centroid_seed0_seed0/plots/train_energy_flowtime.png)
+
+HGNN 的奖励曲线同样需要看滑动平均版（原始点图一样是"纯震荡"）：
+
+![HGNN 奖励曲线（滑动平均）](../logs/clean_mainline/20260807_120142_formal_hgnn_centroid_seed0_seed0/plots_smooth/smooth20_train_reward.png)
+
+## 3.1 为什么奖励曲线"震荡"但仍然是收敛的
+
+这是同事最容易误解的一点，分开两个概念讲：
+
+1. **方差（震荡）≠ 不收敛**。奖励曲线的每个点是一次 rollout（128 个时隙）
+   的总奖励，它由三部分组成：完成 DAG 的稀疏加分（完成一个才 +8，一次
+   rollout 里 0~10 个）、时间惩罚（每次完成的任务数/延迟不同）、能耗惩罚。
+   单点的标准差约 8，而均值约 7——所以原始图看起来"全是噪声"。
+2. **收敛看的是"均值"和"趋势"**，不是单点。MLP seed 0 的数据：前 30 次
+   更新均值 0.66 → 后 30 次均值 6.90；滚动均值（窗口 20）从 −3 升到 +7 后
+   稳定在 6.5~7.4，没有趋势性上升或下降。**等幅噪声围绕固定均值波动 =
+   收敛**；如果是噪声幅度不断变大或均值持续漂移，才是不收敛。
+
+佐证"确实收敛"的三个独立证据（都比奖励单点可靠）：
+
+- 完成率/流时间在 ~30 次更新后进入平台（见 2.1、2.2 平滑趋势）；
+- 策略熵从 ~1 降到 0.2 以下（策略定型）；
+- 3 个随机种子的正式评估几乎重合（流时间 std 1~3s、完成率 std 0.007）。
 
 ## 4. 跨种子一致性（3 个种子都收敛到同一水平）
 
