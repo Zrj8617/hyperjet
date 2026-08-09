@@ -26,6 +26,8 @@ from typing import Any
 
 TOP_LEVEL_SCALARS = [
     "reward",
+    "ppo_rollout_reward_total",
+    "ppo_rollout_reward_mean",
     "DAG_completion_rate",
     "average_dag_flowtime",
     "avg_uav_queue_length",

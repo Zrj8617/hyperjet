@@ -157,7 +157,13 @@ def _plot_train(
             output_dir / f"{prefix}train_reward.{file_format}",
             x,
             {
-                "reward": _smooth(_series(rows, "reward"), smooth_window),
+                # Prefer the per-rollout mean reward (proper per-update
+                # statistic); fall back to the legacy per-slot "reward" field
+                # for logs that predate ppo_rollout_reward_mean.
+                "reward": _smooth(
+                    _first_available(rows, ["ppo_rollout_reward_mean", "reward"]),
+                    smooth_window,
+                ),
                 "time": _smooth(_series(rows, "reward_time_penalty"), smooth_window),
                 "task_energy": _smooth(_series(rows, "reward_task_energy_penalty"), smooth_window),
                 "move_energy": _smooth(_series(rows, "reward_movement_energy_penalty"), smooth_window),

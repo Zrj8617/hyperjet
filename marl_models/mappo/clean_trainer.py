@@ -103,6 +103,12 @@ class CleanPPOUpdateStats:
     returns_std: float = 0.0
     value_pred_mean: float = 0.0
     explained_variance: float = 0.0
+    # Rollout-level environment reward statistics: sum and mean of the slot
+    # rewards in the consumed rollout. The JSONL "reward" field only reflects
+    # the LAST slot of the rollout; these fields are the correct per-update
+    # aggregate and make the raw reward curve converge visually.
+    rollout_reward_total: float = 0.0
+    rollout_reward_mean: float = 0.0
     # Pure diagnostics (Phase 4 Commit 1): per-module pre/post-clip grad norms,
     # actual clip scale, HGNN actor/value grad decomposition (+cosine), and
     # rollout-time normalized entropies. Never used by the update itself.
@@ -1065,6 +1071,11 @@ class CleanPPOUpdater:
         loss_parts: dict[str, Any],
         grad_norm: float,
     ) -> CleanPPOUpdateStats:
+        rollout_rewards = [float(record.reward) for record in records]
+        rollout_reward_total = float(sum(rollout_rewards))
+        rollout_reward_mean = (
+            rollout_reward_total / len(rollout_rewards) if rollout_rewards else 0.0
+        )
         return CleanPPOUpdateStats(
             slot_count=len(records),
             movement_action_count=sum(len(record.movement_records) for record in records),
@@ -1085,6 +1096,8 @@ class CleanPPOUpdater:
             offloading_lagged_q_loss=float(
                 loss_parts["offloading_lagged_q_loss"].detach().cpu().item()
             ),
+            rollout_reward_total=rollout_reward_total,
+            rollout_reward_mean=rollout_reward_mean,
         )
 
 
