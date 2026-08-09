@@ -1594,6 +1594,13 @@ def _collect_sampler_lane_step(
     lane.last_info = info
     lane.next_prepared = next_prepared
     lane.next_encoded_old = next_encoded_old
+    # Refresh the lane's current encoding for the next slot. Without this the
+    # synchronous multisample path reuses the episode-start encoding for every
+    # slot in the rollout, so the offloading head never sees newly arrived
+    # tasks and skips all assignments (DAG completion stays 0).
+    if next_encoded_old is not None:
+        lane.current_encoded = next_encoded_old
+        lane.current_prepared = next_prepared
 
 
 def _close_sampler_lane_rollout(lane: _SamplerLane) -> tuple[list[Any], dict[str, int] | None]:
