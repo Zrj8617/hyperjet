@@ -106,6 +106,7 @@ def _check_boundary_rng_alignment() -> None:
 def _check_control_provenance() -> None:
     train_parser = build_train_parser()
     fixed_args = train_parser.parse_args(["--completed-dag-weight", "16", "--freeze-ue-mobility"])
+    fixed_args._offloading_initialization_identity = {"mode": "random"}
     snapshot = build_config_snapshot(fixed_args)
     _assert(snapshot["cli"]["freeze_ue_mobility"] is True, "training CLI snapshot lost fixed mode")
     _assert(snapshot["experiment_controls"]["freeze_ue_mobility"] is True, "experiment controls lost fixed mode")

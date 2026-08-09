@@ -57,6 +57,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", type=Path, default=Path("logs") / "decision_ppo_bandit")
     parser.add_argument("--run-name", type=str, default="stage1")
     parser.add_argument("--checkpoint-updates", type=str, default="0,1,5,10,20,30")
+    parser.add_argument("--disable-hyperedges", action="store_true")
     parser.add_argument("--pilot", action="store_true")
     return parser
 
@@ -72,6 +73,11 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     _validate_args(args)
     import torch
 
+    if bool(getattr(args, "disable_hyperedges", False)):
+        config.ENABLE_DAG_DEPENDENCY_EDGES = False
+        config.ENABLE_KHOP_DEPENDENCY_HYPEREDGES = False
+        config.ENABLE_ATTRIBUTE_HYPEREDGES = False
+        config.ENABLE_KAHYPAR_PARTITION_HYPEREDGES = False
     if bool(args.pilot):
         args.updates = min(int(args.updates), 2)
     _set_seed(int(args.seed), torch)
@@ -358,8 +364,8 @@ def _arrival_subset(info: dict[str, Any]) -> dict[str, Any]:
 def _validate_args(args: argparse.Namespace) -> None:
     if int(args.updates) <= 0 or int(args.slots_per_update) <= 0:
         raise ValueError("updates and slots-per-update must be positive")
-    if int(args.ppo_epochs) != 3:
-        raise ValueError("Stage 1 requires exactly three PPO epochs")
+    if int(args.ppo_epochs) <= 0:
+        raise ValueError("ppo-epochs must be positive")
     if float(args.lr) <= 0.0 or float(args.max_grad_norm) <= 0.0:
         raise ValueError("learning rate and max grad norm must be positive")
     if int(args.chunk_decisions) <= 0:
@@ -420,6 +426,14 @@ def _config_payload(args: argparse.Namespace, identity: dict[str, Any]) -> dict[
         "num_envs": 1,
         "movement": "forced_hover",
         "encoder": "mlp",
+        "delay_norm_transform": "x/(x+ref)",
+        "delay_norm_soft_ref": float(config.CLEAN_NORM_DELAY_SOFT_REF),
+        "hyperedges_enabled": {
+            "dag": bool(config.ENABLE_DAG_DEPENDENCY_EDGES),
+            "khop": bool(config.ENABLE_KHOP_DEPENDENCY_HYPEREDGES),
+            "attribute": bool(config.ENABLE_ATTRIBUTE_HYPEREDGES),
+            "partition": bool(config.ENABLE_KAHYPAR_PARTITION_HYPEREDGES),
+        },
         "initialization_identity": identity,
     }
 

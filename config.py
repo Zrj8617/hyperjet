@@ -77,6 +77,8 @@ CLEAN_UAV_MOVEMENT_SPEED: float = 15.0
 # 否则候选特征会被压得接近 0，卸载策略就看不出候选间的差别。
 CLEAN_NORM_PAIR_TIME_REF: float = 4.0 * TIME_SLOT_DURATION  # link/compute time scale (s)
 CLEAN_NORM_AVAIL_TIME_REF: float = 8.0 * TIME_SLOT_DURATION  # queue-wait / availability scale (s)
+# Soft delay normalization reference (s), used by x/(x+ref).
+CLEAN_NORM_DELAY_SOFT_REF: float = 160.0
 CLEAN_NORM_PAIR_ENERGY_REF: float = P_UAV_COMPUTE * TIME_SLOT_DURATION  # per-task energy scale (J)
 CLEAN_NORM_QUEUE_WORKLOAD_REF: float = (
     UAV_COMPUTE_RATE_OPS_PER_SEC * TIME_SLOT_DURATION * CLEAN_MAX_QUEUE_PER_UAV
