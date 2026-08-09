@@ -28,6 +28,10 @@ TOP_LEVEL_SCALARS = [
     "reward",
     "ppo_rollout_reward_total",
     "ppo_rollout_reward_mean",
+    "reward_time_penalty",
+    "reward_task_energy_penalty",
+    "reward_movement_energy_penalty",
+    "reward_completed_dag_bonus",
     "DAG_completion_rate",
     "average_dag_flowtime",
     "avg_uav_queue_length",
@@ -152,7 +156,10 @@ def main(argv: list[str] | None = None) -> int:
     for row_index, row in enumerate(rows):
         step_value = row.get(args.step_key)
         if step_value is None:
-            step_value = row_index
+            # Multi-env logs duplicate rows per update; only the first row of
+            # each update carries the step key. Skip the duplicate rows so the
+            # exported series has one point per update.
+            continue
         step = int(float(step_value))
         for key in TOP_LEVEL_SCALARS + NESTED_SCALARS:
             value = _resolve_value(row, key)

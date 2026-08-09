@@ -103,6 +103,16 @@ def plot_clean_metrics(
     summary = read_json(summary_json) if summary_json is not None and Path(summary_json).exists() else {}
     if not rows and not summary:
         raise FileNotFoundError("No clean metrics JSONL or summary JSON found for plotting.")
+    # Synchronous multisample logs write one row per environment per update;
+    # only the first row of each update carries the ppo_* statistics, while the
+    # other rows leave them None (rendered as 0.0 by _number). Deduplicate to
+    # one row per update so reward/entropy curves do not oscillate between real
+    # values and zero placeholders. Eval logs (no ppo_update_step at all) and
+    # single-env training logs are unaffected.
+    if rows and any(row.get("ppo_update_step") is not None for row in rows) and any(
+        row.get("ppo_update_step") is None for row in rows
+    ):
+        rows = [row for row in rows if row.get("ppo_update_step") is not None]
     is_eval = _looks_like_eval(rows, summary, metrics_jsonl)
     generated = (
         _plot_eval(rows=rows, summary=summary, output_dir=output_dir, prefix=prefix, file_format=file_format, plt=plt)
