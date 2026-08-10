@@ -28,6 +28,8 @@ TOP_LEVEL_SCALARS = [
     "reward",
     "ppo_rollout_reward_total",
     "ppo_rollout_reward_mean",
+    "episode_reward_total",
+    "episode_reward_so_far",
     "reward_time_penalty",
     "reward_task_energy_penalty",
     "reward_movement_energy_penalty",
