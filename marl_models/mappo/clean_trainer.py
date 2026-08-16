@@ -710,6 +710,18 @@ class CleanPPOUpdater:
                     if pending_indices
                     else task_embeddings.new_zeros((task_embeddings.shape[1],))
                 )
+                centroid = getattr(
+                    movement_record, "service_centroid_normalized", None
+                )
+                centroid_tensor = (
+                    torch.as_tensor(
+                        centroid, dtype=torch.float32, device=self.device
+                    )
+                    if centroid is not None
+                    else torch.zeros(
+                        2, dtype=torch.float32, device=self.device
+                    )
+                )
                 movement_items.append(
                     {
                         "slot_idx": int(slot_idx),
@@ -735,6 +747,7 @@ class CleanPPOUpdater:
                                     dtype=torch.float32,
                                     device=self.device,
                                 ),
+                                centroid_tensor,
                                 ready_context,
                                 pending_context,
                             ]

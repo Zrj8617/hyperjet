@@ -1062,6 +1062,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             input_dim=(
                 int(CLEAN_MOVEMENT_UAV_FEATURE_DIM)
                 + 2
+                + 2
                 + 2 * int(args.task_embedding_dim)
             ),
             hidden_dim=int(args.hidden_dim),
@@ -2674,6 +2675,17 @@ def _finish_collect_clean_slot(
         movement_energy_penalty_signal = float(
             config.CLEAN_MOVEMENT_ENERGY_PENALTY_SIGNAL
         )
+        centroid_normalized = (
+            np.asarray(
+                [
+                    float(service_centroid[0]) / float(config.AREA_WIDTH),
+                    float(service_centroid[1]) / float(config.AREA_HEIGHT),
+                ],
+                dtype=np.float32,
+            )
+            if service_centroid is not None
+            else None
+        )
         for movement_record in movement_records:
             uav_id = int(movement_record.uav_id)
             energy_penalty = (
@@ -2695,6 +2707,10 @@ def _finish_collect_clean_slot(
             movement_record.movement_position_signal = float(
                 distance_signal - energy_penalty
             )
+            if centroid_normalized is not None:
+                movement_record.service_centroid_normalized = (
+                    centroid_normalized.copy()
+                )
     else:
         env.apply_movement(movement_actions)
     frozen_ready_tasks = [env.task_manager.get_task(task_id) for task_id in encoded_state.prepared_state.frozen_ready_task_ids]

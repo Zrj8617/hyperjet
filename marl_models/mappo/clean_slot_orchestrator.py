@@ -68,6 +68,9 @@ class CleanMovementRolloutRecord:
     # movement PPO advantage when the movement-position-advantage gate is
     # enabled; zero when the field is not populated.
     movement_position_signal: float = 0.0
+    # Optional normalized service-demand centroid (x/AREA_WIDTH, y/AREA_HEIGHT)
+    # at decision time, used as extra input for the movement decision critic.
+    service_centroid_normalized: np.ndarray | None = None
 
 
 @dataclass(slots=True)
