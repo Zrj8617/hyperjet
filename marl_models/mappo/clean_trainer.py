@@ -14,6 +14,7 @@ from marl_models.mappo.clean_eft_auxiliary import (
     eft_auxiliary_lambda,
     summarize_historical_eft_items,
 )
+from marl_models.mappo.clean_ppo import CleanDecisionCritic
 from marl_models.mappo.clean_slot_orchestrator import (
     CleanEncodedSlotState,
     CleanSlotRolloutBuffer,
@@ -74,6 +75,13 @@ class CleanPPOUpdateConfig:
     # (batch-standardized) instead of the shared slot-level GAE advantage. Off
     # preserves the clean MAPPO baseline.
     movement_position_advantage: bool = False
+    # Decision-level critic gate. When enabled, a per-decision value baseline
+    # V(s_decision) is trained and used in every offloading/movement decision's
+    # advantage (A = r + gamma*V(s_next) - V(s)) instead of raw batch-
+    # standardized signals, so the critic genuinely participates in learning.
+    decision_critic_enabled: bool = False
+    decision_critic_coef: float = 0.5
+    decision_critic_discount: float = 0.99
     # Diagnostics-only: every N-th update, decompose the HGNN gradient into its
     # actor-loss and value-loss components via torch.autograd.grad (never
     # touches .grad). 0 disables the decomposition.
@@ -123,6 +131,8 @@ class CleanTrainingModules:
     critic: Any
     offloading_action_value_critic: Any | None = None
     offloading_lagged_q_critic: Any | None = None
+    offloading_decision_critic: Any | None = None
+    movement_decision_critic: Any | None = None
 
 
 class CleanJSONLLogger:
@@ -184,6 +194,10 @@ class CleanCheckpointManager:
             payload["offloading_action_value_critic"] = modules.offloading_action_value_critic.state_dict()
         if modules.offloading_lagged_q_critic is not None:
             payload["offloading_lagged_residual_q"] = modules.offloading_lagged_q_critic.state_dict()
+        if modules.offloading_decision_critic is not None:
+            payload["offloading_decision_critic"] = modules.offloading_decision_critic.state_dict()
+        if modules.movement_decision_critic is not None:
+            payload["movement_decision_critic"] = modules.movement_decision_critic.state_dict()
         path = self.checkpoint_dir / filename
         torch.save(payload, path)
         return path
@@ -235,6 +249,28 @@ class CleanCheckpointManager:
             raise ValueError("enabled lagged residual Q state is missing from checkpoint")
         if modules.offloading_lagged_q_critic is not None:
             modules.offloading_lagged_q_critic.load_state_dict(lagged_q_state)
+        offloading_decision_state = payload.get("offloading_decision_critic")
+        movement_decision_state = payload.get("movement_decision_critic")
+        if offloading_decision_state is not None and modules.offloading_decision_critic is None:
+            raise ValueError(
+                "checkpoint contains an offloading decision critic, but the live run disabled it"
+            )
+        if movement_decision_state is not None and modules.movement_decision_critic is None:
+            raise ValueError(
+                "checkpoint contains a movement decision critic, but the live run disabled it"
+            )
+        if modules.offloading_decision_critic is not None and offloading_decision_state is None:
+            raise ValueError(
+                "enabled offloading decision critic state is missing from checkpoint"
+            )
+        if modules.movement_decision_critic is not None and movement_decision_state is None:
+            raise ValueError(
+                "enabled movement decision critic state is missing from checkpoint"
+            )
+        if modules.offloading_decision_critic is not None:
+            modules.offloading_decision_critic.load_state_dict(offloading_decision_state)
+        if modules.movement_decision_critic is not None:
+            modules.movement_decision_critic.load_state_dict(movement_decision_state)
         optimizer.load_state_dict(payload["optimizer"])
         _set_rng_state(payload.get("rng_state", {}))
         return payload
@@ -382,6 +418,7 @@ class CleanPPOUpdater:
             diagnostics.update(loss_parts.get("eft_auxiliary_diagnostics", {}))
             diagnostics.update(loss_parts.get("offloading_eft_diagnostics", {}))
             diagnostics.update(loss_parts.get("movement_position_diagnostics", {}))
+            diagnostics.update(loss_parts.get("decision_critic_diagnostics", {}))
             if epoch_index == 0:
                 target_parameters = _unique_parameters(
                     [self.modules.hgnn, self.modules.offloading_actor]
@@ -661,6 +698,18 @@ class CleanPPOUpdater:
                 dist = Categorical(logits=logits)
                 action = torch.as_tensor(int(movement_record.selected_action), dtype=torch.long, device=self.device)
                 old_log_prob = torch.as_tensor(float(movement_record.old_log_probability), dtype=torch.float32, device=self.device)
+                ready_indices = [int(idx) for idx in movement_record.ready_task_indices]
+                pending_indices = [int(idx) for idx in movement_record.pending_task_indices]
+                ready_context = (
+                    task_embeddings[ready_indices].mean(dim=0)
+                    if ready_indices
+                    else task_embeddings.new_zeros((task_embeddings.shape[1],))
+                )
+                pending_context = (
+                    task_embeddings[pending_indices].mean(dim=0)
+                    if pending_indices
+                    else task_embeddings.new_zeros((task_embeddings.shape[1],))
+                )
                 movement_items.append(
                     {
                         "slot_idx": int(slot_idx),
@@ -671,6 +720,25 @@ class CleanPPOUpdater:
                         "movement_position_signal": float(
                             movement_record.movement_position_signal
                         ),
+                        "movement_features": torch.cat(
+                            [
+                                torch.as_tensor(
+                                    movement_record.uav_features,
+                                    dtype=torch.float32,
+                                    device=self.device,
+                                ),
+                                torch.as_tensor(
+                                    [
+                                        float(movement_record.ready_count_normalized),
+                                        float(movement_record.pending_count_normalized),
+                                    ],
+                                    dtype=torch.float32,
+                                    device=self.device,
+                                ),
+                                ready_context,
+                                pending_context,
+                            ]
+                        ).detach(),
                     }
                 )
 
@@ -713,9 +781,13 @@ class CleanPPOUpdater:
                 }
                 eft_values_np = offloading_record.candidate_estimated_finish_times
                 if eft_values_np is None:
-                    if float(self.config.eft_auxiliary_lambda_initial) > 0.0:
+                    if (
+                        float(self.config.eft_auxiliary_lambda_initial) > 0.0
+                        or bool(self.config.decision_critic_enabled)
+                    ):
                         raise ValueError(
-                            "offloading rollout record lacks decision-time candidate EFT vector"
+                            "offloading rollout record lacks decision-time "
+                            "candidate EFT vector"
                         )
                     if bool(self.config.offloading_eft_advantage):
                         raise ValueError(
@@ -741,7 +813,9 @@ class CleanPPOUpdater:
                             "decision_order": int(offloading_record.decision_order),
                         }
                     )
-                    if bool(self.config.offloading_eft_advantage):
+                    if bool(self.config.offloading_eft_advantage) or bool(
+                        self.config.decision_critic_enabled
+                    ):
                         best_eft = eft_values[mask].min()
                         regret = (eft_values[action_index] - best_eft).clamp_min(0.0)
                         regret_scale = max(
@@ -750,6 +824,11 @@ class CleanPPOUpdater:
                         item["per_decision_eft_advantage"] = (
                             (-regret / regret_scale).detach()
                         )
+                        item["per_decision_eft_reward"] = (
+                            (-regret / regret_scale).detach()
+                        )
+                        item["decision_order"] = int(offloading_record.decision_order)
+                        item["decision_features"] = features[action_index].detach()
                 if action_value_enabled:
                     global_context = critic_input.detach().reshape(1, -1).expand(candidate_count, -1)
                     action_value_input = torch.cat([features.detach(), global_context], dim=1)
@@ -776,6 +855,164 @@ class CleanPPOUpdater:
                     raw_counterfactual_values.append(counterfactual)
                 offloading_items.append(item)
 
+        decision_critic_diagnostics: dict[str, Any] = {
+            "decision_critic_enabled": bool(self.config.decision_critic_enabled),
+            "decision_critic_offloading_ev": 0.0,
+            "decision_critic_movement_ev": 0.0,
+            "decision_critic_offloading_loss": 0.0,
+            "decision_critic_movement_loss": 0.0,
+        }
+        decision_critic_loss = torch.zeros((), dtype=torch.float32, device=self.device)
+        if bool(self.config.decision_critic_enabled):
+            if (
+                self.modules.offloading_decision_critic is None
+                or self.modules.movement_decision_critic is None
+            ):
+                raise ValueError(
+                    "decision_critic_enabled requires both decision critics"
+                )
+            # ---- Offloading: TD advantages over each slot's decision stream.
+            # A_d = r_d + gamma * V(s_{d+1}) - V(s_d), V(s_{k+1}) = 0.
+            if offloading_items:
+                reward_values = torch.stack(
+                    [item["per_decision_eft_reward"] for item in offloading_items]
+                )
+                standardized_rewards = (
+                    (reward_values - reward_values.mean())
+                    / reward_values.std(unbiased=False).clamp_min(1e-8)
+                ).detach()
+                reward_by_item = {
+                    id(item): standardized_rewards[item_index]
+                    for item_index, item in enumerate(offloading_items)
+                }
+                off_items = sorted(
+                    offloading_items,
+                    key=lambda item: (
+                        int(item["slot_idx"]),
+                        int(item.get("decision_order", 0)),
+                    ),
+                )
+                by_slot: dict[int, list[dict[str, Any]]] = {}
+                for item in off_items:
+                    by_slot.setdefault(int(item["slot_idx"]), []).append(item)
+                off_critic_vals: list[Any] = []
+                off_targets: list[Any] = []
+                for slot_idx in sorted(by_slot):
+                    items = by_slot[slot_idx]
+                    features_stack = torch.stack(
+                        [item["decision_features"] for item in items]
+                    )
+                    values = self.modules.offloading_decision_critic(features_stack)
+                    rewards = torch.stack(
+                        [reward_by_item[id(item)] for item in items]
+                    )
+                    next_values = torch.cat(
+                        [values[1:], values.new_zeros(1)]
+                    ).detach()
+                    targets = (
+                        rewards
+                        + float(self.config.decision_critic_discount) * next_values
+                    ).detach()
+                    advantages_by_decision = (
+                        rewards
+                        + float(self.config.decision_critic_discount) * next_values
+                        - values
+                    )
+                    for item_index, item in enumerate(items):
+                        item["per_decision_eft_advantage"] = (
+                            advantages_by_decision[item_index].detach()
+                        )
+                    off_critic_vals.append(values)
+                    off_targets.append(targets)
+                off_critic_vals = torch.cat(off_critic_vals)
+                off_targets = torch.cat(off_targets)
+                off_critic_loss = 0.5 * (
+                    off_critic_vals - off_targets
+                ).pow(2).mean()
+                off_target_variance = off_targets.var(unbiased=False).clamp_min(1e-8)
+                decision_critic_diagnostics.update(
+                    {
+                        "decision_critic_offloading_ev": float(
+                            (
+                                1.0
+                                - (
+                                    (off_critic_vals.detach() - off_targets).pow(2).mean()
+                                    / off_target_variance
+                                )
+                            )
+                            .detach()
+                            .cpu()
+                            .item()
+                        ),
+                        "decision_critic_offloading_loss": float(
+                            off_critic_loss.detach().cpu().item()
+                        ),
+                    }
+                )
+            else:
+                off_critic_loss = torch.zeros(
+                    (), dtype=torch.float32, device=self.device
+                )
+            # ---- Movement: per-UAV baseline subtraction A = r - V(s).
+            if movement_items:
+                move_features_stack = torch.stack(
+                    [item["movement_features"] for item in movement_items]
+                )
+                move_values = self.modules.movement_decision_critic(
+                    move_features_stack
+                )
+                move_rewards_raw = torch.stack(
+                    [
+                        torch.as_tensor(
+                            item["movement_position_signal"],
+                            dtype=torch.float32,
+                            device=self.device,
+                        )
+                        for item in movement_items
+                    ]
+                )
+                move_rewards = (
+                    (move_rewards_raw - move_rewards_raw.mean())
+                    / move_rewards_raw.std(unbiased=False).clamp_min(1e-8)
+                ).detach()
+                move_targets = move_rewards.detach()
+                move_advantages = move_rewards - move_values
+                move_critic_loss = 0.5 * (
+                    move_values - move_targets
+                ).pow(2).mean()
+                move_target_variance = move_targets.var(unbiased=False).clamp_min(1e-8)
+                decision_critic_diagnostics.update(
+                    {
+                        "decision_critic_movement_ev": float(
+                            (
+                                1.0
+                                - (
+                                    (move_values.detach() - move_targets).pow(2).mean()
+                                    / move_target_variance
+                                )
+                            )
+                            .detach()
+                            .cpu()
+                            .item()
+                        ),
+                        "decision_critic_movement_loss": float(
+                            move_critic_loss.detach().cpu().item()
+                        ),
+                    }
+                )
+                for item_index, item in enumerate(movement_items):
+                    item["per_uav_movement_advantage"] = move_advantages[
+                        item_index
+                    ].detach()
+            else:
+                move_critic_loss = torch.zeros(
+                    (), dtype=torch.float32, device=self.device
+                )
+            decision_critic_loss = (
+                float(self.config.decision_critic_coef)
+                * (off_critic_loss + move_critic_loss)
+            )
+
         movement_position_diagnostics: dict[str, Any] = {
             "movement_position_advantage_enabled": bool(
                 self.config.movement_position_advantage
@@ -784,12 +1021,26 @@ class CleanPPOUpdater:
             "movement_position_advantage_std": 0.0,
             "movement_position_advantage_count": 0,
         }
-        if bool(self.config.movement_position_advantage) and movement_items:
-            signal_values = torch.as_tensor(
-                [item["movement_position_signal"] for item in movement_items],
-                dtype=torch.float32,
-                device=self.device,
-            )
+        if (
+            bool(self.config.movement_position_advantage)
+            or bool(self.config.decision_critic_enabled)
+        ) and movement_items:
+            if bool(self.config.decision_critic_enabled):
+                signal_values = torch.stack(
+                    [
+                        item["per_uav_movement_advantage"]
+                        for item in movement_items
+                    ]
+                )
+            else:
+                signal_values = torch.as_tensor(
+                    [
+                        item["movement_position_signal"]
+                        for item in movement_items
+                    ],
+                    dtype=torch.float32,
+                    device=self.device,
+                )
             raw_std = signal_values.std(unbiased=False)
             signal_mean = signal_values.mean()
             signal_std = raw_std.clamp_min(1e-8)
@@ -819,7 +1070,9 @@ class CleanPPOUpdater:
         for item in movement_items:
             slot_idx = int(item["slot_idx"])
             movement_advantage = advantages[slot_idx]
-            if bool(self.config.movement_position_advantage):
+            if bool(self.config.movement_position_advantage) or bool(
+                self.config.decision_critic_enabled
+            ):
                 movement_advantage = item["per_uav_movement_advantage"]
             move_losses_by_slot.setdefault(slot_idx, []).append(
                 _ppo_action_loss(
@@ -863,14 +1116,16 @@ class CleanPPOUpdater:
             "offloading_eft_advantage_std": 0.0,
             "offloading_eft_advantage_decision_count": 0,
         }
-        if bool(self.config.offloading_eft_advantage):
+        if bool(self.config.offloading_eft_advantage) or bool(
+            self.config.decision_critic_enabled
+        ):
             per_decision_advantages: list[Any] = []
             for item in offloading_items:
                 item_advantage = item.get("per_decision_eft_advantage")
                 if item_advantage is None:
                     raise ValueError(
-                        "offloading_eft_advantage enabled but an offloading "
-                        "decision lacks its per-decision EFT advantage"
+                        "per-decision offloading advantage enabled but an "
+                        "offloading decision lacks its advantage"
                     )
                 per_decision_advantages.append(item_advantage)
             if per_decision_advantages:
@@ -902,7 +1157,9 @@ class CleanPPOUpdater:
         for item_index, item in enumerate(offloading_items):
             slot_idx = int(item["slot_idx"])
             offloading_advantage = advantages[slot_idx]
-            if bool(self.config.offloading_eft_advantage):
+            if bool(self.config.offloading_eft_advantage) or bool(
+                self.config.decision_critic_enabled
+            ):
                 offloading_advantage = item["per_decision_eft_advantage"]
             if action_value_enabled:
                 offloading_advantage = offloading_advantage + float(
@@ -1012,6 +1269,7 @@ class CleanPPOUpdater:
             + float(self.config.offloading_action_value_loss_coef) * offloading_action_value_loss
             + float(self.config.offloading_lagged_q_loss_coef) * offloading_lagged_q_loss
             + weighted_eft_auxiliary_loss
+            + decision_critic_loss
             - float(self.config.movement_entropy_coef) * movement_entropy
             - float(self.config.offloading_entropy_coef) * offloading_entropy
         )
@@ -1051,6 +1309,7 @@ class CleanPPOUpdater:
             "eft_auxiliary_diagnostics": eft_auxiliary_diagnostics,
             "offloading_eft_diagnostics": offloading_eft_diagnostics,
             "movement_position_diagnostics": movement_position_diagnostics,
+            "decision_critic_diagnostics": decision_critic_diagnostics,
             "value_diagnostics": {
                 "value_clip_fraction": float(
                     torch.stack(value_clip_indicators).mean().detach().cpu().item()
@@ -1395,6 +1654,8 @@ def build_single_optimizer(
             modules.critic,
             modules.offloading_action_value_critic,
             modules.offloading_lagged_q_critic,
+            modules.offloading_decision_critic,
+            modules.movement_decision_critic,
         ]
     )
     if math.isclose(offloading_scale, 1.0) and math.isclose(movement_scale, 1.0):

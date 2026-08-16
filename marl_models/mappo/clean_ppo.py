@@ -193,6 +193,31 @@ if torch is not None:
                 critic_input = critic_input.unsqueeze(0)
             return self.net(critic_input).squeeze(-1)
 
+    class CleanDecisionCritic(nn.Module):
+        """Decision-level value baseline V(s_decision).
+
+        Predicts the expected per-decision return for a single offloading or
+        movement decision state. Used as a baseline in per-decision advantages
+        (A = r_decision + gamma*V(s_next) - V(s_decision)), so the critic is
+        genuinely trained and used at decision granularity instead of being a
+        slot-level summary that cannot learn.
+        """
+
+        def __init__(self, input_dim: int, hidden_dim: int = 128) -> None:
+            super().__init__()
+            self.net = nn.Sequential(
+                nn.Linear(int(input_dim), int(hidden_dim)),
+                nn.ReLU(),
+                nn.Linear(int(hidden_dim), int(hidden_dim)),
+                nn.ReLU(),
+                nn.Linear(int(hidden_dim), 1),
+            )
+
+        def forward(self, decision_input: "torch.Tensor") -> "torch.Tensor":
+            if decision_input.dim() == 1:
+                decision_input = decision_input.unsqueeze(0)
+            return self.net(decision_input).squeeze(-1)
+
 
     def ppo_clipped_loss_from_log_probs(
         new_log_probs: "torch.Tensor",
@@ -302,6 +327,10 @@ else:
     class CleanCentralizedCritic:
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             raise ModuleNotFoundError("torch is required for CleanCentralizedCritic")
+
+    class CleanDecisionCritic:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            raise ModuleNotFoundError("torch is required for CleanDecisionCritic")
 
 
     def ppo_clipped_loss_from_log_probs(*args: Any, **kwargs: Any) -> Any:

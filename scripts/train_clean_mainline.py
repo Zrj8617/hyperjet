@@ -329,6 +329,15 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
     movement_lr_scale = float(cli.get("movement_lr_scale", 1.0))
     if not math.isfinite(movement_lr_scale) or movement_lr_scale <= 0.0:
         raise ValueError("checkpoint movement_lr_scale must be finite and positive")
+    decision_critic_enabled = cli.get("decision_critic_enabled", False)
+    if not isinstance(decision_critic_enabled, bool):
+        raise ValueError("checkpoint decision_critic_enabled must be boolean")
+    decision_critic_coef = float(cli.get("decision_critic_coef", 0.5))
+    decision_critic_discount = float(cli.get("decision_critic_discount", 0.99))
+    if not math.isfinite(decision_critic_coef) or decision_critic_coef < 0.0:
+        raise ValueError("checkpoint decision_critic_coef must be finite and non-negative")
+    if not math.isfinite(decision_critic_discount) or decision_critic_discount < 0.0:
+        raise ValueError("checkpoint decision_critic_discount must be finite and non-negative")
     if not math.isfinite(eft_auxiliary_lambda_initial) or eft_auxiliary_lambda_initial < 0.0:
         raise ValueError("checkpoint EFT auxiliary lambda must be finite and non-negative")
     if not math.isfinite(eft_auxiliary_regret_scale) or eft_auxiliary_regret_scale <= 0.0:
@@ -365,6 +374,9 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
         "offloading_lr_scale": offloading_lr_scale,
         "movement_position_advantage": movement_position_advantage,
         "movement_lr_scale": movement_lr_scale,
+        "decision_critic_enabled": decision_critic_enabled,
+        "decision_critic_coef": decision_critic_coef,
+        "decision_critic_discount": decision_critic_discount,
         "offloading_initialization": dict(offloading_initialization),
     }
 
@@ -496,6 +508,18 @@ def validate_resume_experiment_controls(
         (
             "movement_lr_scale",
             float(getattr(args, "movement_lr_scale", 1.0)),
+        ),
+        (
+            "decision_critic_enabled",
+            bool(getattr(args, "decision_critic", False)),
+        ),
+        (
+            "decision_critic_coef",
+            float(getattr(args, "decision_critic_coef", 0.5)),
+        ),
+        (
+            "decision_critic_discount",
+            float(getattr(args, "decision_critic_discount", 0.99)),
         ),
     ):
         if isinstance(requested, bool):
@@ -711,6 +735,30 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--decision-critic",
+        action="store_true",
+        default=False,
+        help=(
+            "Train and use a decision-level value baseline: each offloading "
+            "decision gets A = r + gamma*V(s_next) - V(s) over its slot's "
+            "decision stream, and each UAV movement decision gets A = r - V(s). "
+            "This makes the critic genuinely participate in learning at decision "
+            "granularity. Off preserves the current per-decision advantage path."
+        ),
+    )
+    parser.add_argument(
+        "--decision-critic-coef",
+        type=_nonnegative_finite_float,
+        default=0.5,
+        help="Weight of the decision-level critic regression losses.",
+    )
+    parser.add_argument(
+        "--decision-critic-discount",
+        type=_nonnegative_finite_float,
+        default=0.99,
+        help="Discount used when bootstrapping across decisions in a slot.",
+    )
+    parser.add_argument(
         "--offloading-init-bandit-checkpoint",
         type=Path,
         default=None,
@@ -784,6 +832,15 @@ def build_config_snapshot(args: argparse.Namespace) -> dict[str, Any]:
             ),
             "movement_lr_scale": float(
                 getattr(args, "movement_lr_scale", 1.0)
+            ),
+            "decision_critic_enabled": bool(
+                getattr(args, "decision_critic", False)
+            ),
+            "decision_critic_coef": float(
+                getattr(args, "decision_critic_coef", 0.5)
+            ),
+            "decision_critic_discount": float(
+                getattr(args, "decision_critic_discount", 0.99)
             ),
             "eft_auxiliary_schedule": {
                 "constant_through_update_index": 8,
@@ -883,6 +940,15 @@ def initialize_run_files(run_dir: Path, args: argparse.Namespace) -> None:
             "movement_lr_scale": float(
                 getattr(args, "movement_lr_scale", 1.0)
             ),
+            "decision_critic_enabled": bool(
+                getattr(args, "decision_critic", False)
+            ),
+            "decision_critic_coef": float(
+                getattr(args, "decision_critic_coef", 0.5)
+            ),
+            "decision_critic_discount": float(
+                getattr(args, "decision_critic_discount", 0.99)
+            ),
             "offloading_initialization": getattr(
                 args, "_offloading_initialization_identity", {"mode": "pending"}
             ),
@@ -930,7 +996,10 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
 
     from environment.dag_tasks import TASK_STATE_READY_UNSCHEDULED
     from marl_models.hgnn import build_clean_task_encoder
-    from marl_models.mappo.clean_movement_actor import CleanMovementActor
+    from marl_models.mappo.clean_movement_actor import (
+        CLEAN_MOVEMENT_UAV_FEATURE_DIM,
+        CleanMovementActor,
+    )
     from marl_models.mappo.clean_offloading_actor import CleanOffloadingActor
     from marl_models.mappo.clean_offloading_action_value import CleanOffloadingActionValueCritic
     from marl_models.mappo.clean_lagged_residual_q import (
@@ -938,6 +1007,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         build_rng_neutral_lagged_residual_q_critic,
     )
     from marl_models.mappo.clean_ppo import CleanCentralizedCritic, clean_critic_input_dim
+    from marl_models.mappo.clean_ppo import CleanDecisionCritic
     from marl_models.mappo.clean_trainer import CleanPPOUpdater
 
     env = Env(
@@ -978,6 +1048,27 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         hidden_dim=int(args.hidden_dim),
         output_dim=int(args.task_embedding_dim),
     )
+    decision_critic_enabled = bool(args.decision_critic)
+    offloading_decision_critic = (
+        CleanDecisionCritic(
+            input_dim=int(offloading_actor.candidate_feature_dim),
+            hidden_dim=int(args.hidden_dim),
+        )
+        if decision_critic_enabled
+        else None
+    )
+    movement_decision_critic = (
+        CleanDecisionCritic(
+            input_dim=(
+                int(CLEAN_MOVEMENT_UAV_FEATURE_DIM)
+                + 2
+                + 2 * int(args.task_embedding_dim)
+            ),
+            hidden_dim=int(args.hidden_dim),
+        )
+        if decision_critic_enabled
+        else None
+    )
     modules = CleanTrainingModules(
         hgnn=task_encoder,
         movement_actor=CleanMovementActor(task_embedding_dim=int(args.task_embedding_dim), hidden_dim=int(args.hidden_dim)),
@@ -988,6 +1079,8 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         ),
         offloading_action_value_critic=offloading_action_value_critic,
         offloading_lagged_q_critic=offloading_lagged_q_critic,
+        offloading_decision_critic=offloading_decision_critic,
+        movement_decision_critic=movement_decision_critic,
     )
     args._offloading_initialization_identity = _initialize_offloading_policy(
         args=args,
@@ -1023,6 +1116,9 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             detach_critic_hgnn=bool(args.detach_critic_hgnn),
             offloading_eft_advantage=bool(args.offloading_eft_advantage),
             movement_position_advantage=bool(args.movement_position_advantage),
+            decision_critic_enabled=bool(args.decision_critic),
+            decision_critic_coef=float(args.decision_critic_coef),
+            decision_critic_discount=float(args.decision_critic_discount),
             offloading_counterfactual_coef=float(args.offloading_counterfactual_coef),
             offloading_action_value_loss_coef=float(args.offloading_action_value_loss_coef),
             offloading_lagged_q_coef=float(args.offloading_lagged_q_coef),
@@ -2890,6 +2986,10 @@ def _move_modules_to_device(modules: CleanTrainingModules, device: Any) -> None:
         modules.offloading_action_value_critic.to(device)
     if modules.offloading_lagged_q_critic is not None:
         modules.offloading_lagged_q_critic.to(device)
+    if modules.offloading_decision_critic is not None:
+        modules.offloading_decision_critic.to(device)
+    if modules.movement_decision_critic is not None:
+        modules.movement_decision_critic.to(device)
 
 
 def _make_progress_bar(total: int) -> Any:
