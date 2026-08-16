@@ -397,3 +397,84 @@ tensorboard --logdir logs\tensorboard --port 6006
 2. **平台与配置无关**：89 次×1 epoch 的平台（~6.1）与 30 次×3 epoch（~6.0）
    一致，说明该值是任务上的真实收敛点；
 3. TensorBoard 已导出：`ppo_rollout_reward_mean`，89 个点，步长 1~89。
+
+---
+
+## 13. 决策级 critic（方案 A）：让 critic 真正有效（2026-08-16）
+
+### 13.1 背景
+
+同事提出："PPO 不能没有有效的 critic"。此前我们绕开 critic（EV≈0）用
+每决策 EFT/质心信号做优势，虽然收敛但方法定位不严谨。为此实现**决策级
+critic**，让 critic 在每个决策上训练并真正参与优势计算。
+
+### 13.2 为什么旧 critic 无效
+
+旧 critic 是 slot 级：用"任务嵌入均值 + UAV 统计 + 计数"的粗摘要预测整个
+时隙的回报。回报噪声极大（std 8~10），且一个时隙内所有决策共享一个值，
+无法做信用分配 → EV≈0。
+
+### 13.3 设计：决策级 critic
+
+新增 `CleanDecisionCritic`（`marl_models/mappo/clean_ppo.py`），两个实例：
+
+- **卸载决策 critic**：输入 = 所选候选的决策特征（任务嵌入 + UAV 特征 +
+  pair 特征），输出 V(s_decision)。同一 slot 内的决策按 `decision_order`
+  排序，做 **TD 链**：
+
+  ```text
+  r_d = −EFT后悔值 / scale        （即时决策奖励，批量标准化）
+  target(s_d) = r_d + γ·V(s_{d+1})   （V(s_end)=0，target 冻结）
+  A_d = r_d + γ·V(s_{d+1}) − V(s_d)  （TD 优势）
+  ```
+
+- **移动决策 critic**：输入 = UAV 特征 + ready/pending 计数 + **服务质心
+  归一化坐标** + ready/pending 任务嵌入均值，输出 V(s_m)：
+
+  ```text
+  r_m = −(到服务质心距离/对角线) − 能耗惩罚   （即时信号，批量标准化）
+  A_m = r_m − V(s_m)                        （基线相减）
+  ```
+
+- 两个 critic 均用 MSE 回归训练（`decision_critic_coef` 加权），奖励先
+  批量标准化使目标保持 O(1)，训练稳定。
+
+### 13.4 为什么这样 critic 能学会
+
+1. **目标粒度匹配**：决策级目标（EFT 后悔值）是决策特征的平滑函数
+   （距离、队列、算力可预测），而 slot 级回报是噪声聚合；
+2. **TD 链提供"未来"信息**：V(s_d) 自举到 V(s_{d+1})，是真值函数而非
+   即时奖励回归；
+3. **标准化 + 小目标**：目标 O(1)，critic 损失不压过 PPO 损失。
+
+### 13.5 与标准 PPO 的关系（诚实定位）
+
+- **一致的部分**：PPO 的裁剪代理目标完全不变（`_ppo_action_loss`，
+  ratio 裁剪在 [1−ε, 1+ε]）；critic 作为价值基线参与每个决策的优势；
+  这是 actor-critic PPO 的标准结构；
+- **差异的部分**：
+  1. critic 是**决策级**而非 slot 级（对应设计文档 Stage 2 的方向）；
+  2. 优势采用 **TD(0) 形式**（GAE λ=0 的特例），不是 slot 级 GAE；
+  3. 决策奖励 r 是**整形信号**（EFT 后悔值/质心距离），不是环境原始
+     回报——这在实践中等价于用 reward shaping 作为优势。
+- **结论**：这是 PPO 家族中合法的 actor-critic 变体（裁剪目标 + 学习到的
+  价值基线 + TD 优势），但**不是教科书式"slot 级 MAPPO + 环境回报 GAE"**。
+  论文应如实表述为"决策级 actor-critic PPO（per-decision TD advantage）"。
+
+### 13.6 验证结果（60 次更新 × 4 环境门控）
+
+| 指标 | 结果 |
+|---|---|
+| 卸载决策 critic EV | 最后 10 次均值 **0.545**，峰值 **0.662**（update 44）|
+| 移动决策 critic EV | **0.10~0.19**（加质心坐标后，此前 ~0.01）|
+| 正式评估流时间 | **59.5s**（与无 critic 版 58~66s 持平）|
+| 到达完成率 | **0.926** |
+| 能耗/DAG | 182.9；无效分配 0 |
+
+### 13.7 用法与提交
+
+```powershell
+python scripts/train_clean_mainline.py ... --decision-critic --decision-critic-coef 0.5 --decision-critic-discount 0.99
+```
+
+提交：`78efb0e`（决策级 critic 实现）、`0c34135`（移动 critic 加质心坐标）。
