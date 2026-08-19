@@ -478,3 +478,60 @@ python scripts/train_clean_mainline.py ... --decision-critic --decision-critic-c
 ```
 
 提交：`78efb0e`（决策级 critic 实现）、`0c34135`（移动 critic 加质心坐标）。
+
+---
+
+## 14. HGNN + 决策 critic：seed 0 改动过程与结果（2026-08-18/19）
+
+### 14.1 背景
+
+论文创新点想主打"HGNN 超图编码器更有优势"。但在无决策 critic 的对比中，
+HGNN 并不占优（3 种子：MLP 58.2s/0.942 vs HGNN 66.4s/0.927）。第 13 节实现
+决策级 critic 后，用"HGNN + 决策 critic"重新验证，看编码器在决策级价值
+学习下是否能体现优势。
+
+### 14.2 改动过程（相对 MLP 版）
+
+- 只改 `--task-encoder mlp` → `--task-encoder hgnn`，其余配置与
+  `single_env_dc_100up`（MLP + 决策 critic）完全一致：
+  单环境、horizon 128、3 epoch、100 次更新、决策 critic（coef 0.5、
+  discount 0.99）、服务质心移动、detach-critic-hgnn、EFT 优势、
+  双头 LR scale；
+- 运行目录：`logs/clean_mainline/20260818_205457_single_env_hgnn_dc_100up_seed0`。
+
+### 14.3 训练结果（100 次更新，后 20 次均值）
+
+| 指标 | HGNN + 决策critic | MLP + 决策critic |
+|---|---:|---:|
+| reward | **6.30 ± 1.01** | 6.35 ± 0.82 |
+| 完成率 | **0.926** | 0.908 |
+| 流时间 | 58.8s | 54.3s |
+| 卸载 critic EV（峰值）| **0.52** | 0.50 |
+
+### 14.4 正式评估（10 集）
+
+| 指标 | HGNN + 决策critic | MLP + 决策critic |
+|---|---:|---:|
+| 流时间 | **54.2s** | 58.9s |
+| 到达完成率 | 0.932 | **0.941** |
+| 能耗/DAG | 196.2 | **163.2** |
+| 无效分配 | 0 | 0 |
+
+**这是所有实验中 HGNN 第一次在主指标（流时间）上占优（-8%）**，且训练中
+HGNN 的决策 critic EV 更高（0.41~0.52），说明"超图表示 → 更好的决策级
+价值学习"的机制链路存在。
+
+### 14.5 收敛性判断
+
+- **HGNN 依然收敛**：reward 平台 ~6.3、完成率 0.93、流时间 ~54s，无效分配 0；
+- **收敛速度不比 MLP 快**：前 20 次更新 MLP 领先，30~50 次 HGNN 反超，之后
+  两者在 ~6.3 平台打平——论文不能写"HGNN 收敛更快"；
+- 当前优势点 = **最终流时间更低（仅 seed 0）**，需 seed 1、2 确认。
+
+### 14.6 下一步
+
+1. 跑 HGNN seed 1、2（同配置）与 MLP seed 1、2 做 3 种子对比；
+2. 实现内置分区超边（方案一，Windows 上替代 KaHyPar），验证"超图完整
+   形态"能否把流时间优势拉开；
+3. 若 3 种子确认 → 论文可写"HGNN 编码器 + 决策级 critic 在流时间上优于
+   MLP"；若仅打平 → 诚实定位为编码器消融。
