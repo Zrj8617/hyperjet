@@ -74,41 +74,46 @@ def _assert_status_boundaries() -> None:
     active_ids = ["task_0", "task_1"]
     task_id_to_idx = {task_id: idx for idx, task_id in enumerate(active_ids)}
     idx_to_task_id = {idx: task_id for task_id, idx in task_id_to_idx.items()}
+    original_kahypar_enabled = config.ENABLE_KAHYPAR_PARTITION_HYPEREDGES
+    config.ENABLE_KAHYPAR_PARTITION_HYPEREDGES = True
 
-    success_builder = CleanGraphBuilder()
     try:
-        success_builder._run_kahypar_partition = lambda **_: []  # type: ignore[method-assign]
-        groups = success_builder._build_partition_hyperedges(
-            active_task_ids=active_ids,
-            task_id_to_idx=task_id_to_idx,
-            idx_to_task_id=idx_to_task_id,
-            base_hyperedges=[[0, 1]],
-            current_time_step=0,
-            force_update=True,
-        )
-        _assert(groups == [], "successful singleton filtering should emit no partition edges")
-        _assert(success_builder.last_partition_status == "success", "successful empty result must remain success")
-    finally:
-        success_builder.close()
+        success_builder = CleanGraphBuilder()
+        try:
+            success_builder._run_kahypar_partition = lambda **_: []  # type: ignore[method-assign]
+            groups = success_builder._build_partition_hyperedges(
+                active_task_ids=active_ids,
+                task_id_to_idx=task_id_to_idx,
+                idx_to_task_id=idx_to_task_id,
+                base_hyperedges=[[0, 1]],
+                current_time_step=0,
+                force_update=True,
+            )
+            _assert(groups == [], "successful singleton filtering should emit no partition edges")
+            _assert(success_builder.last_partition_status == "success", "successful empty result must remain success")
+        finally:
+            success_builder.close()
 
-    failure_builder = CleanGraphBuilder()
-    try:
-        failure_builder._run_kahypar_partition = lambda **_: None  # type: ignore[method-assign]
-        groups = failure_builder._build_partition_hyperedges(
-            active_task_ids=active_ids,
-            task_id_to_idx=task_id_to_idx,
-            idx_to_task_id=idx_to_task_id,
-            base_hyperedges=[[0, 1]],
-            current_time_step=0,
-            force_update=True,
-        )
-        _assert(groups == [], "failed partition without cache should emit no partition edges")
-        _assert(
-            failure_builder.last_partition_status == "degraded_no_cache",
-            "execution failure must be degraded rather than success",
-        )
+        failure_builder = CleanGraphBuilder()
+        try:
+            failure_builder._run_kahypar_partition = lambda **_: None  # type: ignore[method-assign]
+            groups = failure_builder._build_partition_hyperedges(
+                active_task_ids=active_ids,
+                task_id_to_idx=task_id_to_idx,
+                idx_to_task_id=idx_to_task_id,
+                base_hyperedges=[[0, 1]],
+                current_time_step=0,
+                force_update=True,
+            )
+            _assert(groups == [], "failed partition without cache should emit no partition edges")
+            _assert(
+                failure_builder.last_partition_status == "degraded_no_cache",
+                "execution failure must be degraded rather than success",
+            )
+        finally:
+            failure_builder.close()
     finally:
-        failure_builder.close()
+        config.ENABLE_KAHYPAR_PARTITION_HYPEREDGES = original_kahypar_enabled
 
 
 def _assert_bounded_kill() -> None:
