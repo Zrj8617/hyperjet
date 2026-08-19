@@ -637,6 +637,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--resume-checkpoint", type=Path, default=None)
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument(
+        "--enable-kahypar",
+        action="store_true",
+        default=False,
+        help="Enable KaHyPar partition hyperedges for this run; Linux formal runs only.",
+    )
+    parser.add_argument(
         "--freeze-movement",
         action="store_true",
         default=False,
@@ -807,6 +813,7 @@ def build_config_snapshot(args: argparse.Namespace) -> dict[str, Any]:
         "cli": _namespace_to_dict(args),
         "experiment_controls": {
             "completed_dag_weight": completed_dag_weight,
+            "enable_kahypar": bool(getattr(args, "enable_kahypar", False)),
             "detach_critic_hgnn": bool(getattr(args, "detach_critic_hgnn", False)),
             "freeze_ue_mobility": bool(getattr(args, "freeze_ue_mobility", False)),
             "offloading_counterfactual_coef": counterfactual_coef,
@@ -911,6 +918,7 @@ def initialize_run_files(run_dir: Path, args: argparse.Namespace) -> None:
             "torch_required_for_training": True,
             "completed_dag_weight": _resolved_completed_dag_weight(args),
             "task_encoder": str(getattr(args, "task_encoder", "hgnn")),
+            "enable_kahypar": bool(getattr(args, "enable_kahypar", False)),
             "num_envs": int(getattr(args, "num_envs", 1)),
             "sampler_backend": str(getattr(args, "sampler_backend", "synchronous")),
             "multisample_label": "multisample",
@@ -960,6 +968,7 @@ def initialize_run_files(run_dir: Path, args: argparse.Namespace) -> None:
 
 def run_training(args: argparse.Namespace) -> dict[str, Any]:
     args = apply_smoke_overrides(args)
+    config.ENABLE_KAHYPAR_PARTITION_HYPEREDGES = bool(args.enable_kahypar)
     args.completed_dag_weight = _resolved_completed_dag_weight(args)
     (
         args.offloading_counterfactual_coef,

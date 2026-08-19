@@ -43,6 +43,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", type=Path, default=Path("logs") / "clean_eval")
     parser.add_argument("--run-name", type=str, default="eval")
     parser.add_argument(
+        "--enable-kahypar",
+        action="store_true",
+        default=False,
+        help="Enable KaHyPar partition hyperedges for this evaluation; Linux formal runs only.",
+    )
+    parser.add_argument(
         "--offloading-policy",
         choices=OFFLOADING_POLICIES,
         default="actor_argmax",
@@ -198,6 +204,7 @@ def initialize_eval_files(
             "deterministic": bool(args.deterministic),
             "arrival_steps": int(args.arrival_steps),
             "max_drain_steps": int(args.max_drain_steps),
+            "enable_kahypar": bool(getattr(args, "enable_kahypar", False)),
             "completed_dag_weight": float(controls["completed_dag_weight"]),
             "detach_critic_hgnn": bool(controls["detach_critic_hgnn"]),
             "freeze_ue_mobility": freeze_ue_mobility,
@@ -214,6 +221,7 @@ def initialize_eval_files(
 
 
 def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
+    config.ENABLE_KAHYPAR_PARTITION_HYPEREDGES = bool(args.enable_kahypar)
     run_dir = create_eval_run_directory(args)
     # Preserve the entrypoint contract that even a failed checkpoint validation
     # leaves an initialized run record. A valid checkpoint rewrites these files

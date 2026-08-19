@@ -22,7 +22,9 @@ def _assert(condition: bool, message: str) -> None:
 def main() -> None:
     np.random.seed(11)
     original_arrival_prob = config.DAG_BASE_ARRIVAL_PROB
+    original_kahypar_enabled = config.ENABLE_KAHYPAR_PARTITION_HYPEREDGES
     config.DAG_BASE_ARRIVAL_PROB = 0.0
+    config.ENABLE_KAHYPAR_PARTITION_HYPEREDGES = True
     try:
         env = Env()
         env.reset()
@@ -143,6 +145,7 @@ def main() -> None:
 
     finally:
         config.DAG_BASE_ARRIVAL_PROB = original_arrival_prob
+        config.ENABLE_KAHYPAR_PARTITION_HYPEREDGES = original_kahypar_enabled
 
     print("smoke_clean_graph passed")
 
