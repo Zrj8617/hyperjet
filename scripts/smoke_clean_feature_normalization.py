@@ -10,7 +10,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import config
-from environment.assignment import TemporaryReservationState, build_offloading_candidate_components
+from environment.assignment import (
+    TemporaryReservationState,
+    _normalize_pair_features,
+    build_offloading_candidate_components,
+)
 from environment.env import Env
 
 
@@ -43,6 +47,21 @@ def main() -> None:
     _assert(float(config.CLEAN_NORM_AVAIL_TIME_REF) < float(config.EPISODE_LENGTH) * float(config.TIME_SLOT_DURATION),
             "availability norm should be smaller than full-episode time scale.")
     _assert_no_episode_time_scale_in_feature_code()
+
+    raw_pair_features = [4.0, 10.0, 40.0, 4.0, 10.0, 320.0, 4.0, 10.0]
+    normalized_pair_features = _normalize_pair_features(raw_pair_features)
+    _assert(
+        np.isclose(normalized_pair_features[2], 1.0),
+        "queue waiting time should retain x/40 clipping.",
+    )
+    _assert(
+        np.isclose(normalized_pair_features[5], 320.0 / (320.0 + 160.0)),
+        "incremental delay should use x/(x+160) normalization.",
+    )
+    _assert(
+        normalized_pair_features.shape == (8,),
+        "incremental delay normalization must not change pair feature dimension.",
+    )
 
     np.random.seed(41)
     original_arrival_prob = config.DAG_BASE_ARRIVAL_PROB

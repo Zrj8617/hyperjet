@@ -443,7 +443,7 @@ def _dynamic_uav_features(
 def _normalize_pair_features(values: list[float]) -> np.ndarray:
     """按配置中的统一尺度归一化 8 维任务—UAV 配对特征。"""
     # 顺序依次是传输时间/能耗、排队时间、计算时间/能耗、增量时延、回传时间/能耗。
-    # 排队和总时延使用较长的可用时间尺度，其余时间列使用普通配对时间尺度。
+    # 排队时间使用较长的可用时间尺度，其余普通时间列使用配对时间尺度。
     time_ref = max(float(config.CLEAN_NORM_PAIR_TIME_REF), 1.0)
     wait_ref = max(float(config.CLEAN_NORM_AVAIL_TIME_REF), 1.0)
     energy_ref = max(float(config.CLEAN_NORM_PAIR_ENERGY_REF), 1.0)
@@ -452,7 +452,11 @@ def _normalize_pair_features(values: list[float]) -> np.ndarray:
         dtype=np.float32,
     )
     raw = np.asarray(values, dtype=np.float32)
-    return np.clip(raw / scales, 0.0, 1.0).astype(np.float32)
+    normalized = np.clip(raw / scales, 0.0, 1.0).astype(np.float32)
+    # 实验公平性修复：增量时延保持全程可区分，避免 x/40 将大时延统一截断为 1。
+    incremental_delay = raw[5]
+    normalized[5] = incremental_delay / (incremental_delay + 160.0)
+    return normalized
 
 
 def _clean_tx_seconds(data_size_mb: float, base_bandwidth_mbps: float, distance_m: float) -> float:
