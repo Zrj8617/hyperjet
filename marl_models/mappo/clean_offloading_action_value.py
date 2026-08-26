@@ -40,6 +40,21 @@ class CleanOffloadingActionValueCritic(nn.Module):
         return self.net(candidate_context_features).squeeze(-1)
 
 
+def build_rng_neutral_clean_counterfactual_q(
+    *, input_dim: int, hidden_dim: int = 128
+) -> CleanOffloadingActionValueCritic:
+    """Build the auxiliary CPU Q head without advancing the main Torch RNG."""
+
+    rng_state = torch.random.get_rng_state().clone()
+    try:
+        return CleanOffloadingActionValueCritic(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim,
+        )
+    finally:
+        torch.random.set_rng_state(rng_state)
+
+
 def masked_counterfactual_value(
     *,
     logits: torch.Tensor,

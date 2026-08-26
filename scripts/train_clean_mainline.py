@@ -24,6 +24,22 @@ if str(ROOT) not in sys.path:
 import config
 from environment.env import Env
 from environment.graph_builder import CleanGraphBuilder
+from marl_models.mappo.clean_decision_transitions import (
+    CleanDecisionTransitionTracker,
+)
+from marl_models.mappo.clean_decision_td_diagnostic import (
+    PHASE4_TARGET_SYNC_INTERVAL,
+    PHASE4_TARGET_SYNC_MODE,
+    build_clean_decision_td_diagnostic,
+)
+from marl_models.mappo.clean_decision_td_dataset import (
+    PHASE4_RHO_ZERO_TOLERANCE,
+    CleanDecisionTDRawCapture,
+)
+from marl_models.mappo.clean_ppo import (
+    CLEAN_CRITIC_TASK_POOLING_CHOICES,
+    normalize_clean_critic_task_pooling,
+)
 from marl_models.mappo.clean_slot_orchestrator import (
     CleanMovementRolloutRecord,
     CleanOffloadingRolloutRecord,
@@ -33,6 +49,10 @@ from marl_models.mappo.clean_slot_orchestrator import (
     prepare_slot_state,
 )
 from marl_models.mappo.clean_trainer import (
+    CLEAN_COUNTERFACTUAL_BETA,
+    CLEAN_COUNTERFACTUAL_CREDIT_MODE,
+    CLEAN_COUNTERFACTUAL_GRADIENT_CLIPPING,
+    CLEAN_COUNTERFACTUAL_Q_LOSS_COEF,
     CleanCheckpointManager,
     CleanJSONLLogger,
     CleanPPOUpdateConfig,
@@ -232,6 +252,74 @@ def _resolved_offloading_action_value_controls(args: argparse.Namespace) -> tupl
     )
 
 
+def clean_counterfactual_experiment_controls(args: argparse.Namespace) -> dict[str, Any]:
+    enabled = bool(getattr(args, "clean_counterfactual_credit", False))
+    return {
+        "clean_counterfactual_credit": enabled,
+        "clean_counterfactual_credit_mode": (
+            CLEAN_COUNTERFACTUAL_CREDIT_MODE if enabled else "disabled"
+        ),
+        "counterfactual_beta": CLEAN_COUNTERFACTUAL_BETA if enabled else 0.0,
+        "counterfactual_q_loss_coef": (
+            CLEAN_COUNTERFACTUAL_Q_LOSS_COEF if enabled else 0.0
+        ),
+        "gradient_clipping": (
+            CLEAN_COUNTERFACTUAL_GRADIENT_CLIPPING if enabled else "legacy_global"
+        ),
+    }
+
+
+def phase4_decision_td_experiment_controls(args: argparse.Namespace) -> dict[str, Any]:
+    enabled = bool(getattr(args, "phase4_decision_td_diagnostic", False))
+    return {
+        "phase4_decision_td_diagnostic": enabled,
+        "phase4_target_sync_mode": PHASE4_TARGET_SYNC_MODE if enabled else "disabled",
+        "phase4_target_sync_interval": PHASE4_TARGET_SYNC_INTERVAL if enabled else 0,
+        "phase4_actor_correction": False,
+        "phase4_raw_diagnostic_capture": bool(
+            getattr(args, "phase4_raw_diagnostic_capture", False)
+        ),
+        "phase4_raw_capture_format": "per_update_npz_shards",
+        "phase4_rho_zero_tolerance": PHASE4_RHO_ZERO_TOLERANCE,
+    }
+
+
+def validate_phase4_decision_td_controls(args: argparse.Namespace) -> None:
+    raw_capture = bool(getattr(args, "phase4_raw_diagnostic_capture", False))
+    if raw_capture and not bool(getattr(args, "phase4_decision_td_diagnostic", False)):
+        raise ValueError(
+            "--phase4-raw-diagnostic-capture requires --phase4-decision-td-diagnostic"
+        )
+    if not bool(getattr(args, "phase4_decision_td_diagnostic", False)):
+        return
+    if not bool(getattr(args, "record_decision_transitions", False)):
+        raise ValueError(
+            "--phase4-decision-td-diagnostic requires --record-decision-transitions"
+        )
+    legacy_beta, legacy_eta = _resolved_offloading_action_value_controls(args)
+    lagged_beta, lagged_eta, _, _ = _resolved_offloading_lagged_q_controls(args)
+    if bool(getattr(args, "clean_counterfactual_credit", False)):
+        raise ValueError("Phase4 decision-TD diagnostic cannot combine with Phase3-B actor correction")
+    if legacy_beta > 0.0 or legacy_eta > 0.0:
+        raise ValueError("Phase4 decision-TD diagnostic cannot combine with legacy counterfactual correction")
+    if lagged_beta > 0.0 or lagged_eta > 0.0:
+        raise ValueError("Phase4 decision-TD diagnostic cannot combine with lagged-Q")
+    if bool(getattr(args, "decision_critic", False)):
+        raise ValueError("Phase4 decision-TD diagnostic cannot combine with decision critic")
+    if bool(getattr(args, "offloading_eft_advantage", False)):
+        raise ValueError("Phase4 decision-TD diagnostic cannot combine with EFT advantage")
+    if float(getattr(args, "eft_auxiliary_lambda_initial", 0.0)) > 0.0:
+        raise ValueError("Phase4 decision-TD diagnostic cannot combine with EFT auxiliary loss")
+    if getattr(args, "offloading_init_bandit_checkpoint", None) is not None:
+        raise ValueError("Phase4 decision-TD diagnostic cannot combine with bandit initialization")
+
+
+def _phase4_checkpoint_extra_state(diagnostic: Any | None) -> dict[str, Any] | None:
+    if diagnostic is None:
+        return None
+    return {"phase4_decision_td_diagnostic": diagnostic.state_dict()}
+
+
 def _validated_offloading_lagged_q_controls(
     lagged_q_coef: str | float,
     lagged_q_loss_coef: str | float,
@@ -264,6 +352,30 @@ def _resolved_offloading_lagged_q_controls(args: argparse.Namespace) -> tuple[fl
     return controls
 
 
+def validate_clean_counterfactual_credit_controls(args: argparse.Namespace) -> None:
+    if not bool(getattr(args, "clean_counterfactual_credit", False)):
+        return
+    legacy_beta, legacy_eta = _resolved_offloading_action_value_controls(args)
+    if legacy_beta > 0.0 or legacy_eta > 0.0:
+        raise ValueError(
+            "--clean-counterfactual-credit cannot combine with the legacy "
+            "counterfactual coefficient path"
+        )
+    lagged_beta, lagged_eta, _, _ = _resolved_offloading_lagged_q_controls(args)
+    if lagged_beta > 0.0 or lagged_eta > 0.0:
+        raise ValueError("--clean-counterfactual-credit cannot combine with lagged-Q")
+    if bool(getattr(args, "decision_critic", False)):
+        raise ValueError("--clean-counterfactual-credit cannot combine with decision critic")
+    if bool(getattr(args, "offloading_eft_advantage", False)):
+        raise ValueError("--clean-counterfactual-credit cannot combine with EFT advantage")
+    if float(getattr(args, "eft_auxiliary_lambda_initial", 0.0)) > 0.0:
+        raise ValueError("--clean-counterfactual-credit cannot combine with EFT auxiliary loss")
+    if getattr(args, "offloading_init_bandit_checkpoint", None) is not None:
+        raise ValueError(
+            "--clean-counterfactual-credit cannot combine with bandit initialization"
+        )
+
+
 def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
     """Resolve experiment controls from new or legacy clean checkpoints."""
     checkpoint_config = payload.get("config", {})
@@ -277,6 +389,49 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
         cli = {}
     if not isinstance(experiment_controls, dict):
         experiment_controls = {}
+    clean_counterfactual_credit = cli.get(
+        "clean_counterfactual_credit",
+        experiment_controls.get("clean_counterfactual_credit", False),
+    )
+    if not isinstance(clean_counterfactual_credit, bool):
+        raise ValueError("checkpoint clean_counterfactual_credit must be boolean")
+    record_decision_transitions = cli.get(
+        "record_decision_transitions",
+        experiment_controls.get("record_decision_transitions", False),
+    )
+    if not isinstance(record_decision_transitions, bool):
+        raise ValueError("checkpoint record_decision_transitions must be boolean")
+    phase4_decision_td_diagnostic = cli.get(
+        "phase4_decision_td_diagnostic",
+        experiment_controls.get("phase4_decision_td_diagnostic", False),
+    )
+    if not isinstance(phase4_decision_td_diagnostic, bool):
+        raise ValueError("checkpoint phase4_decision_td_diagnostic must be boolean")
+    expected_phase4_controls = phase4_decision_td_experiment_controls(
+        argparse.Namespace(
+            phase4_decision_td_diagnostic=phase4_decision_td_diagnostic
+        )
+    )
+    for key in (
+        "phase4_target_sync_mode",
+        "phase4_target_sync_interval",
+        "phase4_actor_correction",
+    ):
+        if key in experiment_controls and experiment_controls[key] != expected_phase4_controls[key]:
+            raise ValueError(f"checkpoint {key} is inconsistent with Phase4 diagnostic mode")
+    expected_clean_controls = clean_counterfactual_experiment_controls(
+        argparse.Namespace(clean_counterfactual_credit=clean_counterfactual_credit)
+    )
+    for key in (
+        "clean_counterfactual_credit_mode",
+        "counterfactual_beta",
+        "counterfactual_q_loss_coef",
+        "gradient_clipping",
+    ):
+        if key in experiment_controls and experiment_controls[key] != expected_clean_controls[key]:
+            raise ValueError(
+                f"checkpoint {key} is inconsistent with clean counterfactual mode"
+            )
     detach_critic_hgnn = cli.get("detach_critic_hgnn", False)
     if not isinstance(detach_critic_hgnn, bool):
         raise ValueError("checkpoint detach_critic_hgnn must be boolean")
@@ -297,6 +452,10 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
     )
     if counterfactual_coef > 0.0 and lagged_q_coef > 0.0:
         raise ValueError("checkpoint offloading counterfactual v1 and lagged-Q v2 cannot both be enabled")
+    if clean_counterfactual_credit and (counterfactual_coef > 0.0 or lagged_q_coef > 0.0):
+        raise ValueError(
+            "checkpoint clean counterfactual credit cannot combine with legacy counterfactual or lagged-Q"
+        )
     normalize_value_targets = cli.get("normalize_value_targets", False)
     if not isinstance(normalize_value_targets, bool):
         raise ValueError("checkpoint normalize_value_targets must be boolean")
@@ -305,6 +464,12 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("checkpoint value_clip_epsilon must be finite and non-negative")
     task_encoder = str(cli.get("task_encoder", "hgnn"))
     _normalize_task_encoder_for_comparison(task_encoder)
+    critic_task_pooling = normalize_clean_critic_task_pooling(
+        cli.get(
+            "critic_task_pooling",
+            experiment_controls.get("critic_task_pooling", "mean"),
+        )
+    )
     num_envs = int(cli.get("num_envs", 1))
     if num_envs <= 0:
         raise ValueError("checkpoint num_envs must be positive")
@@ -350,7 +515,23 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
     )
     if not isinstance(offloading_initialization, dict):
         raise ValueError("checkpoint offloading initialization identity must be a mapping")
+    if clean_counterfactual_credit:
+        if decision_critic_enabled:
+            raise ValueError(
+                "checkpoint clean counterfactual credit cannot combine with decision critic"
+            )
+        if offloading_eft_advantage or eft_auxiliary_lambda_initial > 0.0:
+            raise ValueError(
+                "checkpoint clean counterfactual credit cannot combine with EFT guidance"
+            )
+        if str(offloading_initialization.get("mode", "random")) != "random":
+            raise ValueError(
+                "checkpoint clean counterfactual credit cannot use bandit initialization"
+            )
     return {
+        **expected_clean_controls,
+        **expected_phase4_controls,
+        "record_decision_transitions": record_decision_transitions,
         "completed_dag_weight": _validated_completed_dag_weight(
             cli.get("completed_dag_weight", config.REWARD_COMPLETED_DAG_WEIGHT)
         ),
@@ -365,6 +546,7 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
         "normalize_value_targets": normalize_value_targets,
         "value_clip_epsilon": value_clip_epsilon,
         "task_encoder": task_encoder,
+        "critic_task_pooling": critic_task_pooling,
         "num_envs": num_envs,
         "sampler_backend": sampler_backend,
         "freeze_movement": freeze_movement,
@@ -387,6 +569,33 @@ def validate_resume_experiment_controls(
 ) -> dict[str, Any]:
     """Reject a resume that would silently change its reward objective."""
     saved = checkpoint_experiment_controls(payload)
+    requested_clean_counterfactual = bool(
+        getattr(args, "clean_counterfactual_credit", False)
+    )
+    if requested_clean_counterfactual != bool(saved["clean_counterfactual_credit"]):
+        raise ValueError(
+            "resume checkpoint clean counterfactual credit mismatch: "
+            f"requested {requested_clean_counterfactual}, "
+            f"checkpoint {saved['clean_counterfactual_credit']}"
+        )
+    requested_transition_recording = bool(
+        getattr(args, "record_decision_transitions", False)
+    )
+    if requested_transition_recording != bool(saved["record_decision_transitions"]):
+        raise ValueError(
+            "resume checkpoint decision transition recording mismatch: "
+            f"requested {requested_transition_recording}, "
+            f"checkpoint {saved['record_decision_transitions']}"
+        )
+    requested_phase4_diagnostic = bool(
+        getattr(args, "phase4_decision_td_diagnostic", False)
+    )
+    if requested_phase4_diagnostic != bool(saved["phase4_decision_td_diagnostic"]):
+        raise ValueError(
+            "resume checkpoint Phase4 decision-TD diagnostic mismatch: "
+            f"requested {requested_phase4_diagnostic}, "
+            f"checkpoint {saved['phase4_decision_td_diagnostic']}"
+        )
     requested_weight = _resolved_completed_dag_weight(args)
     if not math.isclose(
         requested_weight,
@@ -464,6 +673,14 @@ def validate_resume_experiment_controls(
         raise ValueError(
             "resume checkpoint task encoder mismatch: "
             f"requested {requested_task_encoder}, checkpoint {saved['task_encoder']}"
+        )
+    requested_critic_task_pooling = normalize_clean_critic_task_pooling(
+        getattr(args, "critic_task_pooling", "mean")
+    )
+    if requested_critic_task_pooling != str(saved["critic_task_pooling"]):
+        raise ValueError(
+            "resume checkpoint critic task pooling mismatch: "
+            f"requested {requested_critic_task_pooling}, checkpoint {saved['critic_task_pooling']}"
         )
     requested_num_envs = int(getattr(args, "num_envs", 1))
     if requested_num_envs != int(saved["num_envs"]):
@@ -600,6 +817,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Block value-loss gradients from the critic into the shared HGNN.",
     )
     parser.add_argument(
+        "--critic-task-pooling",
+        choices=CLEAN_CRITIC_TASK_POOLING_CHOICES,
+        default="mean",
+        help="Active-task embedding aggregation used only by the centralized critic.",
+    )
+    parser.add_argument(
         "--freeze-ue-mobility",
         action="store_true",
         default=False,
@@ -610,6 +833,43 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=_nonnegative_finite_float,
         default=0.0,
         help="Weight beta for the detached action-conditioned counterfactual offloading advantage.",
+    )
+    parser.add_argument(
+        "--clean-counterfactual-credit",
+        action="store_true",
+        default=False,
+        help=(
+            "Phase3-B clean action-conditioned credit with fixed beta=0.25 and "
+            "Q loss coefficient=0.5; mutually exclusive with legacy guidance paths."
+        ),
+    )
+    parser.add_argument(
+        "--record-decision-transitions",
+        action="store_true",
+        default=False,
+        help=(
+            "Record behavior-neutral offloading decision transitions for Phase4-A "
+            "target-quality work; does not change PPO or actor updates."
+        ),
+    )
+    parser.add_argument(
+        "--phase4-decision-td-diagnostic",
+        action="store_true",
+        default=False,
+        help=(
+            "Train an actor-isolated shadow Expected-SARSA decision Q for "
+            "Phase4-A target-quality diagnostics. Requires explicit decision "
+            "transition recording."
+        ),
+    )
+    parser.add_argument(
+        "--phase4-raw-diagnostic-capture",
+        action="store_true",
+        default=False,
+        help=(
+            "Write one compact NPZ shard per Phase4 shadow update with frozen "
+            "decision-TD targets and the exact selected-action Q input."
+        ),
     )
     parser.add_argument(
         "--offloading-action-value-loss-coef",
@@ -812,9 +1072,17 @@ def build_config_snapshot(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "cli": _namespace_to_dict(args),
         "experiment_controls": {
+            **clean_counterfactual_experiment_controls(args),
+            **phase4_decision_td_experiment_controls(args),
+            "record_decision_transitions": bool(
+                getattr(args, "record_decision_transitions", False)
+            ),
             "completed_dag_weight": completed_dag_weight,
             "enable_kahypar": bool(getattr(args, "enable_kahypar", False)),
             "detach_critic_hgnn": bool(getattr(args, "detach_critic_hgnn", False)),
+            "critic_task_pooling": normalize_clean_critic_task_pooling(
+                getattr(args, "critic_task_pooling", "mean")
+            ),
             "freeze_ue_mobility": bool(getattr(args, "freeze_ue_mobility", False)),
             "offloading_counterfactual_coef": counterfactual_coef,
             "offloading_action_value_loss_coef": action_value_loss_coef,
@@ -923,7 +1191,15 @@ def initialize_run_files(run_dir: Path, args: argparse.Namespace) -> None:
             "sampler_backend": str(getattr(args, "sampler_backend", "synchronous")),
             "multisample_label": "multisample",
             "detach_critic_hgnn": bool(getattr(args, "detach_critic_hgnn", False)),
+            "critic_task_pooling": normalize_clean_critic_task_pooling(
+                getattr(args, "critic_task_pooling", "mean")
+            ),
+            "record_decision_transitions": bool(
+                getattr(args, "record_decision_transitions", False)
+            ),
+            **phase4_decision_td_experiment_controls(args),
             "freeze_ue_mobility": bool(getattr(args, "freeze_ue_mobility", False)),
+            **clean_counterfactual_experiment_controls(args),
             "offloading_counterfactual_coef": counterfactual_coef,
             "offloading_action_value_loss_coef": action_value_loss_coef,
             "offloading_lagged_q_coef": lagged_q_coef,
@@ -968,6 +1244,9 @@ def initialize_run_files(run_dir: Path, args: argparse.Namespace) -> None:
 
 def run_training(args: argparse.Namespace) -> dict[str, Any]:
     args = apply_smoke_overrides(args)
+    args.critic_task_pooling = normalize_clean_critic_task_pooling(
+        getattr(args, "critic_task_pooling", "mean")
+    )
     config.ENABLE_KAHYPAR_PARTITION_HYPEREDGES = bool(args.enable_kahypar)
     args.completed_dag_weight = _resolved_completed_dag_weight(args)
     (
@@ -980,6 +1259,12 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         args.offloading_lagged_q_scale_seconds,
         args.offloading_lagged_q_censor_weight,
     ) = _resolved_offloading_lagged_q_controls(args)
+    validate_clean_counterfactual_credit_controls(args)
+    validate_phase4_decision_td_controls(args)
+    if bool(args.record_decision_transitions) and str(args.sampler_backend) == "process":
+        raise ValueError(
+            "--record-decision-transitions currently requires the synchronous sampler"
+        )
     if getattr(args, "max_updates", None) is not None and int(args.num_envs) != 1:
         raise ValueError("--max-updates diagnostic control currently requires --num-envs 1")
     if float(args.eft_auxiliary_lambda_initial) > 0.0 and str(args.task_encoder) != "mlp":
@@ -1010,7 +1295,10 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         CleanMovementActor,
     )
     from marl_models.mappo.clean_offloading_actor import CleanOffloadingActor
-    from marl_models.mappo.clean_offloading_action_value import CleanOffloadingActionValueCritic
+    from marl_models.mappo.clean_offloading_action_value import (
+        CleanOffloadingActionValueCritic,
+        build_rng_neutral_clean_counterfactual_q,
+    )
     from marl_models.mappo.clean_lagged_residual_q import (
         CleanLaggedOutcomeTracker,
         build_rng_neutral_lagged_residual_q_critic,
@@ -1028,18 +1316,28 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     graph_builder.reset()
     initial_prepared = prepare_slot_state(env=env, graph_builder=graph_builder)
     task_feature_dim = int(initial_prepared.graph_snapshot.task_features.shape[1])
-    critic_input_dim = clean_critic_input_dim(int(args.task_embedding_dim), config.NUM_UAVS)
+    critic_input_dim = clean_critic_input_dim(
+        int(args.task_embedding_dim),
+        config.NUM_UAVS,
+        task_pooling=str(args.critic_task_pooling),
+    )
     offloading_actor = CleanOffloadingActor(
         task_embedding_dim=int(args.task_embedding_dim),
         hidden_dim=int(args.hidden_dim),
     )
-    action_value_enabled = float(args.offloading_counterfactual_coef) > 0.0
+    clean_counterfactual_enabled = bool(args.clean_counterfactual_credit)
+    legacy_action_value_enabled = float(args.offloading_counterfactual_coef) > 0.0
     offloading_action_value_critic = (
-        CleanOffloadingActionValueCritic(
+        build_rng_neutral_clean_counterfactual_q(
             input_dim=int(offloading_actor.candidate_feature_dim) + int(critic_input_dim),
             hidden_dim=int(args.hidden_dim),
         )
-        if action_value_enabled
+        if clean_counterfactual_enabled
+        else CleanOffloadingActionValueCritic(
+            input_dim=int(offloading_actor.candidate_feature_dim) + int(critic_input_dim),
+            hidden_dim=int(args.hidden_dim),
+        )
+        if legacy_action_value_enabled
         else None
     )
     lagged_q_enabled = float(args.offloading_lagged_q_coef) > 0.0
@@ -1086,6 +1384,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         critic=CleanCentralizedCritic(
             input_dim=critic_input_dim,
             hidden_dim=int(args.hidden_dim),
+            task_pooling=str(args.critic_task_pooling),
         ),
         offloading_action_value_critic=offloading_action_value_critic,
         offloading_lagged_q_critic=offloading_lagged_q_critic,
@@ -1124,6 +1423,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             offloading_entropy_coef=float(args.entropy_coef),
             max_grad_norm=float(args.max_grad_norm),
             detach_critic_hgnn=bool(args.detach_critic_hgnn),
+            clean_counterfactual_credit=clean_counterfactual_enabled,
             offloading_eft_advantage=bool(args.offloading_eft_advantage),
             movement_position_advantage=bool(args.movement_position_advantage),
             decision_critic_enabled=bool(args.decision_critic),
@@ -1141,6 +1441,34 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         ),
         device=device,
     )
+    phase4_diagnostic = (
+        build_clean_decision_td_diagnostic(
+            input_dim=int(offloading_actor.candidate_feature_dim) + int(critic_input_dim),
+            hidden_dim=int(args.hidden_dim),
+            learning_rate=float(args.lr),
+            gamma=float(args.gamma),
+            max_grad_norm=float(args.max_grad_norm),
+            device=device,
+            raw_capture=(
+                CleanDecisionTDRawCapture(
+                    output_dir=run_dir / "phase4_raw_decision_td",
+                    selected_q_input_dim=(
+                        int(offloading_actor.candidate_feature_dim)
+                        + int(critic_input_dim)
+                    ),
+                    source_checkpoint=(
+                        str(args.resume_checkpoint)
+                        if args.resume_checkpoint is not None
+                        else None
+                    ),
+                )
+                if bool(args.phase4_raw_diagnostic_capture)
+                else None
+            ),
+        )
+        if bool(args.phase4_decision_td_diagnostic)
+        else None
+    )
     checkpoint_manager = CleanCheckpointManager(run_dir / "checkpoints")
     logger = CleanJSONLLogger(run_dir)
     start_episode = 0
@@ -1151,6 +1479,13 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         payload = checkpoint_manager.read(args.resume_checkpoint)
         validate_resume_experiment_controls(args, payload)
         checkpoint_manager.restore(modules=modules, optimizer=optimizer, payload=payload)
+        if phase4_diagnostic is not None:
+            phase4_state = payload.get("extra_state", {}).get(
+                "phase4_decision_td_diagnostic"
+            )
+            if phase4_state is None:
+                raise ValueError("Phase4 diagnostic state is missing from checkpoint")
+            phase4_diagnostic.load_state_dict(phase4_state)
         start_episode = int(payload.get("episode", -1)) + 1
         global_slot = int(payload.get("global_slot", 0))
         updater.update_step = int(payload.get("update_step", 0))
@@ -1168,6 +1503,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             config_snapshot=build_config_snapshot(args),
             safe_boundary=True,
             filename="checkpoint_update_0000.pt",
+            extra_state=_phase4_checkpoint_extra_state(phase4_diagnostic),
         )
     if args.max_updates is not None and int(args.max_updates) == 0:
         _write_json(
@@ -1178,6 +1514,10 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                 "global_slot": int(global_slot),
                 "completed_update_count": int(updater.update_step),
                 "offloading_initialization": args._offloading_initialization_identity,
+                "record_decision_transitions": bool(args.record_decision_transitions),
+                "decision_transition_summary": None,
+                **clean_counterfactual_experiment_controls(args),
+                **phase4_decision_td_experiment_controls(args),
             },
         )
         graph_builder.close()
@@ -1190,7 +1530,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         }
 
     if str(args.sampler_backend) == "process":
-        if float(args.offloading_counterfactual_coef) > 0.0 or float(
+        if clean_counterfactual_enabled or float(args.offloading_counterfactual_coef) > 0.0 or float(
             args.offloading_lagged_q_coef
         ) > 0.0:
             graph_builder.close()
@@ -1225,6 +1565,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             task_state_ready=TASK_STATE_READY_UNSCHEDULED,
             lagged_tracker_cls=CleanLaggedOutcomeTracker,
             lagged_q_enabled=lagged_q_enabled,
+            phase4_diagnostic=phase4_diagnostic,
             start_episode=start_episode,
             global_slot=global_slot,
         )
@@ -1237,6 +1578,11 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         if lagged_q_enabled
         else None
     )
+    decision_transition_tracker = (
+        CleanDecisionTransitionTracker(gamma=float(args.gamma), lane_index=0)
+        if bool(args.record_decision_transitions)
+        else None
+    )
     progress = _make_progress_bar(total=max(int(args.episodes) - start_episode, 0) * int(args.max_steps_per_episode))
     max_updates_reached = False
     try:
@@ -1244,6 +1590,8 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             env.reset()
             if lagged_q_tracker is not None:
                 lagged_q_tracker.start_episode(episode)
+            if decision_transition_tracker is not None:
+                decision_transition_tracker.start_episode(episode)
             graph_builder.reset()
             current_prepared = prepare_slot_state(env=env, graph_builder=graph_builder)
             current_encoded = encode_prepared_slot(
@@ -1276,6 +1624,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                     task_state_ready=TASK_STATE_READY_UNSCHEDULED,
                     freeze_movement=bool(args.freeze_movement),
                     lagged_q_enabled=bool(lagged_q_enabled),
+                    decision_transition_tracker=decision_transition_tracker,
                 )
                 global_slot += 1
                 episode_reward += float(slot_record.reward)
@@ -1289,6 +1638,11 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                 slot_record.truncated = truncated
                 info["terminated"] = bool(done)
                 info["truncated"] = truncated
+                if decision_transition_tracker is not None:
+                    if done:
+                        decision_transition_tracker.close_terminated()
+                    elif truncated:
+                        decision_transition_tracker.close_truncated()
                 buffer.append(slot_record)
                 if lagged_q_tracker is not None:
                     lagged_q_tracker.register_rollout_actions(slot_record=slot_record, env=env)
@@ -1321,6 +1675,11 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                         if lagged_q_tracker is not None
                         else []
                     )
+                    if phase4_diagnostic is not None:
+                        assert decision_transition_tracker is not None
+                        phase4_diagnostic.ingest_transitions(
+                            decision_transition_tracker.pop_completed()
+                        )
                     close_rollout_with_bootstrap(buffer=buffer, next_encoded_state=next_encoded_old, terminated=bool(done))
                     latest_update_stats = updater.update(
                         buffer,
@@ -1328,7 +1687,35 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                         lagged_q_pending_count=(
                             lagged_q_tracker.pending_count if lagged_q_tracker is not None else 0
                         ),
+                        diagnostic_slot_keys=(
+                            [
+                                (int(episode), 0, int(record.slot_index))
+                                for record in buffer.records
+                            ]
+                            if phase4_diagnostic is not None
+                            else None
+                        ),
+                        diagnostic_advantage_observer=(
+                            phase4_diagnostic.record_slot_advantages
+                            if phase4_diagnostic is not None
+                            else None
+                        ),
                     )
+                    if phase4_diagnostic is not None:
+                        phase4_stats = phase4_diagnostic.train_ready(
+                            update_step=int(updater.update_step)
+                        )
+                        phase4_stats["phase4_registered_decisions"] = int(
+                            decision_transition_tracker.registered_decision_count
+                        )
+                        phase4_stats["phase4_completed_transitions"] = int(
+                            decision_transition_tracker.completed_transition_count
+                        )
+                        phase4_stats["phase4_pending_transition_count"] = int(
+                            phase4_diagnostic.pending_transition_count
+                            + int(decision_transition_tracker.pending)
+                        )
+                        latest_update_stats.diagnostics.update(phase4_stats)
                     if lagged_q_tracker is not None and bool(done or truncated):
                         lagged_tracker_summary = lagged_q_tracker.finish_episode()
                     write_clean_training_log(
@@ -1360,6 +1747,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                         config_snapshot=build_config_snapshot(args),
                         safe_boundary=buffer.checkpoint_safe,
                         filename="latest.pt",
+                        extra_state=_phase4_checkpoint_extra_state(phase4_diagnostic),
                     )
                     if int(updater.update_step) in checkpoint_update_counts:
                         checkpoint_manager.save(
@@ -1371,6 +1759,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                             config_snapshot=build_config_snapshot(args),
                             safe_boundary=buffer.checkpoint_safe,
                             filename=f"checkpoint_update_{int(updater.update_step):04d}.pt",
+                            extra_state=_phase4_checkpoint_extra_state(phase4_diagnostic),
                         )
                     max_updates_reached = (
                         args.max_updates is not None
@@ -1411,6 +1800,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                     config_snapshot=build_config_snapshot(args),
                     safe_boundary=True,
                     filename=f"checkpoint_ep_{episode + 1:04d}.pt",
+                    extra_state=_phase4_checkpoint_extra_state(phase4_diagnostic),
                 )
             _write_json(
                 run_dir / "run_summary.json",
@@ -1432,6 +1822,15 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                     "completed_dag_weight": float(args.completed_dag_weight),
                     "task_encoder": str(args.task_encoder),
                     "detach_critic_hgnn": bool(args.detach_critic_hgnn),
+                    "critic_task_pooling": str(args.critic_task_pooling),
+                    "record_decision_transitions": bool(args.record_decision_transitions),
+                    "decision_transition_summary": (
+                        decision_transition_tracker.summary()
+                        if decision_transition_tracker is not None
+                        else None
+                    ),
+                    **clean_counterfactual_experiment_controls(args),
+                    **phase4_decision_td_experiment_controls(args),
                     "freeze_ue_mobility": bool(args.freeze_ue_mobility),
                     "offloading_counterfactual_coef": float(args.offloading_counterfactual_coef),
                     "offloading_action_value_loss_coef": float(args.offloading_action_value_loss_coef),
@@ -1456,6 +1855,15 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         "latest_update": None if latest_update_stats is None else asdict(latest_update_stats),
         "completed_dag_weight": float(args.completed_dag_weight),
         "detach_critic_hgnn": bool(args.detach_critic_hgnn),
+        "critic_task_pooling": str(args.critic_task_pooling),
+        "record_decision_transitions": bool(args.record_decision_transitions),
+        "decision_transition_summary": (
+            decision_transition_tracker.summary()
+            if decision_transition_tracker is not None
+            else None
+        ),
+        **clean_counterfactual_experiment_controls(args),
+        **phase4_decision_td_experiment_controls(args),
         "freeze_ue_mobility": bool(args.freeze_ue_mobility),
         "offloading_counterfactual_coef": float(args.offloading_counterfactual_coef),
         "offloading_action_value_loss_coef": float(args.offloading_action_value_loss_coef),
@@ -1487,6 +1895,7 @@ class _SamplerLane:
     graph_builder: CleanGraphBuilder
     rng_state: _EnvironmentRNGState
     lagged_q_tracker: Any | None = None
+    decision_transition_tracker: CleanDecisionTransitionTracker | None = None
     episode: int = -1
     episode_step: int = 0
     buffer: CleanSlotRolloutBuffer = field(default_factory=CleanSlotRolloutBuffer)
@@ -1586,6 +1995,12 @@ def _make_sampler_lanes(
                 scale_seconds=float(args.offloading_lagged_q_scale_seconds),
                 censor_weight=float(args.offloading_lagged_q_censor_weight),
             )
+    if bool(args.record_decision_transitions):
+        for lane in lanes:
+            lane.decision_transition_tracker = CleanDecisionTransitionTracker(
+                gamma=float(args.gamma),
+                lane_index=int(lane.lane_index),
+            )
     return lanes
 
 
@@ -1612,6 +2027,8 @@ def _start_sampler_lane_episode(
         lane.graph_builder.reset()
         if lane.lagged_q_tracker is not None:
             lane.lagged_q_tracker.start_episode(int(episode))
+        if lane.decision_transition_tracker is not None:
+            lane.decision_transition_tracker.start_episode(int(episode))
         lane.current_prepared = prepare_slot_state(
             env=lane.env,
             graph_builder=lane.graph_builder,
@@ -1647,6 +2064,7 @@ def _collect_sampler_lane_step(
             task_state_ready=task_state_ready,
             freeze_movement=bool(args.freeze_movement),
             lagged_q_enabled=bool(lagged_q_enabled),
+            decision_transition_tracker=lane.decision_transition_tracker,
         )
         if lane.lagged_q_tracker is not None:
             lane.lagged_q_tracker.register_rollout_actions(
@@ -1694,6 +2112,11 @@ def _collect_sampler_lane_step(
     slot_record.truncated = truncated
     info["terminated"] = bool(done)
     info["truncated"] = truncated
+    if lane.decision_transition_tracker is not None:
+        if done:
+            lane.decision_transition_tracker.close_terminated()
+        elif truncated:
+            lane.decision_transition_tracker.close_truncated()
     lane.buffer.append(slot_record)
     lane.done = bool(done)
     lane.truncated = truncated
@@ -1746,6 +2169,7 @@ def _run_multisample_training_loop(
     task_state_ready: str,
     lagged_tracker_cls: Any,
     lagged_q_enabled: bool,
+    phase4_diagnostic: Any | None,
     start_episode: int,
     global_slot: int,
 ) -> dict[str, Any]:
@@ -1831,6 +2255,11 @@ def _run_multisample_training_loop(
                     lane_samples, lane_summary = _close_sampler_lane_rollout(lane)
                     lagged_samples.extend(lane_samples)
                     lagged_summaries[lane.lane_index] = lane_summary
+                    if phase4_diagnostic is not None:
+                        assert lane.decision_transition_tracker is not None
+                        phase4_diagnostic.ingest_transitions(
+                            lane.decision_transition_tracker.pop_completed()
+                        )
                 latest_update_stats = updater.update_many(
                     [lane.buffer for lane in update_lanes],
                     lagged_q_samples=lagged_samples,
@@ -1840,7 +2269,48 @@ def _run_multisample_training_loop(
                         else 0
                         for lane in active_lanes
                     ),
+                    diagnostic_slot_keys=(
+                        [
+                            (int(lane.episode), int(lane.lane_index), int(record.slot_index))
+                            for lane in update_lanes
+                            for record in lane.buffer.records
+                        ]
+                        if phase4_diagnostic is not None
+                        else None
+                    ),
+                    diagnostic_advantage_observer=(
+                        phase4_diagnostic.record_slot_advantages
+                        if phase4_diagnostic is not None
+                        else None
+                    ),
                 )
+                if phase4_diagnostic is not None:
+                    phase4_stats = phase4_diagnostic.train_ready(
+                        update_step=int(updater.update_step)
+                    )
+                    phase4_stats["phase4_registered_decisions"] = int(
+                        sum(
+                            lane.decision_transition_tracker.registered_decision_count
+                            for lane in lanes
+                            if lane.decision_transition_tracker is not None
+                        )
+                    )
+                    phase4_stats["phase4_completed_transitions"] = int(
+                        sum(
+                            lane.decision_transition_tracker.completed_transition_count
+                            for lane in lanes
+                            if lane.decision_transition_tracker is not None
+                        )
+                    )
+                    phase4_stats["phase4_pending_transition_count"] = int(
+                        phase4_diagnostic.pending_transition_count
+                        + sum(
+                            int(lane.decision_transition_tracker.pending)
+                            for lane in lanes
+                            if lane.decision_transition_tracker is not None
+                        )
+                    )
+                    latest_update_stats.diagnostics.update(phase4_stats)
                 elapsed = max(time.perf_counter() - started_at, 1e-9)
                 for log_index, lane in enumerate(update_lanes):
                     extra = _episode_diagnostics_payload(
@@ -1895,6 +2365,7 @@ def _run_multisample_training_loop(
                     config_snapshot=build_config_snapshot(args),
                     safe_boundary=all(lane.buffer.checkpoint_safe for lane in update_lanes),
                     filename="latest.pt",
+                    extra_state=_phase4_checkpoint_extra_state(phase4_diagnostic),
                 )
                 for lane in update_lanes:
                     if lane.terminal:
@@ -1925,6 +2396,7 @@ def _run_multisample_training_loop(
                         config_snapshot=build_config_snapshot(args),
                         safe_boundary=True,
                         filename=f"checkpoint_ep_{lane.episode + 1:04d}.pt",
+                        extra_state=_phase4_checkpoint_extra_state(phase4_diagnostic),
                     )
             elapsed = max(time.perf_counter() - started_at, 1e-9)
             _write_json(
@@ -1957,6 +2429,19 @@ def _run_multisample_training_loop(
                     "completed_dag_weight": float(args.completed_dag_weight),
                     "task_encoder": str(args.task_encoder),
                     "detach_critic_hgnn": bool(args.detach_critic_hgnn),
+                    "critic_task_pooling": str(args.critic_task_pooling),
+                    "record_decision_transitions": bool(args.record_decision_transitions),
+                    "decision_transition_summaries": (
+                        {
+                            str(lane.lane_index): lane.decision_transition_tracker.summary()
+                            for lane in lanes
+                            if lane.decision_transition_tracker is not None
+                        }
+                        if bool(args.record_decision_transitions)
+                        else None
+                    ),
+                    **clean_counterfactual_experiment_controls(args),
+                    **phase4_decision_td_experiment_controls(args),
                     "freeze_ue_mobility": bool(args.freeze_ue_mobility),
                     "offloading_counterfactual_coef": float(
                         args.offloading_counterfactual_coef
@@ -2012,6 +2497,19 @@ def _run_multisample_training_loop(
         "elapsed_seconds": float(elapsed),
         "completed_dag_weight": float(args.completed_dag_weight),
         "detach_critic_hgnn": bool(args.detach_critic_hgnn),
+        "critic_task_pooling": str(args.critic_task_pooling),
+        "record_decision_transitions": bool(args.record_decision_transitions),
+        "decision_transition_summaries": (
+            {
+                str(lane.lane_index): lane.decision_transition_tracker.summary()
+                for lane in lanes
+                if lane.decision_transition_tracker is not None
+            }
+            if bool(args.record_decision_transitions)
+            else None
+        ),
+        **clean_counterfactual_experiment_controls(args),
+        **phase4_decision_td_experiment_controls(args),
         "freeze_ue_mobility": bool(args.freeze_ue_mobility),
         "offloading_counterfactual_coef": float(args.offloading_counterfactual_coef),
         "offloading_action_value_loss_coef": float(
@@ -2074,6 +2572,7 @@ def _process_sampler_worker(
             task_embedding_dim=int(worker_config["task_embedding_dim"]),
             hidden_dim=int(worker_config["hidden_dim"]),
             task_encoder=str(worker_config["task_encoder"]),
+            critic_task_pooling=str(worker_config["critic_task_pooling"]),
             device=torch.device("cpu"),
         )
         connection.send(
@@ -2300,6 +2799,7 @@ def _run_process_sampler_training_loop(
         "task_embedding_dim": int(args.task_embedding_dim),
         "hidden_dim": int(args.hidden_dim),
         "task_encoder": str(args.task_encoder),
+        "critic_task_pooling": str(args.critic_task_pooling),
         "max_steps_per_episode": int(args.max_steps_per_episode),
         "task_state_ready": str(task_state_ready),
     }
@@ -2542,6 +3042,9 @@ def _run_process_sampler_training_loop(
         "elapsed_seconds": float(elapsed),
         "completed_dag_weight": float(args.completed_dag_weight),
         "detach_critic_hgnn": bool(args.detach_critic_hgnn),
+        "critic_task_pooling": str(args.critic_task_pooling),
+        **clean_counterfactual_experiment_controls(args),
+        **phase4_decision_td_experiment_controls(args),
         "freeze_ue_mobility": bool(args.freeze_ue_mobility),
         "offloading_counterfactual_coef": 0.0,
         "offloading_action_value_loss_coef": 0.0,
@@ -2581,6 +3084,7 @@ def _collect_clean_slot(
     task_state_ready: str,
     freeze_movement: bool = False,
     lagged_q_enabled: bool = False,
+    decision_transition_tracker: CleanDecisionTransitionTracker | None = None,
 ) -> tuple[Any, bool, dict[str, Any]]:
     import torch
 
@@ -2613,6 +3117,7 @@ def _collect_clean_slot(
             movement_records=movement_records,
             movement_frozen=True,
             lagged_q_enabled=bool(lagged_q_enabled),
+            decision_transition_tracker=decision_transition_tracker,
         )
 
     movement_dist = categorical_cls(logits=encoded_state.movement_logits)
@@ -2647,6 +3152,7 @@ def _collect_clean_slot(
         movement_records=movement_records,
         movement_frozen=False,
         lagged_q_enabled=bool(lagged_q_enabled),
+        decision_transition_tracker=decision_transition_tracker,
     )
 
 
@@ -2660,6 +3166,7 @@ def _finish_collect_clean_slot(
     movement_records: list[CleanMovementRolloutRecord],
     movement_frozen: bool,
     lagged_q_enabled: bool = False,
+    decision_transition_tracker: CleanDecisionTransitionTracker | None = None,
 ) -> tuple[Any, bool, dict[str, Any]]:
     assignment_time_seconds = float(env.current_time_seconds)
     if movement_records:
@@ -2737,6 +3244,9 @@ def _finish_collect_clean_slot(
         ues=env.ues,
         deterministic=False,
     )
+    store_decision_value_inputs = bool(
+        lagged_q_enabled or decision_transition_tracker is not None
+    )
     offloading_records = [
         CleanOffloadingRolloutRecord(
             task_id=record.task_id,
@@ -2759,19 +3269,24 @@ def _finish_collect_clean_slot(
             selected_uav_id=int(record.selected_uav_id),
             old_log_probability=float(record.old_log_prob),
             entropy=float(record.entropy),
-            dag_id=str(record.dag_id) if lagged_q_enabled else None,
+            old_masked_probabilities=_immutable_numpy_copy(
+                record.old_masked_probabilities,
+                dtype=np.float32,
+            ),
+            dag_id=str(record.dag_id) if store_decision_value_inputs else None,
             assignment_time_seconds=assignment_time_seconds if lagged_q_enabled else None,
             candidate_features=(
                 record.candidate_features.detach().cpu().numpy().copy()
-                if lagged_q_enabled
+                if store_decision_value_inputs
                 else None
             ),
             critic_global_context=(
                 encoded_state.critic_global_input.detach().cpu().numpy().copy()
-                if lagged_q_enabled and hasattr(encoded_state.critic_global_input, "detach")
+                if store_decision_value_inputs
+                and hasattr(encoded_state.critic_global_input, "detach")
                 else (
                     np.asarray(encoded_state.critic_global_input, dtype=np.float32).copy()
-                    if lagged_q_enabled
+                    if store_decision_value_inputs
                     else None
                 )
             ),
@@ -2785,11 +3300,19 @@ def _finish_collect_clean_slot(
         for record in modules.offloading_actor.latest_records
     ]
 
+    if decision_transition_tracker is not None:
+        decision_transition_tracker.record_decisions(
+            slot_index=int(encoded_state.prepared_state.slot_index),
+            records=offloading_records,
+        )
+
     _, _, done, info = env.commit_and_advance(assignment_buffer=assignment_buffer)
     slot_record = make_slot_rollout_record(encoded_state=encoded_state)
     slot_record.movement_records = movement_records
     slot_record.offloading_records = offloading_records
     slot_record.reward = float(info["step_reward"])
+    if decision_transition_tracker is not None:
+        decision_transition_tracker.record_slot_reward(slot_record.reward)
     if movement_frozen:
         info["movement_action_distribution"] = {
             str(action): (1.0 if str(action) == str(config.CLEAN_MOVEMENT_HOVER_ACTION) else 0.0)
@@ -2948,6 +3471,7 @@ def _build_process_worker_modules(
     task_embedding_dim: int,
     hidden_dim: int,
     task_encoder: str,
+    critic_task_pooling: str,
     device: Any,
 ) -> CleanTrainingModules:
     from marl_models.hgnn import build_clean_task_encoder
@@ -2958,7 +3482,11 @@ def _build_process_worker_modules(
         clean_critic_input_dim,
     )
 
-    critic_input_dim = clean_critic_input_dim(int(task_embedding_dim), config.NUM_UAVS)
+    critic_input_dim = clean_critic_input_dim(
+        int(task_embedding_dim),
+        config.NUM_UAVS,
+        task_pooling=critic_task_pooling,
+    )
     encoder = build_clean_task_encoder(
         encoder_type=str(task_encoder),
         task_feature_dim=int(task_feature_dim),
@@ -2978,6 +3506,7 @@ def _build_process_worker_modules(
         critic=CleanCentralizedCritic(
             input_dim=int(critic_input_dim),
             hidden_dim=int(hidden_dim),
+            task_pooling=critic_task_pooling,
         ),
     )
     _move_modules_to_device(modules, device)

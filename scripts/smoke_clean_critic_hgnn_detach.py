@@ -89,6 +89,7 @@ def main() -> int:
             dtype=np.float32,
         ),
         incidence_matrix=np.eye(3, dtype=np.float32),
+        hyperedge_type_ids=np.zeros((3,), dtype=np.int64),
     )
     movement_record = CleanMovementRolloutRecord(
         uav_id=0,
@@ -114,6 +115,11 @@ def main() -> int:
     )
     returns = torch.as_tensor([3.0], dtype=torch.float32)
     advantages = torch.as_tensor([1.0], dtype=torch.float32)
+    value_loss_inputs = {
+        "old_values": torch.as_tensor([0.0], dtype=torch.float32),
+        "value_target_mean": torch.zeros((), dtype=torch.float32),
+        "value_target_scale": torch.ones((), dtype=torch.float32),
+    }
 
     def _updater(detach: bool | None):
         kwargs = {} if detach is None else {"detach_critic_hgnn": detach}
@@ -128,10 +134,10 @@ def main() -> int:
         )
 
     default_loss = _updater(None)._loss(
-        records=[record], returns=returns, advantages=advantages
+        records=[record], returns=returns, advantages=advantages, **value_loss_inputs
     )
     shared_loss = _updater(False)._loss(
-        records=[record], returns=returns, advantages=advantages
+        records=[record], returns=returns, advantages=advantages, **value_loss_inputs
     )
     for name in default_loss:
         if isinstance(default_loss[name], torch.Tensor):
@@ -156,7 +162,7 @@ def main() -> int:
 
     detach_updater = _updater(True)
     detach_loss = detach_updater._loss(
-        records=[record], returns=returns, advantages=advantages
+        records=[record], returns=returns, advantages=advantages, **value_loss_inputs
     )
     detach_value_hgnn = _grad_norm(
         detach_loss["value_loss"], modules.hgnn.parameters(), torch

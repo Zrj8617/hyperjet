@@ -10,6 +10,7 @@ from marl_models.mappo.clean_movement_actor import CleanMovementObservation, bui
 from marl_models.mappo.clean_ppo import (
     assemble_clean_critic_global_input,
     build_clean_critic_non_graph_input,
+    pool_clean_critic_task_embeddings,
 )
 
 try:
@@ -86,6 +87,9 @@ class CleanOffloadingRolloutRecord:
     selected_uav_id: int
     old_log_probability: float
     entropy: float
+    # Rollout-time legal action distribution. Diagnostics only: it never enters
+    # observations, rewards, advantages, or the PPO objective.
+    old_masked_probabilities: np.ndarray | None = None
     dag_id: str | None = None
     assignment_time_seconds: float | None = None
     candidate_features: np.ndarray | None = None
@@ -211,6 +215,7 @@ def encode_prepared_slot(
         critic_embeddings,
         prepared_state.critic_non_graph_input,
         device=device,
+        task_pooling=str(getattr(critic, "task_pooling", "mean")),
     )
     value = _critic_value(critic, critic_global_input, device=device)
     movement_observation = build_clean_movement_observation(
@@ -327,17 +332,21 @@ def _encode_task_embeddings(
     return hgnn(task_features, incidence, hyperedge_type_ids)
 
 
-def _assemble_critic_input(task_embeddings: Any, critic_non_graph_input: np.ndarray, *, device: str | Any) -> Any:
+def _assemble_critic_input(
+    task_embeddings: Any,
+    critic_non_graph_input: np.ndarray,
+    *,
+    device: str | Any,
+    task_pooling: str = "mean",
+) -> Any:
     if torch is not None and isinstance(task_embeddings, torch.Tensor):
-        if task_embeddings.shape[0] > 0:
-            active_mean = task_embeddings.mean(dim=0)
-        else:
-            active_mean = task_embeddings.new_zeros((task_embeddings.shape[1],))
+        task_pool = pool_clean_critic_task_embeddings(task_embeddings, task_pooling)
         non_graph = torch.as_tensor(critic_non_graph_input, dtype=task_embeddings.dtype, device=task_embeddings.device)
-        return torch.cat([active_mean, non_graph], dim=0)
+        return torch.cat([task_pool, non_graph], dim=0)
     return assemble_clean_critic_global_input(
         task_embeddings=np.asarray(task_embeddings, dtype=np.float32),
         critic_non_graph_input=critic_non_graph_input,
+        task_pooling=task_pooling,
     )
 
 

@@ -21,6 +21,59 @@ except ModuleNotFoundError:
 
 CLEAN_CRITIC_UAV_FIELD_DIM = 6
 CLEAN_CRITIC_SUMMARY_DIM = 5
+CLEAN_CRITIC_TASK_POOLING_MEAN = "mean"
+CLEAN_CRITIC_TASK_POOLING_MEAN_MAX_STD = "mean-max-std"
+CLEAN_CRITIC_TASK_POOLING_CHOICES = (
+    CLEAN_CRITIC_TASK_POOLING_MEAN,
+    CLEAN_CRITIC_TASK_POOLING_MEAN_MAX_STD,
+)
+
+
+def normalize_clean_critic_task_pooling(task_pooling: str) -> str:
+    value = str(task_pooling)
+    if value not in CLEAN_CRITIC_TASK_POOLING_CHOICES:
+        raise ValueError(f"unsupported clean critic task pooling: {value}")
+    return value
+
+
+def critic_task_pooling_output_dim(task_embedding_dim: int, task_pooling: str = "mean") -> int:
+    embedding_dim = int(task_embedding_dim)
+    if embedding_dim <= 0:
+        raise ValueError("task_embedding_dim must be positive.")
+    pooling = normalize_clean_critic_task_pooling(task_pooling)
+    return embedding_dim if pooling == CLEAN_CRITIC_TASK_POOLING_MEAN else 3 * embedding_dim
+
+
+def pool_clean_critic_task_embeddings(task_embeddings: Any, task_pooling: str = "mean") -> Any:
+    """Pool active-task embeddings for the centralized critic only."""
+    pooling = normalize_clean_critic_task_pooling(task_pooling)
+    if torch is not None and isinstance(task_embeddings, torch.Tensor):
+        if task_embeddings.dim() != 2:
+            raise ValueError("task_embeddings must be a 2D tensor.")
+        embedding_dim = int(task_embeddings.shape[1])
+        if task_embeddings.shape[0] == 0:
+            zero = task_embeddings.new_zeros((embedding_dim,))
+            return zero if pooling == CLEAN_CRITIC_TASK_POOLING_MEAN else torch.cat([zero, zero, zero], dim=0)
+        mean = task_embeddings.mean(dim=0)
+        if pooling == CLEAN_CRITIC_TASK_POOLING_MEAN:
+            return mean
+        maximum = task_embeddings.max(dim=0).values
+        population_std = task_embeddings.std(dim=0, unbiased=False)
+        return torch.cat([mean, maximum, population_std], dim=0)
+
+    embeddings = np.asarray(task_embeddings, dtype=np.float32)
+    if embeddings.ndim != 2:
+        raise ValueError("task_embeddings must be a 2D array.")
+    embedding_dim = int(embeddings.shape[1])
+    if embeddings.shape[0] == 0:
+        zero = np.zeros((embedding_dim,), dtype=np.float32)
+        return zero if pooling == CLEAN_CRITIC_TASK_POOLING_MEAN else np.concatenate([zero, zero, zero])
+    mean = embeddings.mean(axis=0, dtype=np.float32).astype(np.float32)
+    if pooling == CLEAN_CRITIC_TASK_POOLING_MEAN:
+        return mean
+    maximum = embeddings.max(axis=0).astype(np.float32)
+    population_std = embeddings.std(axis=0, ddof=0, dtype=np.float32).astype(np.float32)
+    return np.concatenate([mean, maximum, population_std]).astype(np.float32)
 
 
 @dataclass(slots=True)
@@ -63,16 +116,12 @@ def build_clean_critic_global_input(
     executor: Any | None,
     pre_move_positions: dict[int, Any] | None = None,
     current_time_seconds: float = 0.0,
+    task_pooling: str = "mean",
 ) -> np.ndarray:
     task_embeddings = np.asarray(task_embeddings, dtype=np.float32)
     if task_embeddings.ndim != 2:
         raise ValueError("task_embeddings must be a 2D array.")
-    embedding_dim = int(task_embeddings.shape[1])
-    active_mean = (
-        task_embeddings.mean(axis=0).astype(np.float32)
-        if task_embeddings.shape[0] > 0
-        else np.zeros((embedding_dim,), dtype=np.float32)
-    )
+    task_pool = pool_clean_critic_task_embeddings(task_embeddings, task_pooling)
     non_graph = build_clean_critic_non_graph_input(
         graph_snapshot=graph_snapshot,
         uavs=uavs,
@@ -80,7 +129,7 @@ def build_clean_critic_global_input(
         pre_move_positions=pre_move_positions,
         current_time_seconds=float(current_time_seconds),
     )
-    return np.concatenate([active_mean, non_graph]).astype(np.float32)
+    return np.concatenate([task_pool, non_graph]).astype(np.float32)
 
 
 def build_clean_critic_non_graph_input(
@@ -125,21 +174,27 @@ def assemble_clean_critic_global_input(
     *,
     task_embeddings: np.ndarray,
     critic_non_graph_input: np.ndarray,
+    task_pooling: str = "mean",
 ) -> np.ndarray:
     """Combine current HGNN task embedding pool with historical non-graph critic input."""
     task_embeddings = np.asarray(task_embeddings, dtype=np.float32)
     if task_embeddings.ndim != 2:
         raise ValueError("task_embeddings must be a 2D array.")
-    active_mean = (
-        task_embeddings.mean(axis=0).astype(np.float32)
-        if task_embeddings.shape[0] > 0
-        else np.zeros((int(task_embeddings.shape[1]),), dtype=np.float32)
+    task_pool = pool_clean_critic_task_embeddings(task_embeddings, task_pooling)
+    return np.concatenate([task_pool, np.asarray(critic_non_graph_input, dtype=np.float32).reshape(-1)]).astype(np.float32)
+
+
+def clean_critic_input_dim(
+    task_embedding_dim: int,
+    num_uavs: int | None = None,
+    task_pooling: str = "mean",
+) -> int:
+    return (
+        critic_task_pooling_output_dim(task_embedding_dim, task_pooling)
+        + CLEAN_CRITIC_UAV_FIELD_DIM * int(num_uavs or config.NUM_UAVS)
+        + 3
+        + CLEAN_CRITIC_SUMMARY_DIM
     )
-    return np.concatenate([active_mean, np.asarray(critic_non_graph_input, dtype=np.float32).reshape(-1)]).astype(np.float32)
-
-
-def clean_critic_input_dim(task_embedding_dim: int, num_uavs: int | None = None) -> int:
-    return int(task_embedding_dim) + CLEAN_CRITIC_UAV_FIELD_DIM * int(num_uavs or config.NUM_UAVS) + 3 + CLEAN_CRITIC_SUMMARY_DIM
 
 
 def compute_gae_numpy(
@@ -178,8 +233,9 @@ if torch is not None:
     class CleanCentralizedCritic(nn.Module):
         """Single slot-level centralized critic V(s_t)."""
 
-        def __init__(self, input_dim: int, hidden_dim: int = 128) -> None:
+        def __init__(self, input_dim: int, hidden_dim: int = 128, task_pooling: str = "mean") -> None:
             super().__init__()
+            self.task_pooling = normalize_clean_critic_task_pooling(task_pooling)
             self.net = nn.Sequential(
                 nn.Linear(int(input_dim), int(hidden_dim)),
                 nn.ReLU(),
