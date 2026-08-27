@@ -1,11 +1,13 @@
 # HyperUAV 研究主线与诊断路线图（Living Research Charter）
 
-**版本：v1.0**  
+**版本：v1.1**  
 **日期：2026-08-27**  
 **用途：作为 HyperUAV 后续所有实验、代码修改和新对话窗口的“主线锚点”。**  
 **当前研究分支：** `codex/phase3ab-phase4a-research-snapshot-20260826`  
-**GitHub 已提交锚点：** `7c02c258cfc88659bf7021f22bedfab6902bc383`  
-**注意：** Scheme-B2 strict semantic common-random 的 3 个新增文件与结果在本路线图形成时尚未提交，应先独立提交为研究里程碑。
+**当前代码基准 commit：** `9b1847774cb99f55d24cb99cc216d38a78cb23fc`  
+**R0 状态：** CLOSED / PASS。Scheme-B2 strict semantic common-random 已冻结、提交并推送。  
+**当前 Stage：** R1-B Reward component / timing audit。  
+**注意：** R1-A / R1-A2 的诊断脚本与 JSON 结果当前尚未 commit/push；科学结论已记录，代码应在后续同步时独立版本化。
 
 ---
 
@@ -125,7 +127,7 @@ EFT offloading 信号、movement position/centroid 类信号曾使 actor 明显�
 
 > 不再把 H20/H30/H40 等固定短 horizon 当作正式 oracle。
 
-## 2.6 Scheme-B2 strict semantic common-random 已基本通过工程门禁
+## 2.6 Scheme-B2 strict semantic common-random 已冻结并版本化
 
 当前结果：
 
@@ -138,9 +140,41 @@ EFT offloading 信号、movement position/centroid 类信号曾使 actor 明显�
 - 5 个 decision 中 4 个在 H100 内所有 UAV branches 都完成；
 - `task_8` 的 UAV3/UAV4 到 cap 仍未完成。
 
-因此 Scheme-B2 应被冻结为**诊断基础设施**。
+Scheme-B2 已在 commit `9b1847774cb99f55d24cb99cc216d38a78cb23fc` 冻结并推送，服务器 smoke（semantic determinism / skip isolation / generation isolation / serial-spawn）全部 PASS，三项 `py_compile` 与 `git diff --check` PASS。后续只把它作为**诊断基础设施**，不扩展成 actor teacher 主线。
 
 **重要修正：** 旧 H20 实验在 H20 内本来就 RNG 对齐，所以“旧 H20 ranking 与新 CRN H20 ranking 不同”不能证明旧 H20 被 RNG divergence 污染；它更多提示 action ranking 对未来随机 realization 可能敏感。真正能证明 H20 太短的是**同一 CRN rollout 内的 G20_CRN vs G_common 不稳定**。
+
+## 2.7 已确认：当前环境存在 policy-dependent workload feedback
+
+R1-A 原生环境 pilot 与 R1-A2 strict-CRN control 均显示：
+
+`更高 DAG completion → UE 更早解除 active-DAG cap → admitted/generated DAG 更多 → blocked fraction 更低`
+
+R1-A2 使用 Scheme-B2 semantic CRN 控制 mobility / arrival / DAG generation 的外生随机性：
+
+- shared semantic checks：129,010；
+- mismatches：0；
+- unrecognized environment RNG：0；
+- 6/6 paired comparisons 均保持 `completed↑、admitted/generated↑、blocked_fraction↓`；
+- strict-CRN 下 admitted 增量为 +48 至 +202，completed 增量为 +49 至 +219。
+
+因此 H1 已从“开放假设”升级为**已确认的环境结构性质**：
+
+> 当前 clean environment 中，policy performance 会内生改变实际 admitted workload。
+
+Native 与 strict-CRN 的效应量明显不同，说明 global RNG-stream divergence 会影响效应幅度，但不推翻该方向性结论。
+
+该结论**不等于环境设计错误**。它意味着以后做策略公平比较时，必须区分：
+- 相同 arrival mechanism；
+- 相同潜在外生随机 realization；
+- 实际 admitted workload 是否因策略完成速度而不同。
+
+R1-A / R1-A2 诊断脚本与结果路径（当前尚未版本化）：
+- `scripts/diagnose_r1a_environment_load_feedback.py`
+- `logs/r1a_environment_load_feedback.json`
+- `scripts/diagnose_r1a2_environment_load_feedback_strict_crn.py`
+- `logs/r1a2_environment_load_feedback_strict_crn.json`
+
 
 ---
 
@@ -198,15 +232,19 @@ HyperUAV 同时存在：
 
 以下不是结论，而是待验证的根因候选。
 
-## H1. Environment/load process 存在策略反馈耦合
+## H1. Environment/load process 策略反馈耦合 — 已确认
 
-当前每个 UE active-DAG cap 默认为 1：
+该项已由 R1-A + R1-A2 strict-CRN control 确认，不再作为开放根因假设。
 
-`DAG 完成更快 -> UE 更早释放 -> 更早重新具备 arrival eligibility -> 生成更多工作负载`
+确认的结构链为：
 
-因此一个“更好的策略”可能因为完成更多 DAG 而被环境投喂更多新 DAG，进而承担更多 delay/energy penalty。
+`DAG 完成更快 -> UE 更早释放 -> 更早重新具备 arrival eligibility -> admitted/generated workload 增加`
 
-这是 Scheme-B RNG divergence 中已经实际观察到的机制，必须检查它是否会污染训练/评估可比性。
+后续问题不是“它是否存在”，而是：
+- 训练/评估时如何公平报告 policy-dependent admitted workload；
+- reward 与 completion/flowtime/energy 的关系是否被该反馈放大或扭曲。
+
+当前不因这一性质直接修改 environment。
 
 ## H2. Reward 方向或权重/时序可能有问题
 
@@ -300,9 +338,11 @@ Scheme-B 显示重要后果经常 50 slot 左右才出现。50 slot 后 reward �
 
 **原则：先证明环境和基础 RL 可学习，再研究 HGNN 是否更好。**
 
-## Stage R0 — 冻结与版本化 Scheme-B2
+## Stage R0 — 冻结与版本化 Scheme-B2 — CLOSED / PASS
 
 目标：把已经通过的 semantic CRN infrastructure 固定下来，避免后面改动污染。
+
+**状态：完成。最终 commit：`9b1847774cb99f55d24cb99cc216d38a78cb23fc`。**
 
 动作：
 
@@ -324,7 +364,7 @@ Scheme-B2 保留为后续 reward/environment 诊断工具。
 
 **先不训练。先回答环境和 reward 是否合理。**
 
-### R1-A 场景负载审计
+### R1-A 场景负载审计 — CLOSED / PASS
 
 固定若干相同 seed / scenario，至少比较：
 
@@ -350,6 +390,14 @@ Scheme-B2 保留为后续 reward/environment 诊断工具。
 > 更强策略是否因为更快完成任务而系统性生成更多新 DAG，从而让“episode reward/系统指标”比较失去相同 workload 基础？
 
 如果存在强反馈，再决定是否需要**仅用于诊断**的固定 workload / arrival tape。
+
+**结果：已确认存在 policy-dependent workload feedback。**
+
+Native R1-A：3 seeds × 3 fixed policies × 500 slots；6/6 paired comparisons 均为 completed↑、admitted/generated↑、blocked fraction↓。
+
+R1-A2 strict-CRN：129,010 shared checks，0 mismatch，0 unrecognized RNG；6/6 comparisons 保持同方向。RNG divergence 会改变效应幅度，但不改变结论。
+
+因此 R1-A 关闭。当前进入 R1-B。
 
 ### R1-B Reward component 对齐审计
 
@@ -615,17 +663,27 @@ Scheme-B2 保留为后续 reward/environment 诊断工具。
 
 若一次实验无法用这 6 项说明，就先不要跑。
 
+### 长时实验执行规则（节省 Codex 额度）
+
+服务器上的耗时实验默认采用“启动即退出”模式：
+
+- Codex 只负责启动后台任务、确认一次进程已启动；
+- 返回 PID、日志路径、结果路径、启动时间与 ETA；
+- 禁止持续 `tail -f`、循环 `ps`、定时轮询或等待实验完成；
+- 用户在 ETA 后单独发起一次结果检查；
+- 若无历史 wall-clock 数据，先做短 benchmark 估算 seconds/slot 或 seconds/run，再启动正式任务并退出。
+
 ---
 
 # 14. 当前唯一推荐下一步
 
-**先提交 Scheme-B2，然后做 R1：Environment + Reward Sanity Audit。**
+**执行 R1-B：Reward component / timing audit。**
 
-这个阶段的目的不是“马上找一个新 reward”，而是用最小成本回答：
+R1-A 已确认 workload 会随 policy performance 内生变化。R1-B 现在只回答：
 
-> 1. 当前 workload / arrival 是否对不同策略公平且合理？  
-> 2. 当前 reward 高低是否与我们真正想优化的 completion / flowtime / energy 同方向？  
-> 3. 哪些 reward components 在时间和尺度上主导训练？
+> 1. 当前总 reward 与 completion / flowtime / energy 等真实系统目标是否方向一致？  
+> 2. 哪些 reward components 在量级、非零频率和时间位置上主导训练？  
+> 3. 是否存在 component cancellation、过度稀疏/延迟或 dense shaping 压过长期目标？
 
 只有 R1 有结果后，才决定下一步是：
 
@@ -660,6 +718,29 @@ Scheme-B2 保留为后续 reward/environment 诊断工具。
 **决定：** HGNN 主线仍坚持端到端 RL；`detach-critic-hgnn` 可作为干净诊断，不默认采用独立 HGNN 预训练。
 
 **决定：** AI 生成 reward 方案可以使用，但只能作为少量理论假设的生成器，必须做受控 ablation。
+
+### 2026-08-27 — R0 关闭
+
+**R0：PASS / CLOSED。**
+
+- Scheme-B2 strict semantic CRN 已提交并推送；
+- commit：`9b1847774cb99f55d24cb99cc216d38a78cb23fc`；
+- 服务器 smoke 4/4 PASS；
+- py_compile / git diff --check PASS；
+- Scheme-B2 后续只作为诊断基础设施。
+
+### 2026-08-27 — R1-A / R1-A2 关闭
+
+**结论：policy-dependent workload feedback confirmed under strict CRN。**
+
+- Native R1-A：6/6 paired comparisons 同方向；
+- R1-A2：129,010 shared semantic checks，0 mismatch，0 unrecognized RNG；
+- strict-CRN 下 6/6 comparisons 均为 completed↑、admitted/generated↑、blocked_fraction↓；
+- RNG-stream divergence 会影响效应量，但不是该现象的根因；
+- 不据此直接修改 environment；
+- 当前 Stage 转入 **R1-B Reward component / timing audit**。
+
+**工程状态：** R1-A / R1-A2 诊断脚本与 JSON 结果尚未 commit/push，后续应独立版本化，不与 reward 修改混在同一 commit。
 
 ---
 
