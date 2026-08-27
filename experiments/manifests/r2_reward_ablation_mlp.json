@@ -1,0 +1,75 @@
+{
+  "schema": "r2_reward_ablation_mlp_manifest_v1",
+  "name": "R2 Reward-Ablation MLP Learnability Bundle",
+  "research_branch": "codex/phase3ab-phase4a-research-snapshot-20260826",
+  "offline_sweep": {
+    "input": "/data2/zrj2025/HyperUAV-r1b-20260827/logs/r1b_reward_alignment.json",
+    "output": "logs/r2_reward_offline_sweep.json",
+    "completed_dag_weight_candidates": [8, 6, 4, 2],
+    "energy_weight_candidates": [0.05, 0.1, 0.25, 0.5, 1.0]
+  },
+  "arms": {
+    "control": {
+      "completed_dag_weight": 8.0,
+      "energy_weight": 0.05,
+      "movement_position_shaping": true
+    },
+    "no_position": {
+      "completed_dag_weight": 8.0,
+      "energy_weight": 0.05,
+      "movement_position_shaping": false
+    },
+    "low_cancel": {
+      "completed_dag_weight": "selected_low_cancel_weight",
+      "energy_weight": 0.05,
+      "movement_position_shaping": true
+    },
+    "energy_balanced": {
+      "completed_dag_weight": 8.0,
+      "energy_weight": "selected_energy_weight",
+      "movement_position_shaping": true
+    }
+  },
+  "training": {
+    "seeds": [42, 86, 1042],
+    "episodes": 1000,
+    "slots_per_episode": 500,
+    "expected_updates_per_run": 4000,
+    "rollout_horizon": 128,
+    "num_envs": 1,
+    "sampler_backend": "synchronous",
+    "ppo_epochs": 1,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "clip_ratio": 0.2,
+    "learning_rate": 0.0003,
+    "entropy_coefficient": 0.01,
+    "value_coefficient": 0.5,
+    "normalize_value_targets": true,
+    "value_clip_epsilon": 0.2,
+    "max_grad_norm": 0.5,
+    "task_encoder": "mlp",
+    "task_embedding_dim": 64,
+    "hidden_dim": 128,
+    "movement": "forced_hover",
+    "movement_actor_trainable": false,
+    "eft_guidance": false,
+    "auxiliary": false,
+    "q_teacher_scheme_c": false
+  },
+  "evaluation": {
+    "seeds": [42, 86, 1042],
+    "slots": 500,
+    "deterministic": true,
+    "movement": "forced_hover",
+    "strict_semantic_crn": "Scheme-B2 CleanSemanticCommonRandom",
+    "semantic_subsystems": ["mobility", "arrival", "dag_generation"],
+    "required_mismatches": 0,
+    "required_unrecognized_environment_rng_calls": 0,
+    "reference": "logs/r1a2_environment_load_feedback_strict_crn.json"
+  },
+  "outputs": {
+    "summary": "logs/r2_reward_bundle_summary.json",
+    "launcher_log": "logs/r2_reward_bundle_launcher.out"
+  }
+}

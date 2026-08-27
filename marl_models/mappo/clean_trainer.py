@@ -119,6 +119,7 @@ class CleanPPOUpdateStats:
     returns_mean: float = 0.0
     returns_std: float = 0.0
     value_pred_mean: float = 0.0
+    value_pred_std: float = 0.0
     explained_variance: float = 0.0
     # Rollout-level environment reward statistics: sum and mean of the slot
     # rewards in the consumed rollout. The JSONL "reward" field only reflects
@@ -377,6 +378,7 @@ class CleanPPOUpdater:
             "returns_mean": float(np.mean(returns_np)),
             "returns_std": float(np.std(returns_np)),
             "value_pred_mean": float(np.mean(values_np)),
+            "value_pred_std": float(np.std(values_np)),
             "explained_variance": float(explained_variance),
         }
         returns = torch.as_tensor(returns_np, dtype=torch.float32, device=self.device)
@@ -587,7 +589,18 @@ class CleanPPOUpdater:
             diagnostics["grad_clip_scale"] = float(
                 min(1.0, float(self.config.max_grad_norm) / max(float(grad_norm), 1e-12))
             )
+            offloading_parameters_before = [
+                parameter.detach().clone()
+                for parameter in self.modules.offloading_actor.parameters()
+                if parameter.requires_grad
+            ]
             self.optimizer.step()
+            diagnostics["offloading_actor_parameter_update_norm"] = float(
+                _parameter_update_norm(
+                    self.modules.offloading_actor,
+                    offloading_parameters_before,
+                )
+            )
             if bool(self.config.clean_counterfactual_credit):
                 diagnostics.update(
                     self._offloading_probability_update_diagnostics(records)
@@ -2154,12 +2167,25 @@ def _rollout_entropy_diagnostics(records: list[CleanSlotRolloutRecord]) -> dict:
     off_valid: list[int] = []
     move_norm: list[float] = []
     move_valid: list[int] = []
+    off_probability_spreads: list[float] = []
+    off_logit_spreads: list[float] = []
     for record in records:
         for off in record.offloading_records:
             n_valid = int(np.asarray(off.candidate_mask, dtype=bool).sum())
             off_valid.append(n_valid)
             if n_valid >= 2:
                 off_norm.append(float(off.entropy) / math.log(n_valid))
+                probabilities = np.asarray(
+                    off.old_masked_probabilities,
+                    dtype=np.float64,
+                )[np.asarray(off.candidate_mask, dtype=bool)]
+                off_probability_spreads.append(
+                    float(np.max(probabilities) - np.min(probabilities))
+                )
+                safe_probabilities = np.maximum(probabilities, 1e-12)
+                off_logit_spreads.append(
+                    float(np.log(np.max(safe_probabilities)) - np.log(np.min(safe_probabilities)))
+                )
         for move in record.movement_records:
             n_valid = int(np.asarray(move.movement_mask, dtype=bool).sum())
             move_valid.append(n_valid)
@@ -2168,9 +2194,27 @@ def _rollout_entropy_diagnostics(records: list[CleanSlotRolloutRecord]) -> dict:
     return {
         "rollout_offloading_entropy_normalized_mean": float(np.mean(off_norm)) if off_norm else None,
         "rollout_offloading_valid_candidates_mean": float(np.mean(off_valid)) if off_valid else None,
+        "rollout_offloading_probability_spread_mean": (
+            float(np.mean(off_probability_spreads)) if off_probability_spreads else None
+        ),
+        "rollout_offloading_logit_spread_mean": (
+            float(np.mean(off_logit_spreads)) if off_logit_spreads else None
+        ),
         "rollout_movement_entropy_normalized_mean": float(np.mean(move_norm)) if move_norm else None,
         "rollout_movement_valid_actions_mean": float(np.mean(move_valid)) if move_valid else None,
     }
+
+
+def _parameter_update_norm(module: Any, before: list[Any]) -> float:
+    if torch is None or module is None:
+        return 0.0
+    parameters = [parameter for parameter in module.parameters() if parameter.requires_grad]
+    if len(parameters) != len(before):
+        raise ValueError("parameter snapshot does not match the trainable module parameters")
+    total = 0.0
+    for parameter, old_value in zip(parameters, before):
+        total += float((parameter.detach() - old_value).pow(2).sum().cpu().item())
+    return float(total ** 0.5)
 
 
 def _hgnn_grad_decomposition(*, loss_parts: dict, hgnn: Any, config: CleanPPOUpdateConfig) -> dict:
