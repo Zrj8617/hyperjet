@@ -91,6 +91,9 @@ class CleanPPOUpdateConfig:
     decision_critic_enabled: bool = False
     decision_critic_coef: float = 0.5
     decision_critic_discount: float = 0.99
+    # Environment-return offloading decision GAE is prepared outside this
+    # trainer and supplied as a frozen, detached mapping keyed by rollout state.
+    offloading_decision_gae: bool = False
     # Diagnostics-only: every N-th update, decompose the HGNN gradient into its
     # actor-loss and value-loss components via torch.autograd.grad (never
     # touches .grad). 0 disables the decomposition.
@@ -319,6 +322,8 @@ class CleanPPOUpdater:
         lagged_q_pending_count: int = 0,
         diagnostic_slot_keys: list[tuple[int, int, int]] | None = None,
         diagnostic_advantage_observer: Any | None = None,
+        offloading_decision_advantages: dict[tuple[int, int, int, int, str], float] | None = None,
+        offloading_decision_slot_keys: list[tuple[int, int, int]] | None = None,
     ) -> CleanPPOUpdateStats:
         return self.update_many(
             [buffer],
@@ -326,6 +331,8 @@ class CleanPPOUpdater:
             lagged_q_pending_count=lagged_q_pending_count,
             diagnostic_slot_keys=diagnostic_slot_keys,
             diagnostic_advantage_observer=diagnostic_advantage_observer,
+            offloading_decision_advantages=offloading_decision_advantages,
+            offloading_decision_slot_keys=offloading_decision_slot_keys,
         )
 
     def update_many(
@@ -336,6 +343,8 @@ class CleanPPOUpdater:
         lagged_q_pending_count: int = 0,
         diagnostic_slot_keys: list[tuple[int, int, int]] | None = None,
         diagnostic_advantage_observer: Any | None = None,
+        offloading_decision_advantages: dict[tuple[int, int, int, int, str], float] | None = None,
+        offloading_decision_slot_keys: list[tuple[int, int, int]] | None = None,
     ) -> CleanPPOUpdateStats:
         """Update once from independent closed rollout trajectories.
 
@@ -356,6 +365,15 @@ class CleanPPOUpdater:
             for buffer in rollout_buffers
             for record in buffer.records
         ]
+        decision_advantages = dict(offloading_decision_advantages or {})
+        decision_slot_keys = list(offloading_decision_slot_keys or [])
+        if bool(self.config.offloading_decision_gae):
+            if len(decision_slot_keys) != len(records):
+                raise ValueError(
+                    "offloading decision slot keys must align with flattened rollout records"
+                )
+        elif decision_advantages or decision_slot_keys:
+            raise ValueError("offloading decision advantages supplied while gate is disabled")
         lagged_samples = list(lagged_q_samples or [])
         frozen_lagged_corrections, lagged_correction_diagnostics = (
             self._precompute_lagged_q_corrections(records)
@@ -440,6 +458,8 @@ class CleanPPOUpdater:
                 lagged_q_samples=lagged_samples,
                 frozen_lagged_corrections=frozen_lagged_corrections,
                 eft_auxiliary_generator=auxiliary_generator,
+                offloading_decision_advantages=decision_advantages,
+                offloading_decision_slot_keys=decision_slot_keys,
             )
             diagnostics.update(loss_parts.get("action_value_diagnostics", {}))
             diagnostics.update(loss_parts.get("lagged_q_diagnostics", {}))
@@ -720,6 +740,10 @@ class CleanPPOUpdater:
         lagged_q_samples: list[Any] | None = None,
         frozen_lagged_corrections: list[Any] | None = None,
         eft_auxiliary_generator: Any | None = None,
+        offloading_decision_advantages: dict[
+            tuple[int, int, int, int, str], float
+        ] | None = None,
+        offloading_decision_slot_keys: list[tuple[int, int, int]] | None = None,
     ) -> dict[str, Any]:
         per_slot_move_losses: list[Any] = []
         per_slot_move_entropies: list[Any] = []
@@ -739,6 +763,8 @@ class CleanPPOUpdater:
         )
         lagged_q_enabled = self.modules.offloading_lagged_q_critic is not None
         lagged_corrections = list(frozen_lagged_corrections or [])
+        external_decision_advantages = dict(offloading_decision_advantages or {})
+        decision_slot_keys = list(offloading_decision_slot_keys or [])
 
         for slot_idx, record in enumerate(records):
             task_features_np = np.asarray(record.graph_snapshot.task_features, dtype=np.float32).copy()
@@ -883,6 +909,21 @@ class CleanPPOUpdater:
                     "old_log_prob": old_log_prob,
                     "entropy": dist.entropy(),
                 }
+                if bool(self.config.offloading_decision_gae):
+                    episode_index, lane_index, slot_index = decision_slot_keys[slot_idx]
+                    decision_key = (
+                        int(episode_index),
+                        int(lane_index),
+                        int(slot_index),
+                        int(offloading_record.decision_order),
+                        str(offloading_record.task_id),
+                    )
+                    if decision_key in external_decision_advantages:
+                        item["environment_decision_advantage"] = torch.as_tensor(
+                            external_decision_advantages[decision_key],
+                            dtype=torch.float32,
+                            device=self.device,
+                        ).detach()
                 eft_values_np = offloading_record.candidate_estimated_finish_times
                 if eft_values_np is None:
                     if (
@@ -1261,7 +1302,13 @@ class CleanPPOUpdater:
         for item_index, item in enumerate(offloading_items):
             slot_idx = int(item["slot_idx"])
             offloading_advantage = advantages[slot_idx]
-            if bool(self.config.offloading_eft_advantage) or bool(
+            if bool(self.config.offloading_decision_gae):
+                offloading_advantage = item.get("environment_decision_advantage")
+                if offloading_advantage is None:
+                    # The sole pending decision at a non-terminal rollout boundary
+                    # is censored and intentionally excluded from actor/critic loss.
+                    continue
+            elif bool(self.config.offloading_eft_advantage) or bool(
                 self.config.decision_critic_enabled
             ):
                 offloading_advantage = item["per_decision_eft_advantage"]

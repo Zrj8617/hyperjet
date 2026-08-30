@@ -177,6 +177,18 @@ class CleanDecisionTransitionTracker:
             self.censored_transition_count += 1
         self._episode_index = None
 
+    def close_rollout_boundary(self) -> None:
+        """Censor a pending decision without ending the live environment episode."""
+        if self._pending is not None:
+            self._close_pending(
+                next_state=None,
+                terminated=False,
+                truncated=True,
+                unresolved=True,
+                future_bootstrap=None,
+            )
+            self.censored_transition_count += 1
+
     def pop_completed(self) -> list[CleanDecisionTransition]:
         completed = list(self._completed)
         self._completed.clear()

@@ -98,6 +98,20 @@ def _unit_transition_checks() -> None:
     _assert(not hasattr(old_buffer, "decision_transitions"), "Test 5 transitions must not live in slot buffer")
     print("Test 5 PASS: pending survived independent buffer replacement")
 
+    on_policy_boundary = CleanDecisionTransitionTracker(gamma=0.5)
+    on_policy_boundary.start_episode(0)
+    on_policy_boundary.record_decisions(slot_index=0, records=[_record("g1", 0)])
+    on_policy_boundary.record_slot_reward(8.0)
+    on_policy_boundary.close_rollout_boundary()
+    censored = on_policy_boundary.completed_transitions[0]
+    _assert(
+        censored.truncated and censored.unresolved and not on_policy_boundary.pending,
+        "Test 5B rollout boundary did not censor and clear pending",
+    )
+    on_policy_boundary.record_decisions(slot_index=1, records=[_record("g2", 0)])
+    _assert(on_policy_boundary.pending, "Test 5B rollout boundary ended the episode")
+    print("Test 5B PASS: decision-GAE boundary censors pending without ending episode")
+
     terminal = CleanDecisionTransitionTracker(gamma=0.9)
     terminal.start_episode(0)
     terminal.record_decisions(slot_index=0, records=[_record("t1", 0)])
@@ -312,6 +326,7 @@ def _behavior_equivalence_check() -> None:
 
     args = build_arg_parser().parse_args([])
     _assert(args.record_decision_transitions is False, "Test 9 gate default must be disabled")
+    _assert(args.offloading_decision_gae is False, "Test 9 decision-GAE default must be disabled")
     legacy = _run_disabled_signature(explicit_none=False)
     compatible = _run_disabled_signature(explicit_none=True)
     _assert(legacy["initial"].keys() == compatible["initial"].keys(), "Test 9 module key mismatch")
