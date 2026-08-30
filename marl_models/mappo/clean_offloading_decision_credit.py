@@ -13,7 +13,10 @@ from marl_models.mappo.clean_decision_transitions import (
     CleanDecisionState,
     CleanDecisionTransition,
 )
-from marl_models.mappo.clean_ppo import CleanDecisionCritic
+from marl_models.mappo.clean_ppo import (
+    CleanDecisionCritic,
+    normalized_clipped_value_loss,
+)
 
 
 DecisionKey = tuple[int, int, int, int, str]
@@ -58,6 +61,7 @@ class FrozenOffloadingDecisionCreditBatch:
     actor_advantages: dict[DecisionKey, float]
     critic_inputs: np.ndarray
     critic_targets: np.ndarray
+    critic_old_predictions: np.ndarray
     transitions: tuple[CleanDecisionTransition, ...]
     diagnostics: dict[str, Any]
 
@@ -137,6 +141,8 @@ class CleanOffloadingDecisionCredit:
         gamma: float,
         gae_lambda: float,
         max_grad_norm: float,
+        ppo_epochs: int,
+        value_clip_epsilon: float,
         device: Any,
     ) -> None:
         self.critic = critic.to(device)
@@ -144,6 +150,10 @@ class CleanOffloadingDecisionCredit:
         self.gamma = float(gamma)
         self.gae_lambda = float(gae_lambda)
         self.max_grad_norm = float(max_grad_norm)
+        self.ppo_epochs = max(int(ppo_epochs), 1)
+        self.value_clip_epsilon = float(value_clip_epsilon)
+        if not math.isfinite(self.value_clip_epsilon) or self.value_clip_epsilon < 0.0:
+            raise ValueError("decision critic value_clip_epsilon must be finite and non-negative")
         self.device = device
         self.update_count = 0
         self.total_transition_count = 0
@@ -161,6 +171,8 @@ class CleanOffloadingDecisionCredit:
         gae_lambda: float,
         max_grad_norm: float,
         device: Any,
+        ppo_epochs: int = 1,
+        value_clip_epsilon: float = 0.0,
     ) -> "CleanOffloadingDecisionCredit":
         python_state = random.getstate()
         numpy_state = np.random.get_state()
@@ -182,6 +194,8 @@ class CleanOffloadingDecisionCredit:
             gamma=gamma,
             gae_lambda=gae_lambda,
             max_grad_norm=max_grad_norm,
+            ppo_epochs=ppo_epochs,
+            value_clip_epsilon=value_clip_epsilon,
             device=device,
         )
 
@@ -225,6 +239,7 @@ class CleanOffloadingDecisionCredit:
             else np.zeros((0, self.critic.net[0].in_features), dtype=np.float32)
         )
         critic_targets = np.asarray([targets[key] for key in keys], dtype=np.float32)
+        critic_old_predictions = np.asarray([values[key] for key in keys], dtype=np.float32)
         deltas = np.asarray([row.delta for row in rows], dtype=np.float64)
         rhos = np.asarray([row.rho for row in rows], dtype=np.float64)
         same_slot = [
@@ -255,6 +270,8 @@ class CleanOffloadingDecisionCredit:
             "decision_advantage_mean": float(raw.mean()) if raw.size else 0.0,
             "decision_advantage_std": float(raw.std(ddof=0)) if raw.size else 0.0,
             "decision_within_slot_advantage_std": float(np.mean(within_slot)) if within_slot else 0.0,
+            "decision_critic_raw_target_mean": float(critic_targets.mean()) if critic_targets.size else 0.0,
+            "decision_critic_raw_target_std": float(critic_targets.std(ddof=0)) if critic_targets.size else 0.0,
         }
         self.total_transition_count += len(rows)
         self.total_eligible_count += len(keys)
@@ -263,6 +280,7 @@ class CleanOffloadingDecisionCredit:
             actor_advantages=actor_advantages,
             critic_inputs=critic_inputs,
             critic_targets=critic_targets,
+            critic_old_predictions=critic_old_predictions,
             transitions=tuple(rows),
             diagnostics=diagnostics,
         )
@@ -275,27 +293,80 @@ class CleanOffloadingDecisionCredit:
                     "decision_critic_loss": 0.0,
                     "decision_critic_ev": 0.0,
                     "decision_critic_grad_norm": 0.0,
+                    "decision_critic_normalized_loss": 0.0,
+                    "decision_critic_ev_pre_update": 0.0,
+                    "decision_critic_ev_post_update": 0.0,
+                    "decision_critic_preclip_grad_norm_mean": 0.0,
+                    "decision_critic_preclip_grad_norm_max": 0.0,
+                    "decision_critic_value_clip_fraction": 0.0,
+                    "decision_critic_raw_target_mean": 0.0,
+                    "decision_critic_raw_target_std": 0.0,
+                    "decision_critic_target_normalization_mean": 0.0,
+                    "decision_critic_target_normalization_scale": 1.0,
                 }
             )
             return diagnostics
         inputs = torch.as_tensor(batch.critic_inputs, dtype=torch.float32, device=self.device)
         targets = torch.as_tensor(batch.critic_targets, dtype=torch.float32, device=self.device)
-        predictions = self.critic(inputs)
-        loss = 0.5 * (predictions - targets).pow(2).mean()
-        self.optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            list(self.critic.parameters()), self.max_grad_norm
+        old_predictions = torch.as_tensor(
+            batch.critic_old_predictions, dtype=torch.float32, device=self.device
         )
-        self.optimizer.step()
+        target_mean = targets.mean().detach()
+        target_scale = targets.std(unbiased=False).detach().clamp_min(1e-8)
+
+        def raw_explained_variance(predictions: Any) -> float:
+            target_var = float(targets.var(unbiased=False).detach().cpu().item())
+            if target_var <= 1e-12:
+                return 0.0
+            error_var = float(
+                (targets - predictions).var(unbiased=False).detach().cpu().item()
+            )
+            return 1.0 - error_var / target_var
+
+        ev_pre = raw_explained_variance(old_predictions)
+        losses: list[float] = []
+        grad_norms: list[float] = []
+        clip_fractions: list[float] = []
+        for _ in range(self.ppo_epochs):
+            predictions = self.critic(inputs)
+            per_sample_loss, was_clipped = normalized_clipped_value_loss(
+                value=predictions,
+                old_value=old_predictions,
+                target=targets,
+                target_mean=target_mean,
+                target_scale=target_scale,
+                clip_epsilon=self.value_clip_epsilon,
+            )
+            loss = per_sample_loss.mean()
+            self.optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                list(self.critic.parameters()), self.max_grad_norm
+            )
+            self.optimizer.step()
+            losses.append(float(loss.detach().cpu().item()))
+            grad_norms.append(float(grad_norm.detach().cpu().item()))
+            clip_fractions.append(float(was_clipped.mean().detach().cpu().item()))
         self.update_count += 1
-        target_var = float(targets.detach().var(unbiased=False).cpu().item())
-        error_var = float((targets.detach() - predictions.detach()).var(unbiased=False).cpu().item())
+        with torch.no_grad():
+            post_predictions = self.critic(inputs)
+        ev_post = raw_explained_variance(post_predictions)
+        normalized_loss = float(np.mean(losses))
+        grad_norm_mean = float(np.mean(grad_norms))
+        grad_norm_max = float(np.max(grad_norms))
         diagnostics.update(
             {
-                "decision_critic_loss": float(loss.detach().cpu().item()),
-                "decision_critic_ev": 1.0 - error_var / target_var if target_var > 1e-12 else 0.0,
-                "decision_critic_grad_norm": float(grad_norm),
+                "decision_critic_loss": normalized_loss,
+                "decision_critic_ev": ev_post,
+                "decision_critic_grad_norm": grad_norm_mean,
+                "decision_critic_normalized_loss": normalized_loss,
+                "decision_critic_ev_pre_update": ev_pre,
+                "decision_critic_ev_post_update": ev_post,
+                "decision_critic_preclip_grad_norm_mean": grad_norm_mean,
+                "decision_critic_preclip_grad_norm_max": grad_norm_max,
+                "decision_critic_value_clip_fraction": float(np.mean(clip_fractions)),
+                "decision_critic_target_normalization_mean": float(target_mean.cpu().item()),
+                "decision_critic_target_normalization_scale": float(target_scale.cpu().item()),
             }
         )
         return diagnostics
@@ -307,6 +378,8 @@ class CleanOffloadingDecisionCredit:
             "gamma": self.gamma,
             "gae_lambda": self.gae_lambda,
             "max_grad_norm": self.max_grad_norm,
+            "ppo_epochs": self.ppo_epochs,
+            "value_clip_epsilon": self.value_clip_epsilon,
             "update_count": self.update_count,
             "total_transition_count": self.total_transition_count,
             "total_eligible_count": self.total_eligible_count,
@@ -318,9 +391,12 @@ class CleanOffloadingDecisionCredit:
             ("gamma", self.gamma),
             ("gae_lambda", self.gae_lambda),
             ("max_grad_norm", self.max_grad_norm),
+            ("value_clip_epsilon", self.value_clip_epsilon),
         ):
             if not math.isclose(float(payload[key]), float(expected)):
                 raise ValueError(f"offloading decision credit {key} mismatch")
+        if int(payload["ppo_epochs"]) != self.ppo_epochs:
+            raise ValueError("offloading decision credit ppo_epochs mismatch")
         self.critic.load_state_dict(payload["critic"])
         self.optimizer.load_state_dict(payload["optimizer"])
         self.update_count = int(payload["update_count"])

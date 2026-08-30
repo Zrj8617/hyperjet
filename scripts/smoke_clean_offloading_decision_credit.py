@@ -19,10 +19,12 @@ from marl_models.mappo.clean_decision_transitions import (
 )
 from marl_models.mappo.clean_offloading_decision_credit import (
     CleanOffloadingDecisionCredit,
+    FrozenOffloadingDecisionCreditBatch,
     compute_smdp_decision_gae,
     decision_state_key,
     encode_decision_state,
 )
+from marl_models.mappo.clean_ppo import normalized_clipped_value_loss
 
 
 def _state(name: str, slot: int, order: int, selected: int = 0) -> CleanDecisionState:
@@ -155,6 +157,8 @@ def _rng_neutrality_check() -> None:
         gamma=0.99,
         gae_lambda=0.95,
         max_grad_norm=0.5,
+        ppo_epochs=3,
+        value_clip_epsilon=0.2,
         device="cpu",
     )
     assert random.getstate() == python_before
@@ -176,6 +180,8 @@ def _rng_neutrality_check() -> None:
         gamma=0.99,
         gae_lambda=0.95,
         max_grad_norm=0.5,
+        ppo_epochs=3,
+        value_clip_epsilon=0.2,
         device="cpu",
     )
     restored.load_state_dict(credit.state_dict())
@@ -184,11 +190,110 @@ def _rng_neutrality_check() -> None:
     print("RNG neutrality PASS: Python/NumPy/Torch/CUDA state unchanged")
 
 
+def _normalized_value_loss_checks() -> None:
+    target_mean = torch.tensor(1000.0)
+    target_scale = torch.tensor(100.0)
+    target = torch.tensor([900.0, 1100.0])
+    old_value = torch.tensor([1000.0, 1000.0])
+    value = torch.tensor([950.0, 1050.0])
+    loss, clipped = normalized_clipped_value_loss(
+        value=value,
+        old_value=old_value,
+        target=target,
+        target_mean=target_mean,
+        target_scale=target_scale,
+        clip_epsilon=0.0,
+    )
+    assert torch.allclose(loss, torch.tensor([0.125, 0.125]))
+    assert torch.count_nonzero(clipped) == 0
+
+    clipped_loss, clipped = normalized_clipped_value_loss(
+        value=torch.tensor([1050.0]),
+        old_value=torch.tensor([1000.0]),
+        target=torch.tensor([1100.0]),
+        target_mean=target_mean,
+        target_scale=target_scale,
+        clip_epsilon=0.2,
+    )
+    assert torch.allclose(clipped_loss, torch.tensor([0.32]), atol=1e-6)
+    assert clipped.item() == 1.0
+    print("normalized value loss/clipping PASS: slot-critic semantics")
+
+
+def _large_target_and_optimizer_state_check() -> None:
+    credit = CleanOffloadingDecisionCredit.build_rng_neutral(
+        input_dim=12,
+        hidden_dim=8,
+        learning_rate=3e-4,
+        gamma=0.99,
+        gae_lambda=0.95,
+        max_grad_norm=0.5,
+        ppo_epochs=3,
+        value_clip_epsilon=0.2,
+        device="cpu",
+    )
+    inputs = np.linspace(-1.0, 1.0, 48, dtype=np.float32).reshape(4, 12)
+    targets = np.asarray([1.0e6, 1.001e6, 0.999e6, 1.002e6], dtype=np.float32)
+    with torch.no_grad():
+        old = credit.critic(torch.as_tensor(inputs)).cpu().numpy().astype(np.float32)
+    batch = FrozenOffloadingDecisionCreditBatch(
+        actor_advantages={},
+        critic_inputs=inputs,
+        critic_targets=targets,
+        critic_old_predictions=old,
+        transitions=(),
+        diagnostics={
+            "decision_critic_raw_target_mean": float(targets.mean()),
+            "decision_critic_raw_target_std": float(targets.std(ddof=0)),
+        },
+    )
+    diagnostics = credit.train_frozen(batch)
+    numeric = [value for value in diagnostics.values() if isinstance(value, (int, float))]
+    assert all(np.isfinite(value) for value in numeric)
+    assert credit.update_count == 1
+    assert diagnostics["decision_critic_raw_target_std"] > 0.0
+    assert diagnostics["decision_critic_normalized_loss"] > 0.0
+    assert diagnostics["decision_critic_preclip_grad_norm_max"] >= 0.0
+
+    restored = CleanOffloadingDecisionCredit.build_rng_neutral(
+        input_dim=12,
+        hidden_dim=8,
+        learning_rate=3e-4,
+        gamma=0.99,
+        gae_lambda=0.95,
+        max_grad_norm=0.5,
+        ppo_epochs=3,
+        value_clip_epsilon=0.2,
+        device="cpu",
+    )
+    restored.load_state_dict(credit.state_dict())
+    for key, value in credit.critic.state_dict().items():
+        assert torch.equal(value, restored.critic.state_dict()[key])
+    left_state = credit.optimizer.state_dict()
+    right_state = restored.optimizer.state_dict()
+    assert left_state["param_groups"] == right_state["param_groups"]
+    for param_id, left_values in left_state["state"].items():
+        right_values = right_state["state"][param_id]
+        for key, value in left_values.items():
+            if torch.is_tensor(value):
+                assert torch.equal(value, right_values[key])
+            else:
+                assert value == right_values[key]
+    print(
+        "large-target/optimizer-state PASS: "
+        f"loss={diagnostics['decision_critic_normalized_loss']:.6f} "
+        f"grad_max={diagnostics['decision_critic_preclip_grad_norm_max']:.6f} "
+        f"clip_fraction={diagnostics['decision_critic_value_clip_fraction']:.6f}"
+    )
+
+
 def main() -> None:
     _state_encoder_checks()
     _toy_gae_check()
     _boundary_check()
     _rng_neutrality_check()
+    _normalized_value_loss_checks()
+    _large_target_and_optimizer_state_check()
     print("smoke_clean_offloading_decision_credit passed")
 
 

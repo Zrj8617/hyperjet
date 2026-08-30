@@ -1542,6 +1542,8 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             gamma=float(args.gamma),
             gae_lambda=float(args.gae_lambda),
             max_grad_norm=float(args.max_grad_norm),
+            ppo_epochs=int(args.ppo_epochs),
+            value_clip_epsilon=float(args.value_clip_epsilon),
             device=device,
         )
         if bool(args.offloading_decision_gae)

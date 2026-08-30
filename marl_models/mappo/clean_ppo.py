@@ -29,6 +29,36 @@ CLEAN_CRITIC_TASK_POOLING_CHOICES = (
 )
 
 
+def normalized_clipped_value_loss(
+    *,
+    value: Any,
+    old_value: Any,
+    target: Any,
+    target_mean: Any,
+    target_scale: Any,
+    clip_epsilon: float,
+) -> tuple[Any, Any]:
+    """PPO value loss while preserving raw reward-scale critic outputs."""
+    if torch is None:
+        raise ModuleNotFoundError("torch is required for normalized value loss")
+    normalized_value = (value - target_mean) / target_scale
+    normalized_old_value = (old_value - target_mean) / target_scale
+    normalized_target = (target - target_mean) / target_scale
+    loss_unclipped = (normalized_value - normalized_target).pow(2)
+    if float(clip_epsilon) <= 0.0:
+        return (
+            0.5 * loss_unclipped,
+            torch.zeros_like(loss_unclipped, dtype=torch.float32),
+        )
+    delta = normalized_value - normalized_old_value
+    clipped_value = normalized_old_value + delta.clamp(
+        -float(clip_epsilon), float(clip_epsilon)
+    )
+    loss_clipped = (clipped_value - normalized_target).pow(2)
+    was_clipped = (delta.abs() > float(clip_epsilon)).to(dtype=torch.float32)
+    return 0.5 * torch.maximum(loss_unclipped, loss_clipped), was_clipped
+
+
 def normalize_clean_critic_task_pooling(task_pooling: str) -> str:
     value = str(task_pooling)
     if value not in CLEAN_CRITIC_TASK_POOLING_CHOICES:

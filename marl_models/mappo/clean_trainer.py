@@ -14,7 +14,11 @@ from marl_models.mappo.clean_eft_auxiliary import (
     eft_auxiliary_lambda,
     summarize_historical_eft_items,
 )
-from marl_models.mappo.clean_ppo import CleanDecisionCritic, pool_clean_critic_task_embeddings
+from marl_models.mappo.clean_ppo import (
+    CleanDecisionCritic,
+    normalized_clipped_value_loss,
+    pool_clean_critic_task_embeddings,
+)
 from marl_models.mappo.clean_slot_orchestrator import (
     CleanEncodedSlotState,
     CleanSlotRolloutBuffer,
@@ -1735,18 +1739,14 @@ def _normalized_clipped_value_loss(
     target_scale: Any,
     clip_epsilon: float,
 ) -> tuple[Any, Any]:
-    """PPO value loss without changing the critic's raw reward-scale output."""
-    normalized_value = (value - target_mean) / target_scale
-    normalized_old_value = (old_value - target_mean) / target_scale
-    normalized_target = (target - target_mean) / target_scale
-    loss_unclipped = (normalized_value - normalized_target).pow(2)
-    if float(clip_epsilon) <= 0.0:
-        return 0.5 * loss_unclipped, torch.zeros((), dtype=torch.float32, device=value.device)
-    delta = normalized_value - normalized_old_value
-    clipped_value = normalized_old_value + delta.clamp(-float(clip_epsilon), float(clip_epsilon))
-    loss_clipped = (clipped_value - normalized_target).pow(2)
-    was_clipped = (delta.abs() > float(clip_epsilon)).to(dtype=torch.float32)
-    return 0.5 * torch.maximum(loss_unclipped, loss_clipped), was_clipped
+    return normalized_clipped_value_loss(
+        value=value,
+        old_value=old_value,
+        target=target,
+        target_mean=target_mean,
+        target_scale=target_scale,
+        clip_epsilon=clip_epsilon,
+    )
 
 
 def _lagged_q_regression_loss(
