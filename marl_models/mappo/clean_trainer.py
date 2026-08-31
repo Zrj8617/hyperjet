@@ -98,6 +98,9 @@ class CleanPPOUpdateConfig:
     # Environment-return offloading decision GAE is prepared outside this
     # trainer and supplied as a frozen, detached mapping keyed by rollout state.
     offloading_decision_gae: bool = False
+    # Environment-return action-conditioned Decision-Q credit is prepared
+    # outside this trainer and supplied through the same frozen mapping.
+    offloading_decision_q_credit: bool = False
     # Diagnostics-only: every N-th update, decompose the HGNN gradient into its
     # actor-loss and value-loss components via torch.autograd.grad (never
     # touches .grad). 0 disables the decomposition.
@@ -371,7 +374,11 @@ class CleanPPOUpdater:
         ]
         decision_advantages = dict(offloading_decision_advantages or {})
         decision_slot_keys = list(offloading_decision_slot_keys or [])
-        if bool(self.config.offloading_decision_gae):
+        environment_decision_credit = bool(
+            self.config.offloading_decision_gae
+            or self.config.offloading_decision_q_credit
+        )
+        if environment_decision_credit:
             if len(decision_slot_keys) != len(records):
                 raise ValueError(
                     "offloading decision slot keys must align with flattened rollout records"
@@ -913,7 +920,10 @@ class CleanPPOUpdater:
                     "old_log_prob": old_log_prob,
                     "entropy": dist.entropy(),
                 }
-                if bool(self.config.offloading_decision_gae):
+                if bool(
+                    self.config.offloading_decision_gae
+                    or self.config.offloading_decision_q_credit
+                ):
                     episode_index, lane_index, slot_index = decision_slot_keys[slot_idx]
                     decision_key = (
                         int(episode_index),
@@ -1306,7 +1316,10 @@ class CleanPPOUpdater:
         for item_index, item in enumerate(offloading_items):
             slot_idx = int(item["slot_idx"])
             offloading_advantage = advantages[slot_idx]
-            if bool(self.config.offloading_decision_gae):
+            if bool(
+                self.config.offloading_decision_gae
+                or self.config.offloading_decision_q_credit
+            ):
                 offloading_advantage = item.get("environment_decision_advantage")
                 if offloading_advantage is None:
                     # The sole pending decision at a non-terminal rollout boundary

@@ -39,6 +39,9 @@ from marl_models.mappo.clean_decision_td_dataset import (
 from marl_models.mappo.clean_offloading_decision_credit import (
     CleanOffloadingDecisionCredit,
 )
+from marl_models.mappo.clean_offloading_decision_q_credit import (
+    CleanOffloadingDecisionQCredit,
+)
 from marl_models.mappo.clean_ppo import (
     CLEAN_CRITIC_TASK_POOLING_CHOICES,
     normalize_clean_critic_task_pooling,
@@ -320,12 +323,15 @@ def validate_phase4_decision_td_controls(args: argparse.Namespace) -> None:
 def _checkpoint_extra_state(
     diagnostic: Any | None,
     offloading_decision_credit: Any | None = None,
+    offloading_decision_q_credit: Any | None = None,
 ) -> dict[str, Any] | None:
     payload: dict[str, Any] = {}
     if diagnostic is not None:
         payload["phase4_decision_td_diagnostic"] = diagnostic.state_dict()
     if offloading_decision_credit is not None:
         payload["offloading_decision_credit"] = offloading_decision_credit.state_dict()
+    if offloading_decision_q_credit is not None:
+        payload["offloading_decision_q_credit"] = offloading_decision_q_credit.state_dict()
     return payload or None
 
 
@@ -348,6 +354,29 @@ def validate_offloading_decision_gae_controls(args: argparse.Namespace) -> None:
     if enabled:
         raise ValueError(
             "--offloading-decision-gae cannot combine with " + ", ".join(enabled)
+        )
+
+
+def validate_offloading_decision_q_controls(args: argparse.Namespace) -> None:
+    if not bool(getattr(args, "offloading_decision_q_credit", False)):
+        return
+    legacy_beta, legacy_eta = _resolved_offloading_action_value_controls(args)
+    lagged_beta, lagged_eta, _, _ = _resolved_offloading_lagged_q_controls(args)
+    conflicts = {
+        "offloading Decision-GAE": bool(getattr(args, "offloading_decision_gae", False)),
+        "offloading EFT advantage": bool(getattr(args, "offloading_eft_advantage", False)),
+        "EFT auxiliary": float(getattr(args, "eft_auxiliary_lambda_initial", 0.0)) > 0.0,
+        "clean counterfactual": bool(getattr(args, "clean_counterfactual_credit", False)),
+        "legacy counterfactual/action-value": legacy_beta > 0.0 or legacy_eta > 0.0,
+        "lagged-Q": lagged_beta > 0.0 or lagged_eta > 0.0,
+        "existing decision critic": bool(getattr(args, "decision_critic", False)),
+        "Phase4 shadow decision Q": bool(getattr(args, "phase4_decision_td_diagnostic", False)),
+        "EFT/bandit initialization": getattr(args, "offloading_init_bandit_checkpoint", None) is not None,
+    }
+    enabled = [name for name, active in conflicts.items() if active]
+    if enabled:
+        raise ValueError(
+            "--offloading-decision-q-credit cannot combine with " + ", ".join(enabled)
         )
 
 
@@ -522,6 +551,12 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
     )
     if not isinstance(offloading_decision_gae, bool):
         raise ValueError("checkpoint offloading_decision_gae must be boolean")
+    offloading_decision_q_credit = cli.get(
+        "offloading_decision_q_credit",
+        experiment_controls.get("offloading_decision_q_credit", False),
+    )
+    if not isinstance(offloading_decision_q_credit, bool):
+        raise ValueError("checkpoint offloading_decision_q_credit must be boolean")
     offloading_lr_scale = float(cli.get("offloading_lr_scale", 1.0))
     if not math.isfinite(offloading_lr_scale) or offloading_lr_scale <= 0.0:
         raise ValueError("checkpoint offloading_lr_scale must be finite and positive")
@@ -591,6 +626,7 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
         "eft_auxiliary_regret_scale": eft_auxiliary_regret_scale,
         "offloading_eft_advantage": offloading_eft_advantage,
         "offloading_decision_gae": offloading_decision_gae,
+        "offloading_decision_q_credit": offloading_decision_q_credit,
         "offloading_lr_scale": offloading_lr_scale,
         "movement_position_advantage": movement_position_advantage,
         "movement_lr_scale": movement_lr_scale,
@@ -755,6 +791,10 @@ def validate_resume_experiment_controls(
         (
             "offloading_decision_gae",
             bool(getattr(args, "offloading_decision_gae", False)),
+        ),
+        (
+            "offloading_decision_q_credit",
+            bool(getattr(args, "offloading_decision_q_credit", False)),
         ),
         (
             "offloading_lr_scale",
@@ -1019,6 +1059,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--offloading-decision-q-credit",
+        action="store_true",
+        default=False,
+        help=(
+            "Replace only offloading shared slot GAE with frozen environment-return "
+            "action-conditioned Decision-Q advantage. Movement credit remains unchanged."
+        ),
+    )
+    parser.add_argument(
         "--offloading-lr-scale",
         type=_positive_finite_float,
         default=1.0,
@@ -1153,6 +1202,9 @@ def build_config_snapshot(args: argparse.Namespace) -> dict[str, Any]:
             "offloading_decision_gae": bool(
                 getattr(args, "offloading_decision_gae", False)
             ),
+            "offloading_decision_q_credit": bool(
+                getattr(args, "offloading_decision_q_credit", False)
+            ),
             "offloading_lr_scale": float(
                 getattr(args, "offloading_lr_scale", 1.0)
             ),
@@ -1272,6 +1324,9 @@ def initialize_run_files(run_dir: Path, args: argparse.Namespace) -> None:
             "offloading_decision_gae": bool(
                 getattr(args, "offloading_decision_gae", False)
             ),
+            "offloading_decision_q_credit": bool(
+                getattr(args, "offloading_decision_q_credit", False)
+            ),
             "offloading_lr_scale": float(
                 getattr(args, "offloading_lr_scale", 1.0)
             ),
@@ -1319,8 +1374,9 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     validate_clean_counterfactual_credit_controls(args)
     validate_phase4_decision_td_controls(args)
     validate_offloading_decision_gae_controls(args)
-    if bool(args.offloading_decision_gae) and str(args.sampler_backend) == "process":
-        raise ValueError("--offloading-decision-gae requires the synchronous sampler")
+    validate_offloading_decision_q_controls(args)
+    if bool(args.offloading_decision_gae or args.offloading_decision_q_credit) and str(args.sampler_backend) == "process":
+        raise ValueError("environment-return offloading decision credit requires the synchronous sampler")
     if bool(args.record_decision_transitions) and str(args.sampler_backend) == "process":
         raise ValueError(
             "--record-decision-transitions currently requires the synchronous sampler"
@@ -1486,6 +1542,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             clean_counterfactual_credit=clean_counterfactual_enabled,
             offloading_eft_advantage=bool(args.offloading_eft_advantage),
             offloading_decision_gae=bool(args.offloading_decision_gae),
+            offloading_decision_q_credit=bool(args.offloading_decision_q_credit),
             movement_position_advantage=bool(args.movement_position_advantage),
             decision_critic_enabled=bool(args.decision_critic),
             decision_critic_coef=float(args.decision_critic_coef),
@@ -1549,6 +1606,27 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         if bool(args.offloading_decision_gae)
         else None
     )
+    offloading_decision_q_credit = (
+        CleanOffloadingDecisionQCredit.build_rng_neutral(
+            input_dim=(
+                int(offloading_actor.candidate_feature_dim)
+                + int(critic_input_dim)
+                + 2
+            ),
+            hidden_dim=int(args.hidden_dim),
+            learning_rate=float(args.lr),
+            gamma=float(args.gamma),
+            max_grad_norm=float(args.max_grad_norm),
+            ppo_epochs=int(args.ppo_epochs),
+            value_clip_epsilon=float(args.value_clip_epsilon),
+            device=device,
+        )
+        if bool(args.offloading_decision_q_credit)
+        else None
+    )
+    environment_decision_credit = (
+        offloading_decision_q_credit or offloading_decision_credit
+    )
     checkpoint_manager = CleanCheckpointManager(run_dir / "checkpoints")
     logger = CleanJSONLLogger(run_dir)
     start_episode = 0
@@ -1573,6 +1651,13 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             if credit_state is None:
                 raise ValueError("offloading decision credit state is missing from checkpoint")
             offloading_decision_credit.load_state_dict(credit_state)
+        if offloading_decision_q_credit is not None:
+            q_credit_state = payload.get("extra_state", {}).get(
+                "offloading_decision_q_credit"
+            )
+            if q_credit_state is None:
+                raise ValueError("offloading decision Q credit state is missing from checkpoint")
+            offloading_decision_q_credit.load_state_dict(q_credit_state)
         start_episode = int(payload.get("episode", -1)) + 1
         global_slot = int(payload.get("global_slot", 0))
         updater.update_step = int(payload.get("update_step", 0))
@@ -1590,7 +1675,11 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             config_snapshot=build_config_snapshot(args),
             safe_boundary=True,
             filename="checkpoint_update_0000.pt",
-            extra_state=_checkpoint_extra_state(phase4_diagnostic, offloading_decision_credit),
+            extra_state=_checkpoint_extra_state(
+                phase4_diagnostic,
+                offloading_decision_credit,
+                offloading_decision_q_credit,
+            ),
         )
     if args.max_updates is not None and int(args.max_updates) == 0:
         _write_json(
@@ -1653,7 +1742,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             lagged_tracker_cls=CleanLaggedOutcomeTracker,
             lagged_q_enabled=lagged_q_enabled,
             phase4_diagnostic=phase4_diagnostic,
-            offloading_decision_credit=offloading_decision_credit,
+            offloading_decision_credit=environment_decision_credit,
             start_episode=start_episode,
             global_slot=global_slot,
         )
@@ -1668,7 +1757,11 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     )
     decision_transition_tracker = (
         CleanDecisionTransitionTracker(gamma=float(args.gamma), lane_index=0)
-        if bool(args.record_decision_transitions or args.offloading_decision_gae)
+        if bool(
+            args.record_decision_transitions
+            or args.offloading_decision_gae
+            or args.offloading_decision_q_credit
+        )
         else None
     )
     progress = _make_progress_bar(total=max(int(args.episodes) - start_episode, 0) * int(args.max_steps_per_episode))
@@ -1765,14 +1858,14 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                     )
                     decision_credit_batch = None
                     decision_credit_diagnostics: dict[str, Any] = {}
-                    if offloading_decision_credit is not None:
+                    if environment_decision_credit is not None:
                         assert decision_transition_tracker is not None
                         if not bool(done or truncated):
                             decision_transition_tracker.close_rollout_boundary()
-                        decision_credit_batch = offloading_decision_credit.prepare_rollout(
+                        decision_credit_batch = environment_decision_credit.prepare_rollout(
                             decision_transition_tracker.pop_completed()
                         )
-                        decision_credit_diagnostics = offloading_decision_credit.train_frozen(
+                        decision_credit_diagnostics = environment_decision_credit.train_frozen(
                             decision_credit_batch
                         )
                     if phase4_diagnostic is not None:
@@ -1864,7 +1957,11 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                         config_snapshot=build_config_snapshot(args),
                         safe_boundary=buffer.checkpoint_safe,
                         filename="latest.pt",
-                        extra_state=_checkpoint_extra_state(phase4_diagnostic, offloading_decision_credit),
+                        extra_state=_checkpoint_extra_state(
+                            phase4_diagnostic,
+                            offloading_decision_credit,
+                            offloading_decision_q_credit,
+                        ),
                     )
                     if int(updater.update_step) in checkpoint_update_counts:
                         checkpoint_manager.save(
@@ -1876,7 +1973,11 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                             config_snapshot=build_config_snapshot(args),
                             safe_boundary=buffer.checkpoint_safe,
                             filename=f"checkpoint_update_{int(updater.update_step):04d}.pt",
-                            extra_state=_checkpoint_extra_state(phase4_diagnostic, offloading_decision_credit),
+                            extra_state=_checkpoint_extra_state(
+                                phase4_diagnostic,
+                                offloading_decision_credit,
+                                offloading_decision_q_credit,
+                            ),
                         )
                     max_updates_reached = (
                         args.max_updates is not None
@@ -1917,7 +2018,11 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                     config_snapshot=build_config_snapshot(args),
                     safe_boundary=True,
                     filename=f"checkpoint_ep_{episode + 1:04d}.pt",
-                    extra_state=_checkpoint_extra_state(phase4_diagnostic, offloading_decision_credit),
+                    extra_state=_checkpoint_extra_state(
+                        phase4_diagnostic,
+                        offloading_decision_credit,
+                        offloading_decision_q_credit,
+                    ),
                 )
             _write_json(
                 run_dir / "run_summary.json",
@@ -2112,7 +2217,11 @@ def _make_sampler_lanes(
                 scale_seconds=float(args.offloading_lagged_q_scale_seconds),
                 censor_weight=float(args.offloading_lagged_q_censor_weight),
             )
-    if bool(args.record_decision_transitions or args.offloading_decision_gae):
+    if bool(
+        args.record_decision_transitions
+        or args.offloading_decision_gae
+        or args.offloading_decision_q_credit
+    ):
         for lane in lanes:
             lane.decision_transition_tracker = CleanDecisionTransitionTracker(
                 gamma=float(args.gamma),
