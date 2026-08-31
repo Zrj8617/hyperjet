@@ -130,18 +130,58 @@ def _target_and_advantage_checks() -> None:
         _transition(s2, rho=1.0 + 0.9 * 2.0 + 0.9**2 * 3.0, delta=3, terminated=True),
         _transition(_state("censored", 4, 0, 1.0, 2.0), rho=4.0, delta=1, unresolved=True),
     ]
+    py_before = random.getstate()
+    np_before = np.random.get_state()
+    torch_before = torch.get_rng_state().clone()
     batch = credit.prepare_rollout(rows)
+    assert random.getstate() == py_before
+    np_after = np.random.get_state()
+    assert np_before[0] == np_after[0] and np.array_equal(np_before[1], np_after[1])
+    assert np_before[2:] == np_after[2:]
+    assert torch.equal(torch.get_rng_state(), torch_before)
     assert batch.critic_targets.shape == (3,)
     assert np.allclose(
         batch.critic_targets,
         [3.2, 5.0 + 0.9 * 6.2, 1.0 + 0.9 * 2.0 + 0.9**2 * 3.0],
     )
     raw_advantages = np.asarray([-1.2, 0.8, -1.2], dtype=np.float32)
-    standardized = (raw_advantages - raw_advantages.mean()) / raw_advantages.std(ddof=0)
-    assert np.allclose(list(batch.actor_advantages.values()), standardized)
+    target_scale = max(float(batch.critic_targets.std(ddof=0)), 1e-8)
+    scaled = raw_advantages / target_scale
+    assert np.allclose(list(batch.actor_advantages.values()), scaled)
+    assert np.isclose(batch.diagnostics["decision_q_actor_advantage_scale"], target_scale)
+    assert np.isclose(
+        batch.diagnostics["decision_q_scaled_actor_advantage_std"],
+        scaled.std(ddof=0),
+    )
     assert batch.diagnostics["decision_q_unresolved_count"] == 1
     assert np.isclose(batch.diagnostics["decision_q_advantage_std"], raw_advantages.std(ddof=0))
-    print("target/advantage PASS: Delta=0/1/N, terminal, censor, Q-V credit")
+    assert np.isfinite(batch.critic_targets).all()
+    assert np.isfinite(list(batch.actor_advantages.values())).all()
+    assert all(
+        np.isfinite(value)
+        for value in batch.diagnostics.values()
+        if isinstance(value, (int, float))
+    )
+    frozen_actor_advantages = dict(batch.actor_advantages)
+    credit.train_frozen(batch)
+    assert batch.actor_advantages == frozen_actor_advantages
+    print(
+        "target/advantage PASS: Delta=0/1/N, terminal, censor, "
+        "Q-V credit scaled by frozen target std, frozen across critic epochs, RNG neutral"
+    )
+
+
+def _zero_target_scale_check() -> None:
+    credit = _credit()
+    rows = [
+        _transition(_state("z0", 0, 0, 1.0, 3.0), rho=1.0, delta=1, terminated=True),
+        _transition(_state("z1", 1, 0, 2.0, 4.0), rho=1.0, delta=1, terminated=True),
+    ]
+    batch = credit.prepare_rollout(rows)
+    assert np.isclose(batch.diagnostics["decision_q_actor_advantage_scale"], 1e-8)
+    assert np.isfinite(list(batch.actor_advantages.values())).all()
+    assert np.isfinite(batch.diagnostics["decision_q_scaled_actor_advantage_std"])
+    print("zero target-scale clamp PASS: scaled actor advantages remain finite")
 
 
 def _tracker_boundary_check() -> None:
@@ -221,7 +261,7 @@ def _rng_and_optimizer_state_checks() -> None:
             else:
                 assert value == right_values[key]
     print(
-        "normalized Q training/checkpoint PASS: "
+        "RNG-neutral build and normalized Q training/checkpoint PASS: "
         f"loss={diagnostics['decision_q_normalized_loss']:.6f} "
         f"grad={diagnostics['decision_q_preclip_grad_norm_max']:.6f} "
         f"clip={diagnostics['decision_q_value_clip_fraction']:.6f}"
@@ -245,6 +285,7 @@ def _normalized_clipping_check() -> None:
 def main() -> None:
     _candidate_and_expected_value_checks()
     _target_and_advantage_checks()
+    _zero_target_scale_check()
     _tracker_boundary_check()
     _rng_and_optimizer_state_checks()
     _normalized_clipping_check()

@@ -211,19 +211,19 @@ class CleanOffloadingDecisionQCredit:
 
         keys = list(raw_advantages)
         raw = np.asarray([raw_advantages[key] for key in keys], dtype=np.float32)
-        if raw.size > 1:
-            standardized = (raw - raw.mean()) / max(float(raw.std(ddof=0)), 1e-8)
-        else:
-            standardized = raw.copy()
-        actor_advantages = {
-            key: float(standardized[index]) for index, key in enumerate(keys)
-        }
         input_dim = int(self.critic.net[0].in_features)
         critic_inputs = (
             np.stack([selected_inputs[key] for key in keys]).astype(np.float32)
             if keys else np.zeros((0, input_dim), dtype=np.float32)
         )
         critic_targets = np.asarray([targets[key] for key in keys], dtype=np.float32)
+        target_std = float(critic_targets.std(ddof=0)) if keys else 0.0
+        actor_advantage_scale = max(target_std, 1e-8)
+        scaled_actor_advantages = raw / actor_advantage_scale
+        actor_advantages = {
+            key: float(scaled_actor_advantages[index])
+            for index, key in enumerate(keys)
+        }
         old_predictions = np.asarray(
             [selected_predictions[key] for key in keys], dtype=np.float32
         )
@@ -242,13 +242,17 @@ class CleanOffloadingDecisionQCredit:
             "decision_q_unresolved_count": unresolved_count,
             "decision_q_unresolved_fraction": unresolved_count / max(len(rows), 1),
             "decision_q_target_mean": float(critic_targets.mean()) if keys else 0.0,
-            "decision_q_target_std": float(critic_targets.std(ddof=0)) if keys else 0.0,
+            "decision_q_target_std": target_std,
             "decision_q_td_error_mean": float(td_errors.mean()) if keys else 0.0,
             "decision_q_td_error_std": float(td_errors.std(ddof=0)) if keys else 0.0,
             "decision_q_legal_action_spread_mean": float(np.mean(spreads)) if spreads else 0.0,
             "decision_q_legal_action_spread_std": float(np.std(spreads, ddof=0)) if spreads else 0.0,
             "decision_q_advantage_mean": float(raw.mean()) if keys else 0.0,
             "decision_q_advantage_std": float(raw.std(ddof=0)) if keys else 0.0,
+            "decision_q_actor_advantage_scale": actor_advantage_scale,
+            "decision_q_scaled_actor_advantage_std": (
+                float(scaled_actor_advantages.std(ddof=0)) if keys else 0.0
+            ),
             "decision_q_within_slot_advantage_std": float(np.mean(within_slot)) if within_slot else 0.0,
         }
         self.total_transition_count += len(rows)
