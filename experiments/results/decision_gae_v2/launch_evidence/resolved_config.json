@@ -1,0 +1,70 @@
+{
+  "branch": "codex/offloading-decision-gae-critic-v2-20260830",
+  "experiment": "Decision-GAE-v2",
+  "gpu_mapping": [
+    {
+      "gpu": 0,
+      "seed": 0
+    },
+    {
+      "gpu": 3,
+      "seed": 1
+    },
+    {
+      "gpu": 4,
+      "seed": 2
+    }
+  ],
+  "head": "a7d6bb0645b4c37b7b1e6eacac561ef369f39429",
+  "resolved_config": {
+    "checkpoint_updates": [
+      0,
+      30,
+      60,
+      90,
+      120
+    ],
+    "clean_counterfactual": false,
+    "clip_ratio": 0.2,
+    "completed_dag_weight": 8,
+    "decision_critic": false,
+    "detach_critic_hgnn": true,
+    "eft_auxiliary": false,
+    "entropy_coef": 0.01,
+    "episodes": 200,
+    "gae_lambda": 0.95,
+    "gamma": 0.99,
+    "lagged_q": false,
+    "legacy_counterfactual_action_value": false,
+    "lr": 0.0003,
+    "max_grad_norm": 0.5,
+    "max_steps_per_episode": 200,
+    "max_updates": 120,
+    "movement_energy_penalty": 0.0045,
+    "movement_lr_scale": 5,
+    "movement_position_advantage": true,
+    "normalize_value_targets": true,
+    "num_envs": 1,
+    "offloading_decision_gae": true,
+    "offloading_eft_advantage": false,
+    "offloading_lr_scale": 10,
+    "phase4_decision_td_diagnostic": false,
+    "ppo_epochs": 3,
+    "rollout_horizon": 128,
+    "sampler_backend": "synchronous",
+    "task_encoder": "mlp",
+    "value_clip_epsilon": 0.2,
+    "value_coef": 0.5
+  },
+  "run_commands": [
+    "/data2/zrj2025/.conda/envs/uav322/bin/python scripts/train_clean_mainline.py --seed 0 --run-name decision_gae_v2_seed0 --output-dir /data2/zrj2025/HyperUAV-decision-gae-v2-3seed-120u-a7d6bb0-20260830/runs/seed0 --episodes 200 --max-steps-per-episode 200 --rollout-horizon 128 --num-envs 1 --sampler-backend synchronous --task-encoder mlp --ppo-epochs 3 --lr 3e-4 --gamma 0.99 --gae-lambda 0.95 --clip-ratio 0.2 --entropy-coef 0.01 --value-coef 0.5 --normalize-value-targets --value-clip-epsilon 0.2 --max-grad-norm 0.5 --offloading-lr-scale 10 --movement-lr-scale 5 --movement-position-advantage --detach-critic-hgnn --completed-dag-weight 8 --checkpoint-update-counts 30,60,90,120 --checkpoint-interval 0 --max-updates 120 --offloading-decision-gae --device cuda:0",
+    "/data2/zrj2025/.conda/envs/uav322/bin/python scripts/train_clean_mainline.py --seed 1 --run-name decision_gae_v2_seed1 --output-dir /data2/zrj2025/HyperUAV-decision-gae-v2-3seed-120u-a7d6bb0-20260830/runs/seed1 --episodes 200 --max-steps-per-episode 200 --rollout-horizon 128 --num-envs 1 --sampler-backend synchronous --task-encoder mlp --ppo-epochs 3 --lr 3e-4 --gamma 0.99 --gae-lambda 0.95 --clip-ratio 0.2 --entropy-coef 0.01 --value-coef 0.5 --normalize-value-targets --value-clip-epsilon 0.2 --max-grad-norm 0.5 --offloading-lr-scale 10 --movement-lr-scale 5 --movement-position-advantage --detach-critic-hgnn --completed-dag-weight 8 --checkpoint-update-counts 30,60,90,120 --checkpoint-interval 0 --max-updates 120 --offloading-decision-gae --device cuda:3",
+    "/data2/zrj2025/.conda/envs/uav322/bin/python scripts/train_clean_mainline.py --seed 2 --run-name decision_gae_v2_seed2 --output-dir /data2/zrj2025/HyperUAV-decision-gae-v2-3seed-120u-a7d6bb0-20260830/runs/seed2 --episodes 200 --max-steps-per-episode 200 --rollout-horizon 128 --num-envs 1 --sampler-backend synchronous --task-encoder mlp --ppo-epochs 3 --lr 3e-4 --gamma 0.99 --gae-lambda 0.95 --clip-ratio 0.2 --entropy-coef 0.01 --value-coef 0.5 --normalize-value-targets --value-clip-epsilon 0.2 --max-grad-norm 0.5 --offloading-lr-scale 10 --movement-lr-scale 5 --movement-position-advantage --detach-critic-hgnn --completed-dag-weight 8 --checkpoint-update-counts 30,60,90,120 --checkpoint-interval 0 --max-updates 120 --offloading-decision-gae --device cuda:4"
+  ],
+  "schema": "decision_gae_v2_3seed_launch_v1",
+  "seeds": [
+    0,
+    1,
+    2
+  ]
+}

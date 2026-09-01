@@ -1,0 +1,496 @@
+{
+  "candidate_sets": {
+    "completed_dag_weight": [
+      8.0,
+      6.0,
+      4.0,
+      2.0
+    ],
+    "energy_weight": [
+      0.05,
+      0.1,
+      0.25,
+      0.5,
+      1.0
+    ]
+  },
+  "energy_candidates": [
+    {
+      "alignment_by_seed": [
+        {
+          "reward_ranking_best_to_worst": [
+            "nearest_legal",
+            "greedy_eft",
+            "random_legal"
+          ],
+          "seed": 42,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        },
+        {
+          "reward_ranking_best_to_worst": [
+            "greedy_eft",
+            "nearest_legal",
+            "random_legal"
+          ],
+          "seed": 86,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        },
+        {
+          "reward_ranking_best_to_worst": [
+            "nearest_legal",
+            "greedy_eft",
+            "random_legal"
+          ],
+          "seed": 1042,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        }
+      ],
+      "completed_dag_weight": 8.0,
+      "distance_to_target_share_0_03": 0.02742990626156998,
+      "energy_weight": 0.05,
+      "mean_cancellation_ratio": 0.7119419940081163,
+      "mean_task_energy_absolute_share": 0.002570093738430016,
+      "obvious_reverse_ranking": false,
+      "pareto_contradiction_count": 0,
+      "pareto_contradictions": [],
+      "selection_constraints_pass": true
+    },
+    {
+      "alignment_by_seed": [
+        {
+          "reward_ranking_best_to_worst": [
+            "nearest_legal",
+            "greedy_eft",
+            "random_legal"
+          ],
+          "seed": 42,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        },
+        {
+          "reward_ranking_best_to_worst": [
+            "greedy_eft",
+            "nearest_legal",
+            "random_legal"
+          ],
+          "seed": 86,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        },
+        {
+          "reward_ranking_best_to_worst": [
+            "nearest_legal",
+            "greedy_eft",
+            "random_legal"
+          ],
+          "seed": 1042,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        }
+      ],
+      "completed_dag_weight": 8.0,
+      "distance_to_target_share_0_03": 0.024873194754610587,
+      "energy_weight": 0.1,
+      "mean_cancellation_ratio": 0.7143426804922118,
+      "mean_task_energy_absolute_share": 0.005126805245389412,
+      "obvious_reverse_ranking": false,
+      "pareto_contradiction_count": 0,
+      "pareto_contradictions": [],
+      "selection_constraints_pass": true
+    },
+    {
+      "alignment_by_seed": [
+        {
+          "reward_ranking_best_to_worst": [
+            "nearest_legal",
+            "greedy_eft",
+            "random_legal"
+          ],
+          "seed": 42,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        },
+        {
+          "reward_ranking_best_to_worst": [
+            "greedy_eft",
+            "nearest_legal",
+            "random_legal"
+          ],
+          "seed": 86,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        },
+        {
+          "reward_ranking_best_to_worst": [
+            "nearest_legal",
+            "greedy_eft",
+            "random_legal"
+          ],
+          "seed": 1042,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        }
+      ],
+      "completed_dag_weight": 8.0,
+      "distance_to_target_share_0_03": 0.017282301549187362,
+      "energy_weight": 0.25,
+      "mean_cancellation_ratio": 0.7214636580838952,
+      "mean_task_energy_absolute_share": 0.012717698450812638,
+      "obvious_reverse_ranking": false,
+      "pareto_contradiction_count": 0,
+      "pareto_contradictions": [],
+      "selection_constraints_pass": true
+    },
+    {
+      "alignment_by_seed": [
+        {
+          "reward_ranking_best_to_worst": [
+            "nearest_legal",
+            "greedy_eft",
+            "random_legal"
+          ],
+          "seed": 42,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        },
+        {
+          "reward_ranking_best_to_worst": [
+            "greedy_eft",
+            "nearest_legal",
+            "random_legal"
+          ],
+          "seed": 86,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        },
+        {
+          "reward_ranking_best_to_worst": [
+            "nearest_legal",
+            "greedy_eft",
+            "random_legal"
+          ],
+          "seed": 1042,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        }
+      ],
+      "completed_dag_weight": 8.0,
+      "distance_to_target_share_0_03": 0.004888803567682256,
+      "energy_weight": 0.5,
+      "mean_cancellation_ratio": 0.7330684293537578,
+      "mean_task_energy_absolute_share": 0.025111196432317743,
+      "obvious_reverse_ranking": false,
+      "pareto_contradiction_count": 0,
+      "pareto_contradictions": [],
+      "selection_constraints_pass": true
+    },
+    {
+      "alignment_by_seed": [
+        {
+          "reward_ranking_best_to_worst": [
+            "nearest_legal",
+            "greedy_eft",
+            "random_legal"
+          ],
+          "seed": 42,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        },
+        {
+          "reward_ranking_best_to_worst": [
+            "greedy_eft",
+            "nearest_legal",
+            "random_legal"
+          ],
+          "seed": 86,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        },
+        {
+          "reward_ranking_best_to_worst": [
+            "nearest_legal",
+            "greedy_eft",
+            "random_legal"
+          ],
+          "seed": 1042,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        }
+      ],
+      "completed_dag_weight": 8.0,
+      "distance_to_target_share_0_03": 0.01897459454945105,
+      "energy_weight": 1.0,
+      "mean_cancellation_ratio": 0.7553377674388939,
+      "mean_task_energy_absolute_share": 0.04897459454945105,
+      "obvious_reverse_ranking": false,
+      "pareto_contradiction_count": 0,
+      "pareto_contradictions": [],
+      "selection_constraints_pass": true
+    }
+  ],
+  "energy_selection_target_absolute_share": 0.03,
+  "low_cancel_candidates": [
+    {
+      "alignment_by_seed": [
+        {
+          "reward_ranking_best_to_worst": [
+            "nearest_legal",
+            "greedy_eft",
+            "random_legal"
+          ],
+          "seed": 42,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        },
+        {
+          "reward_ranking_best_to_worst": [
+            "greedy_eft",
+            "nearest_legal",
+            "random_legal"
+          ],
+          "seed": 86,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        },
+        {
+          "reward_ranking_best_to_worst": [
+            "nearest_legal",
+            "greedy_eft",
+            "random_legal"
+          ],
+          "seed": 1042,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        }
+      ],
+      "cancellation_reduction_vs_weight_8": 0.0,
+      "completed_dag_weight": 8.0,
+      "energy_weight": 0.05,
+      "mean_cancellation_ratio": 0.7119419940081163,
+      "mean_task_energy_absolute_share": 0.002570093738430016,
+      "obvious_reverse_ranking": false,
+      "pareto_contradiction_count": 0,
+      "pareto_contradictions": [],
+      "selection_constraints_pass": false
+    },
+    {
+      "alignment_by_seed": [
+        {
+          "reward_ranking_best_to_worst": [
+            "nearest_legal",
+            "greedy_eft",
+            "random_legal"
+          ],
+          "seed": 42,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        },
+        {
+          "reward_ranking_best_to_worst": [
+            "greedy_eft",
+            "nearest_legal",
+            "random_legal"
+          ],
+          "seed": 86,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        },
+        {
+          "reward_ranking_best_to_worst": [
+            "nearest_legal",
+            "greedy_eft",
+            "random_legal"
+          ],
+          "seed": 1042,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        }
+      ],
+      "cancellation_reduction_vs_weight_8": -0.09191199548183447,
+      "completed_dag_weight": 6.0,
+      "energy_weight": 0.05,
+      "mean_cancellation_ratio": 0.7773780033447185,
+      "mean_task_energy_absolute_share": 0.0030279735914179595,
+      "obvious_reverse_ranking": false,
+      "pareto_contradiction_count": 0,
+      "pareto_contradictions": [],
+      "selection_constraints_pass": false
+    },
+    {
+      "alignment_by_seed": [
+        {
+          "reward_ranking_best_to_worst": [
+            "nearest_legal",
+            "greedy_eft",
+            "random_legal"
+          ],
+          "seed": 42,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        },
+        {
+          "reward_ranking_best_to_worst": [
+            "greedy_eft",
+            "nearest_legal",
+            "random_legal"
+          ],
+          "seed": 86,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        },
+        {
+          "reward_ranking_best_to_worst": [
+            "nearest_legal",
+            "greedy_eft",
+            "random_legal"
+          ],
+          "seed": 1042,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        }
+      ],
+      "cancellation_reduction_vs_weight_8": -0.08210692080989196,
+      "completed_dag_weight": 4.0,
+      "energy_weight": 0.05,
+      "mean_cancellation_ratio": 0.7703973589313773,
+      "mean_task_energy_absolute_share": 0.0037015658847549667,
+      "obvious_reverse_ranking": false,
+      "pareto_contradiction_count": 0,
+      "pareto_contradictions": [],
+      "selection_constraints_pass": false
+    },
+    {
+      "alignment_by_seed": [
+        {
+          "reward_ranking_best_to_worst": [
+            "nearest_legal",
+            "greedy_eft",
+            "random_legal"
+          ],
+          "seed": 42,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        },
+        {
+          "reward_ranking_best_to_worst": [
+            "nearest_legal",
+            "greedy_eft",
+            "random_legal"
+          ],
+          "seed": 86,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 0.5,
+            "completed_dags": 0.5,
+            "critical_path_delay": 0.5
+          }
+        },
+        {
+          "reward_ranking_best_to_worst": [
+            "nearest_legal",
+            "greedy_eft",
+            "random_legal"
+          ],
+          "seed": 1042,
+          "spearman_reward_vs_better_metric": {
+            "avg_flowtime": 1.0,
+            "completed_dags": 1.0,
+            "critical_path_delay": 1.0
+          }
+        }
+      ],
+      "cancellation_reduction_vs_weight_8": 0.06575438781308525,
+      "completed_dag_weight": 2.0,
+      "energy_weight": 0.05,
+      "mean_cancellation_ratio": 0.6651286840336854,
+      "mean_task_energy_absolute_share": 0.004812637301400753,
+      "obvious_reverse_ranking": false,
+      "pareto_contradiction_count": 0,
+      "pareto_contradictions": [],
+      "selection_constraints_pass": false
+    }
+  ],
+  "low_cancel_selection_rule_applied": "fallback: valid direction/Pareto candidate with minimum cancellation",
+  "schema": "r2_reward_offline_sweep_v1",
+  "selected_energy_weight": 0.5,
+  "selected_low_cancel_weight": 2.0,
+  "source_schema": "r1b_reward_alignment_v1",
+  "source_server_code_commit": "c5e173f0715b6000ca0c9434755e3908dfe964b3"
+}

@@ -1,0 +1,226 @@
+{
+  "checkpoint": "/data2/zrj2025/HyperUAV-decision-q-v2-3seed-120u-a950187-20260831/runs/seed0/20260831_165755_decision_q_v2_seed0_seed0/checkpoints/checkpoint_update_0030.pt",
+  "checkpoint_episode": 14,
+  "checkpoint_update": 30,
+  "decision": {
+    "bootstrap": 0.289619516025554,
+    "branches": [
+      {
+        "completion_scale_return": null,
+        "current_slot_reward": -0.044310354981041855,
+        "diagnostic_truncated_return": 7.558592432735011,
+        "future_reward_sequence": [
+          -0.20577027116089597,
+          7.965121269426937
+        ],
+        "target_dag_completion_horizon": null,
+        "uav_id": 0
+      },
+      {
+        "completion_scale_return": null,
+        "current_slot_reward": -0.044310354981041855,
+        "diagnostic_truncated_return": 7.7304395846174065,
+        "future_reward_sequence": [
+          -0.11522119617862656,
+          8.048993902474532
+        ],
+        "target_dag_completion_horizon": null,
+        "uav_id": 1
+      },
+      {
+        "completion_scale_return": null,
+        "current_slot_reward": -0.044310354981041855,
+        "diagnostic_truncated_return": 7.751623082488033,
+        "future_reward_sequence": [
+          -0.04400051366495278,
+          7.998667427810814
+        ],
+        "target_dag_completion_horizon": null,
+        "uav_id": 2
+      },
+      {
+        "completion_scale_return": null,
+        "current_slot_reward": -0.044310354981041855,
+        "diagnostic_truncated_return": 7.7304395846174065,
+        "future_reward_sequence": [
+          -0.11522119617862656,
+          8.048993902474532
+        ],
+        "target_dag_completion_horizon": null,
+        "uav_id": 3
+      },
+      {
+        "completion_scale_return": null,
+        "current_slot_reward": -0.032,
+        "diagnostic_truncated_return": 0.25696010709909356,
+        "future_reward_sequence": [
+          0.2574253459755764,
+          0.03480156574152929
+        ],
+        "target_dag_completion_horizon": null,
+        "uav_id": 4
+      }
+    ],
+    "candidate_ids": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "decision_order": 0,
+    "delta": 0,
+    "legal_candidate_ids": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "legal_q_vector": [
+      0.27936652302742004,
+      0.28829053044319153,
+      0.280117392539978,
+      0.2893229126930237,
+      0.278879851102829
+    ],
+    "q_ranking": [
+      3,
+      1,
+      2,
+      0,
+      4
+    ],
+    "q_spread": 0.010443061590194702,
+    "q_top1": 3,
+    "rho": 0.0,
+    "same_slot_suffix_discounted": false,
+    "target": 0.289619516025554,
+    "task_id": "task_1"
+  },
+  "exact_state_branch_proof": [
+    {
+      "differing_decision_orders": [
+        0
+      ],
+      "forced_uav_id": 0,
+      "strict_suffix_feasible": true
+    },
+    {
+      "differing_decision_orders": [
+        0
+      ],
+      "forced_uav_id": 1,
+      "strict_suffix_feasible": true
+    },
+    {
+      "differing_decision_orders": [
+        0
+      ],
+      "forced_uav_id": 2,
+      "strict_suffix_feasible": true
+    },
+    {
+      "differing_decision_orders": [
+        0
+      ],
+      "forced_uav_id": 3,
+      "strict_suffix_feasible": true
+    },
+    {
+      "differing_decision_orders": [],
+      "forced_uav_id": 4,
+      "strict_suffix_feasible": true
+    }
+  ],
+  "gates": {
+    "exact_state_branch_correct": true,
+    "q_vector_candidate_ids_aligned": true,
+    "semantic_mismatch_count": 0,
+    "serial_process_complete_result_equal": true,
+    "shared_semantic_keys_checked": 235,
+    "single_post_movement_pre_offloading_branch_root": true,
+    "strict_suffix_feasible_all": true,
+    "training_parameters_unchanged": true,
+    "unrecognized_environment_rng_calls": 0
+  },
+  "historical_training_snapshot_recovered": false,
+  "optimizer_steps": 0,
+  "policy_and_critics_frozen": true,
+  "replay_episode": 15,
+  "schema": "decision_q_v2_ranking_crn_smoke_v1",
+  "serial_audit": {
+    "semantic_key_mismatches": [],
+    "shared_semantic_keys_checked": 235,
+    "unrecognized_environment_calls": 0
+  },
+  "serial_decision": {
+    "baseline_uav_id": 4,
+    "branches": [
+      {
+        "common_discounted_return": null,
+        "forced_uav_id": 0,
+        "reward_sequence": [
+          -0.20577027116089597,
+          7.965121269426937
+        ],
+        "target_dag_completion_horizon": null,
+        "target_dag_completion_time": null
+      },
+      {
+        "common_discounted_return": null,
+        "forced_uav_id": 1,
+        "reward_sequence": [
+          -0.11522119617862656,
+          8.048993902474532
+        ],
+        "target_dag_completion_horizon": null,
+        "target_dag_completion_time": null
+      },
+      {
+        "common_discounted_return": null,
+        "forced_uav_id": 2,
+        "reward_sequence": [
+          -0.04400051366495278,
+          7.998667427810814
+        ],
+        "target_dag_completion_horizon": null,
+        "target_dag_completion_time": null
+      },
+      {
+        "common_discounted_return": null,
+        "forced_uav_id": 3,
+        "reward_sequence": [
+          -0.11522119617862656,
+          8.048993902474532
+        ],
+        "target_dag_completion_horizon": null,
+        "target_dag_completion_time": null
+      },
+      {
+        "common_discounted_return": null,
+        "forced_uav_id": 4,
+        "reward_sequence": [
+          0.2574253459755764,
+          0.03480156574152929
+        ],
+        "target_dag_completion_horizon": null,
+        "target_dag_completion_time": null
+      }
+    ],
+    "candidate_uav_ids": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "common_completion_horizon": null,
+    "decision_order": 0,
+    "first_rng_divergence_slot": null,
+    "stop_reason": "future_slot_cap",
+    "target_task_id": "task_1"
+  },
+  "slot_index": 0,
+  "state_semantics": "frozen-checkpoint replay-generated on-policy decision states"
+}

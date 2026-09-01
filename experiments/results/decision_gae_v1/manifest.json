@@ -1,0 +1,117 @@
+{
+  "arms": {
+    "decision": {
+      "offloading_decision_gae": true
+    },
+    "shared": {
+      "offloading_decision_gae": false
+    }
+  },
+  "checkpoint_files_in_archive": false,
+  "evaluation": {
+    "arrival_steps": 200,
+    "checkpoints": [
+      30,
+      60,
+      90,
+      120
+    ],
+    "count": 24,
+    "deterministic": true,
+    "episodes_per_checkpoint": 10,
+    "evaluation_seed": "same as training seed",
+    "max_drain_steps": 300,
+    "movement": "deterministic learned movement actor; not fixed-hover"
+  },
+  "experiment_root": "/data2/zrj2025/HyperUAV-decision-gae-paired-120u-20260830",
+  "head": "8070bc4fdd12ee4a513216bcd1bed3a87f6e2bed",
+  "paired_initialization_all_pass": true,
+  "resolved_config_only_active_semantic_difference": "offloading_decision_gae",
+  "runs": {
+    "decision_seed0": {
+      "checkpoint_files_in_package": false,
+      "evaluation_checkpoints": [
+        30,
+        60,
+        90,
+        120
+      ],
+      "ppo_update_max": 120,
+      "ppo_update_min": 1,
+      "source_run_dir": "/data2/zrj2025/HyperUAV-decision-gae-paired-120u-20260830/runs/seed0/decision_gae/20260830_162611_paired120_decision_gae_seed0_visible7_seed0",
+      "training_metric_rows": 120
+    },
+    "decision_seed1": {
+      "checkpoint_files_in_package": false,
+      "evaluation_checkpoints": [
+        30,
+        60,
+        90,
+        120
+      ],
+      "ppo_update_max": 120,
+      "ppo_update_min": 1,
+      "source_run_dir": "/data2/zrj2025/HyperUAV-decision-gae-paired-120u-20260830/runs/seed1/decision_gae/20260830_162611_paired120_decision_gae_seed1_visible7_seed1",
+      "training_metric_rows": 120
+    },
+    "decision_seed2": {
+      "checkpoint_files_in_package": false,
+      "evaluation_checkpoints": [
+        30,
+        60,
+        90,
+        120
+      ],
+      "ppo_update_max": 120,
+      "ppo_update_min": 1,
+      "source_run_dir": "/data2/zrj2025/HyperUAV-decision-gae-paired-120u-20260830/runs/seed2/decision_gae/20260830_162611_paired120_decision_gae_seed2_visible7_seed2",
+      "training_metric_rows": 120
+    },
+    "shared_seed0": {
+      "checkpoint_files_in_package": false,
+      "evaluation_checkpoints": [
+        30,
+        60,
+        90,
+        120
+      ],
+      "ppo_update_max": 120,
+      "ppo_update_min": 1,
+      "source_run_dir": "/data2/zrj2025/HyperUAV-decision-gae-paired-120u-20260830/runs/seed0/shared_slot_gae/20260830_162612_paired120_shared_slot_gae_seed0_visible7_seed0",
+      "training_metric_rows": 120
+    },
+    "shared_seed1": {
+      "checkpoint_files_in_package": false,
+      "evaluation_checkpoints": [
+        30,
+        60,
+        90,
+        120
+      ],
+      "ppo_update_max": 120,
+      "ppo_update_min": 1,
+      "source_run_dir": "/data2/zrj2025/HyperUAV-decision-gae-paired-120u-20260830/runs/seed1/shared_slot_gae/20260830_162611_paired120_shared_slot_gae_seed1_visible7_seed1",
+      "training_metric_rows": 120
+    },
+    "shared_seed2": {
+      "checkpoint_files_in_package": false,
+      "evaluation_checkpoints": [
+        30,
+        60,
+        90,
+        120
+      ],
+      "ppo_update_max": 120,
+      "ppo_update_min": 1,
+      "source_run_dir": "/data2/zrj2025/HyperUAV-decision-gae-paired-120u-20260830/runs/seed2/shared_slot_gae/20260830_162617_paired120_shared_slot_gae_seed2_visible7_seed2",
+      "training_metric_rows": 120
+    }
+  },
+  "schema": "decision_gae_3seed_results_bundle_v1",
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "training_updates": 120
+}

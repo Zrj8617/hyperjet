@@ -1,0 +1,1999 @@
+{
+  "crn_audit": {
+    "by_eval_seed": [
+      {
+        "checkpoint_count": 12,
+        "seed": 42,
+        "semantic_key_mismatches": 0,
+        "shared_semantic_keys_checked": 51473,
+        "unrecognized_environment_calls": 0
+      },
+      {
+        "checkpoint_count": 12,
+        "seed": 86,
+        "semantic_key_mismatches": 0,
+        "shared_semantic_keys_checked": 54553,
+        "unrecognized_environment_calls": 0
+      },
+      {
+        "checkpoint_count": 12,
+        "seed": 1042,
+        "semantic_key_mismatches": 0,
+        "shared_semantic_keys_checked": 52606,
+        "unrecognized_environment_calls": 0
+      }
+    ],
+    "pass": true,
+    "semantic_key": "(slot, ue_id, subsystem)"
+  },
+  "evaluation_runs": [
+    {
+      "arm": "control",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed42/training/20260827_210714_r2_control_seed42_formal_seed42/checkpoints/latest.pt",
+      "eval_seed": 42,
+      "metrics": {
+        "arrival_admitted_count": 207,
+        "avg_critical_path_delay": 161.3083908697255,
+        "avg_dag_flowtime": 488.4309716277916,
+        "avg_uav_queue": 14.374,
+        "completed_dag_count": 165,
+        "completion_rate": 0.7971014492753623,
+        "episode_reward": 308.82015100513814,
+        "generated_dag_count": 207,
+        "mean_pending_tasks": 90.516,
+        "mean_ready_tasks": 11.178,
+        "task_energy": 33393.991319646986,
+        "task_energy_per_completed_dag": 202.3878261796787
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 42
+    },
+    {
+      "arm": "control",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed42/training/20260827_210714_r2_control_seed42_formal_seed42/checkpoints/latest.pt",
+      "eval_seed": 86,
+      "metrics": {
+        "arrival_admitted_count": 297,
+        "avg_critical_path_delay": 83.92390842070965,
+        "avg_dag_flowtime": 251.35691107227137,
+        "avg_uav_queue": 11.548,
+        "completed_dag_count": 265,
+        "completion_rate": 0.8922558922558923,
+        "episode_reward": 1323.02233930211,
+        "generated_dag_count": 297,
+        "mean_pending_tasks": 62.182,
+        "mean_ready_tasks": 3.74,
+        "task_energy": 44136.17208201863,
+        "task_energy_per_completed_dag": 166.55159276233445
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 42
+    },
+    {
+      "arm": "control",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed42/training/20260827_210714_r2_control_seed42_formal_seed42/checkpoints/latest.pt",
+      "eval_seed": 1042,
+      "metrics": {
+        "arrival_admitted_count": 188,
+        "avg_critical_path_delay": 177.77638388151007,
+        "avg_dag_flowtime": 545.9878107512997,
+        "avg_uav_queue": 13.8128,
+        "completed_dag_count": 143,
+        "completion_rate": 0.7606382978723404,
+        "episode_reward": 144.70454650416937,
+        "generated_dag_count": 188,
+        "mean_pending_tasks": 83.846,
+        "mean_ready_tasks": 8.44,
+        "task_energy": 27276.67020127021,
+        "task_energy_per_completed_dag": 190.74594546342806
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 42
+    },
+    {
+      "arm": "control",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed86/training/20260827_210714_r2_control_seed86_formal_seed86/checkpoints/latest.pt",
+      "eval_seed": 42,
+      "metrics": {
+        "arrival_admitted_count": 177,
+        "avg_critical_path_delay": 210.3825232932119,
+        "avg_dag_flowtime": 625.7721273192584,
+        "avg_uav_queue": 14.9836,
+        "completed_dag_count": 138,
+        "completion_rate": 0.7796610169491526,
+        "episode_reward": -22.562096858121,
+        "generated_dag_count": 177,
+        "mean_pending_tasks": 91.05,
+        "mean_ready_tasks": 12.584,
+        "task_energy": 29266.132569610432,
+        "task_energy_per_completed_dag": 212.0734244174669
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 86
+    },
+    {
+      "arm": "control",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed86/training/20260827_210714_r2_control_seed86_formal_seed86/checkpoints/latest.pt",
+      "eval_seed": 86,
+      "metrics": {
+        "arrival_admitted_count": 318,
+        "avg_critical_path_delay": 70.80063454458335,
+        "avg_dag_flowtime": 209.32063184613762,
+        "avg_uav_queue": 10.7212,
+        "completed_dag_count": 291,
+        "completion_rate": 0.9150943396226415,
+        "episode_reward": 1594.4856309594063,
+        "generated_dag_count": 318,
+        "mean_pending_tasks": 58.876,
+        "mean_ready_tasks": 4.56,
+        "task_energy": 47220.89668265353,
+        "task_energy_per_completed_dag": 162.27112262080252
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 86
+    },
+    {
+      "arm": "control",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed86/training/20260827_210714_r2_control_seed86_formal_seed86/checkpoints/latest.pt",
+      "eval_seed": 1042,
+      "metrics": {
+        "arrival_admitted_count": 290,
+        "avg_critical_path_delay": 78.78344767920112,
+        "avg_dag_flowtime": 240.38715511963844,
+        "avg_uav_queue": 10.3904,
+        "completed_dag_count": 263,
+        "completion_rate": 0.906896551724138,
+        "episode_reward": 1364.476840675474,
+        "generated_dag_count": 290,
+        "mean_pending_tasks": 59.446,
+        "mean_ready_tasks": 3.556,
+        "task_energy": 43482.78021724872,
+        "task_energy_per_completed_dag": 165.3337650845959
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 86
+    },
+    {
+      "arm": "control",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed1042/training/20260827_210714_r2_control_seed1042_formal_seed1042/checkpoints/latest.pt",
+      "eval_seed": 42,
+      "metrics": {
+        "arrival_admitted_count": 157,
+        "avg_critical_path_delay": 270.4465967321506,
+        "avg_dag_flowtime": 774.2291999756404,
+        "avg_uav_queue": 15.0996,
+        "completed_dag_count": 114,
+        "completion_rate": 0.7261146496815286,
+        "episode_reward": -265.4906279727671,
+        "generated_dag_count": 157,
+        "mean_pending_tasks": 111.646,
+        "mean_ready_tasks": 19.53,
+        "task_energy": 24462.75191461097,
+        "task_energy_per_completed_dag": 214.58554311062255
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 1042
+    },
+    {
+      "arm": "control",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed1042/training/20260827_210714_r2_control_seed1042_formal_seed1042/checkpoints/latest.pt",
+      "eval_seed": 86,
+      "metrics": {
+        "arrival_admitted_count": 189,
+        "avg_critical_path_delay": 195.87985530360183,
+        "avg_dag_flowtime": 584.4551995323237,
+        "avg_uav_queue": 14.4364,
+        "completed_dag_count": 148,
+        "completion_rate": 0.783068783068783,
+        "episode_reward": 96.7744883367101,
+        "generated_dag_count": 189,
+        "mean_pending_tasks": 99.426,
+        "mean_ready_tasks": 13.052,
+        "task_energy": 26487.764240063214,
+        "task_energy_per_completed_dag": 178.97138000042713
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 1042
+    },
+    {
+      "arm": "control",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed1042/training/20260827_210714_r2_control_seed1042_formal_seed1042/checkpoints/latest.pt",
+      "eval_seed": 1042,
+      "metrics": {
+        "arrival_admitted_count": 116,
+        "avg_critical_path_delay": 392.7580772258186,
+        "avg_dag_flowtime": 1172.338551054745,
+        "avg_uav_queue": 14.9116,
+        "completed_dag_count": 69,
+        "completion_rate": 0.5948275862068966,
+        "episode_reward": -604.032188731831,
+        "generated_dag_count": 116,
+        "mean_pending_tasks": 110.65,
+        "mean_ready_tasks": 19.324,
+        "task_energy": 17500.039481122003,
+        "task_energy_per_completed_dag": 253.62376059597105
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 1042
+    },
+    {
+      "arm": "no_position",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed42/training/20260827_210714_r2_no_position_seed42_formal_seed42/checkpoints/latest.pt",
+      "eval_seed": 42,
+      "metrics": {
+        "arrival_admitted_count": 244,
+        "avg_critical_path_delay": 126.81247767371282,
+        "avg_dag_flowtime": 371.1373586426988,
+        "avg_uav_queue": 13.5064,
+        "completed_dag_count": 207,
+        "completion_rate": 0.8483606557377049,
+        "episode_reward": 587.8090621326651,
+        "generated_dag_count": 244,
+        "mean_pending_tasks": 81.876,
+        "mean_ready_tasks": 8.618,
+        "task_energy": 38671.27726274691,
+        "task_energy_per_completed_dag": 186.81776455433288
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": false
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 42
+    },
+    {
+      "arm": "no_position",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed42/training/20260827_210714_r2_no_position_seed42_formal_seed42/checkpoints/latest.pt",
+      "eval_seed": 86,
+      "metrics": {
+        "arrival_admitted_count": 351,
+        "avg_critical_path_delay": 55.9262344915356,
+        "avg_dag_flowtime": 171.6098818192024,
+        "avg_uav_queue": 9.1864,
+        "completed_dag_count": 330,
+        "completion_rate": 0.9401709401709402,
+        "episode_reward": 1908.7229345827236,
+        "generated_dag_count": 351,
+        "mean_pending_tasks": 51.858,
+        "mean_ready_tasks": 4.526,
+        "task_energy": 49201.10234268113,
+        "task_energy_per_completed_dag": 149.09424952327615
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": false
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 42
+    },
+    {
+      "arm": "no_position",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed42/training/20260827_210714_r2_no_position_seed42_formal_seed42/checkpoints/latest.pt",
+      "eval_seed": 1042,
+      "metrics": {
+        "arrival_admitted_count": 311,
+        "avg_critical_path_delay": 62.96246018655244,
+        "avg_dag_flowtime": 196.01223201902718,
+        "avg_uav_queue": 8.9876,
+        "completed_dag_count": 288,
+        "completion_rate": 0.9260450160771704,
+        "episode_reward": 1588.5100236143433,
+        "generated_dag_count": 311,
+        "mean_pending_tasks": 50.106,
+        "mean_ready_tasks": 3.84,
+        "task_energy": 47472.326094281045,
+        "task_energy_per_completed_dag": 164.83446560514253
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": false
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 42
+    },
+    {
+      "arm": "no_position",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed86/training/20260827_210714_r2_no_position_seed86_formal_seed86/checkpoints/latest.pt",
+      "eval_seed": 42,
+      "metrics": {
+        "arrival_admitted_count": 333,
+        "avg_critical_path_delay": 64.27141192196865,
+        "avg_dag_flowtime": 200.34120624940053,
+        "avg_uav_queue": 10.1696,
+        "completed_dag_count": 314,
+        "completion_rate": 0.9429429429429429,
+        "episode_reward": 1715.3616236513817,
+        "generated_dag_count": 333,
+        "mean_pending_tasks": 53.618,
+        "mean_ready_tasks": 4.306,
+        "task_energy": 53120.48003800294,
+        "task_energy_per_completed_dag": 169.17350330574186
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": false
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 86
+    },
+    {
+      "arm": "no_position",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed86/training/20260827_210714_r2_no_position_seed86_formal_seed86/checkpoints/latest.pt",
+      "eval_seed": 86,
+      "metrics": {
+        "arrival_admitted_count": 384,
+        "avg_critical_path_delay": 39.90536830599938,
+        "avg_dag_flowtime": 116.94726951473048,
+        "avg_uav_queue": 7.1232,
+        "completed_dag_count": 358,
+        "completion_rate": 0.9322916666666666,
+        "episode_reward": 2290.0631799413213,
+        "generated_dag_count": 384,
+        "mean_pending_tasks": 39.59,
+        "mean_ready_tasks": 4.852,
+        "task_energy": 55489.88897004267,
+        "task_energy_per_completed_dag": 154.9996898604544
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": false
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 86
+    },
+    {
+      "arm": "no_position",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed86/training/20260827_210714_r2_no_position_seed86_formal_seed86/checkpoints/latest.pt",
+      "eval_seed": 1042,
+      "metrics": {
+        "arrival_admitted_count": 305,
+        "avg_critical_path_delay": 63.13508833923318,
+        "avg_dag_flowtime": 198.8877635519791,
+        "avg_uav_queue": 8.5912,
+        "completed_dag_count": 286,
+        "completion_rate": 0.9377049180327869,
+        "episode_reward": 1593.9351481028905,
+        "generated_dag_count": 305,
+        "mean_pending_tasks": 52.028,
+        "mean_ready_tasks": 3.798,
+        "task_energy": 45899.27608088485,
+        "task_energy_per_completed_dag": 160.48697930379316
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": false
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 86
+    },
+    {
+      "arm": "no_position",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed1042/training/20260827_210714_r2_no_position_seed1042_formal_seed1042/checkpoints/latest.pt",
+      "eval_seed": 42,
+      "metrics": {
+        "arrival_admitted_count": 172,
+        "avg_critical_path_delay": 229.22422976140447,
+        "avg_dag_flowtime": 643.8519981647471,
+        "avg_uav_queue": 15.0652,
+        "completed_dag_count": 133,
+        "completion_rate": 0.7732558139534884,
+        "episode_reward": -195.595004454906,
+        "generated_dag_count": 172,
+        "mean_pending_tasks": 100.596,
+        "mean_ready_tasks": 17.032,
+        "task_energy": 27075.049244526333,
+        "task_energy_per_completed_dag": 203.57179883102506
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": false
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 1042
+    },
+    {
+      "arm": "no_position",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed1042/training/20260827_210714_r2_no_position_seed1042_formal_seed1042/checkpoints/latest.pt",
+      "eval_seed": 86,
+      "metrics": {
+        "arrival_admitted_count": 255,
+        "avg_critical_path_delay": 109.2453018216236,
+        "avg_dag_flowtime": 331.16540563519766,
+        "avg_uav_queue": 13.1756,
+        "completed_dag_count": 216,
+        "completion_rate": 0.8470588235294118,
+        "episode_reward": 743.9128867801112,
+        "generated_dag_count": 255,
+        "mean_pending_tasks": 71.594,
+        "mean_ready_tasks": 5.57,
+        "task_energy": 36525.81557083763,
+        "task_energy_per_completed_dag": 169.10099801313717
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": false
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 1042
+    },
+    {
+      "arm": "no_position",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed1042/training/20260827_210714_r2_no_position_seed1042_formal_seed1042/checkpoints/latest.pt",
+      "eval_seed": 1042,
+      "metrics": {
+        "arrival_admitted_count": 164,
+        "avg_critical_path_delay": 224.69563988577974,
+        "avg_dag_flowtime": 642.9557314701691,
+        "avg_uav_queue": 14.5152,
+        "completed_dag_count": 122,
+        "completion_rate": 0.7439024390243902,
+        "episode_reward": -188.8994546402623,
+        "generated_dag_count": 164,
+        "mean_pending_tasks": 92.564,
+        "mean_ready_tasks": 11.342,
+        "task_energy": 25054.37035636613,
+        "task_energy_per_completed_dag": 205.363691445624
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": false
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 1042
+    },
+    {
+      "arm": "low_cancel",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed42/training/20260827_210714_r2_low_cancel_seed42_formal_seed42/checkpoints/latest.pt",
+      "eval_seed": 42,
+      "metrics": {
+        "arrival_admitted_count": 178,
+        "avg_critical_path_delay": 187.5555594383057,
+        "avg_dag_flowtime": 600.0060587020408,
+        "avg_uav_queue": 14.4236,
+        "completed_dag_count": 142,
+        "completion_rate": 0.797752808988764,
+        "episode_reward": -749.9269623262403,
+        "generated_dag_count": 178,
+        "mean_pending_tasks": 77.292,
+        "mean_ready_tasks": 6.952,
+        "task_energy": 31072.255407375378,
+        "task_energy_per_completed_dag": 218.8187000519393
+      },
+      "reward_override": {
+        "completed_dag_weight": 2.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 42
+    },
+    {
+      "arm": "low_cancel",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed42/training/20260827_210714_r2_low_cancel_seed42_formal_seed42/checkpoints/latest.pt",
+      "eval_seed": 86,
+      "metrics": {
+        "arrival_admitted_count": 220,
+        "avg_critical_path_delay": 134.06126483277066,
+        "avg_dag_flowtime": 430.72304810630567,
+        "avg_uav_queue": 13.4956,
+        "completed_dag_count": 185,
+        "completion_rate": 0.8409090909090909,
+        "episode_reward": -562.1829664044951,
+        "generated_dag_count": 220,
+        "mean_pending_tasks": 73.476,
+        "mean_ready_tasks": 6.002,
+        "task_energy": 31251.706389306346,
+        "task_energy_per_completed_dag": 168.92814264489917
+      },
+      "reward_override": {
+        "completed_dag_weight": 2.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 42
+    },
+    {
+      "arm": "low_cancel",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed42/training/20260827_210714_r2_low_cancel_seed42_formal_seed42/checkpoints/latest.pt",
+      "eval_seed": 1042,
+      "metrics": {
+        "arrival_admitted_count": 144,
+        "avg_critical_path_delay": 288.80318577808305,
+        "avg_dag_flowtime": 858.9519085973983,
+        "avg_uav_queue": 14.7188,
+        "completed_dag_count": 100,
+        "completion_rate": 0.6944444444444444,
+        "episode_reward": -915.5452788331392,
+        "generated_dag_count": 144,
+        "mean_pending_tasks": 96.77,
+        "mean_ready_tasks": 16.682,
+        "task_energy": 20441.56657258214,
+        "task_energy_per_completed_dag": 204.4156657258214
+      },
+      "reward_override": {
+        "completed_dag_weight": 2.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 42
+    },
+    {
+      "arm": "low_cancel",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed86/training/20260827_210714_r2_low_cancel_seed86_formal_seed86/checkpoints/latest.pt",
+      "eval_seed": 42,
+      "metrics": {
+        "arrival_admitted_count": 183,
+        "avg_critical_path_delay": 208.40214142690252,
+        "avg_dag_flowtime": 656.02821535632,
+        "avg_uav_queue": 14.8184,
+        "completed_dag_count": 144,
+        "completion_rate": 0.7868852459016393,
+        "episode_reward": -853.1915367972667,
+        "generated_dag_count": 183,
+        "mean_pending_tasks": 87.0,
+        "mean_ready_tasks": 12.78,
+        "task_energy": 31073.3963795259,
+        "task_energy_per_completed_dag": 215.78747485781875
+      },
+      "reward_override": {
+        "completed_dag_weight": 2.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 86
+    },
+    {
+      "arm": "low_cancel",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed86/training/20260827_210714_r2_low_cancel_seed86_formal_seed86/checkpoints/latest.pt",
+      "eval_seed": 86,
+      "metrics": {
+        "arrival_admitted_count": 215,
+        "avg_critical_path_delay": 157.08374992851765,
+        "avg_dag_flowtime": 469.91201675793036,
+        "avg_uav_queue": 14.274,
+        "completed_dag_count": 185,
+        "completion_rate": 0.8604651162790697,
+        "episode_reward": -690.2684113672638,
+        "generated_dag_count": 215,
+        "mean_pending_tasks": 83.952,
+        "mean_ready_tasks": 8.59,
+        "task_energy": 31806.98001805791,
+        "task_energy_per_completed_dag": 171.92962171923196
+      },
+      "reward_override": {
+        "completed_dag_weight": 2.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 86
+    },
+    {
+      "arm": "low_cancel",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed86/training/20260827_210714_r2_low_cancel_seed86_formal_seed86/checkpoints/latest.pt",
+      "eval_seed": 1042,
+      "metrics": {
+        "arrival_admitted_count": 149,
+        "avg_critical_path_delay": 261.5660818186472,
+        "avg_dag_flowtime": 775.4611552755049,
+        "avg_uav_queue": 14.7892,
+        "completed_dag_count": 109,
+        "completion_rate": 0.7315436241610739,
+        "episode_reward": -891.5543127369457,
+        "generated_dag_count": 149,
+        "mean_pending_tasks": 95.842,
+        "mean_ready_tasks": 12.308,
+        "task_energy": 22718.72598824202,
+        "task_energy_per_completed_dag": 208.42867879121118
+      },
+      "reward_override": {
+        "completed_dag_weight": 2.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 86
+    },
+    {
+      "arm": "low_cancel",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed1042/training/20260827_210714_r2_low_cancel_seed1042_formal_seed1042/checkpoints/latest.pt",
+      "eval_seed": 42,
+      "metrics": {
+        "arrival_admitted_count": 173,
+        "avg_critical_path_delay": 211.72524748283513,
+        "avg_dag_flowtime": 639.6965393637694,
+        "avg_uav_queue": 15.0012,
+        "completed_dag_count": 132,
+        "completion_rate": 0.7630057803468208,
+        "episode_reward": -824.717402008612,
+        "generated_dag_count": 173,
+        "mean_pending_tasks": 86.732,
+        "mean_ready_tasks": 9.97,
+        "task_energy": 30175.578688058453,
+        "task_energy_per_completed_dag": 228.60286884892767
+      },
+      "reward_override": {
+        "completed_dag_weight": 2.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 1042
+    },
+    {
+      "arm": "low_cancel",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed1042/training/20260827_210714_r2_low_cancel_seed1042_formal_seed1042/checkpoints/latest.pt",
+      "eval_seed": 86,
+      "metrics": {
+        "arrival_admitted_count": 217,
+        "avg_critical_path_delay": 152.41824057024434,
+        "avg_dag_flowtime": 458.6986838504737,
+        "avg_uav_queue": 14.1096,
+        "completed_dag_count": 180,
+        "completion_rate": 0.8294930875576036,
+        "episode_reward": -655.4626949097475,
+        "generated_dag_count": 217,
+        "mean_pending_tasks": 76.28,
+        "mean_ready_tasks": 6.94,
+        "task_energy": 28912.94867568862,
+        "task_energy_per_completed_dag": 160.62749264271457
+      },
+      "reward_override": {
+        "completed_dag_weight": 2.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 1042
+    },
+    {
+      "arm": "low_cancel",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed1042/training/20260827_210714_r2_low_cancel_seed1042_formal_seed1042/checkpoints/latest.pt",
+      "eval_seed": 1042,
+      "metrics": {
+        "arrival_admitted_count": 154,
+        "avg_critical_path_delay": 247.66025775962143,
+        "avg_dag_flowtime": 769.7712922858262,
+        "avg_uav_queue": 14.486,
+        "completed_dag_count": 111,
+        "completion_rate": 0.7207792207792207,
+        "episode_reward": -876.5414566808681,
+        "generated_dag_count": 154,
+        "mean_pending_tasks": 88.378,
+        "mean_ready_tasks": 11.512,
+        "task_energy": 22604.99915064104,
+        "task_energy_per_completed_dag": 203.64864099676612
+      },
+      "reward_override": {
+        "completed_dag_weight": 2.0,
+        "energy_weight": 0.05,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 1042
+    },
+    {
+      "arm": "energy_balanced",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed42/training/20260827_210714_r2_energy_balanced_seed42_formal_seed42/checkpoints/latest.pt",
+      "eval_seed": 42,
+      "metrics": {
+        "arrival_admitted_count": 343,
+        "avg_critical_path_delay": 59.19462944725792,
+        "avg_dag_flowtime": 184.69748485473366,
+        "avg_uav_queue": 9.5716,
+        "completed_dag_count": 326,
+        "completion_rate": 0.9504373177842566,
+        "episode_reward": 1839.4502028205964,
+        "generated_dag_count": 343,
+        "mean_pending_tasks": 50.026,
+        "mean_ready_tasks": 4.408,
+        "task_energy": 53792.68512330929,
+        "task_energy_per_completed_dag": 165.00823657456837
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.5,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 42
+    },
+    {
+      "arm": "energy_balanced",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed42/training/20260827_210714_r2_energy_balanced_seed42_formal_seed42/checkpoints/latest.pt",
+      "eval_seed": 86,
+      "metrics": {
+        "arrival_admitted_count": 412,
+        "avg_critical_path_delay": 34.400133810037424,
+        "avg_dag_flowtime": 103.27180521987604,
+        "avg_uav_queue": 6.294,
+        "completed_dag_count": 397,
+        "completion_rate": 0.9635922330097088,
+        "episode_reward": 2642.666932440939,
+        "generated_dag_count": 412,
+        "mean_pending_tasks": 36.518,
+        "mean_ready_tasks": 5.264,
+        "task_energy": 57515.603070451085,
+        "task_energy_per_completed_dag": 144.87557448476343
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.5,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 42
+    },
+    {
+      "arm": "energy_balanced",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed42/training/20260827_210714_r2_energy_balanced_seed42_formal_seed42/checkpoints/latest.pt",
+      "eval_seed": 1042,
+      "metrics": {
+        "arrival_admitted_count": 305,
+        "avg_critical_path_delay": 64.22143356085753,
+        "avg_dag_flowtime": 205.27388037639903,
+        "avg_uav_queue": 8.8268,
+        "completed_dag_count": 282,
+        "completion_rate": 0.9245901639344263,
+        "episode_reward": 1525.6849647634683,
+        "generated_dag_count": 305,
+        "mean_pending_tasks": 51.508,
+        "mean_ready_tasks": 3.856,
+        "task_energy": 46573.28711409391,
+        "task_energy_per_completed_dag": 165.15350040458833
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.5,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 42
+    },
+    {
+      "arm": "energy_balanced",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed86/training/20260827_210714_r2_energy_balanced_seed86_formal_seed86/checkpoints/latest.pt",
+      "eval_seed": 42,
+      "metrics": {
+        "arrival_admitted_count": 299,
+        "avg_critical_path_delay": 88.55265862958382,
+        "avg_dag_flowtime": 249.87315518495078,
+        "avg_uav_queue": 11.8608,
+        "completed_dag_count": 257,
+        "completion_rate": 0.8595317725752508,
+        "episode_reward": 1124.2615046040971,
+        "generated_dag_count": 299,
+        "mean_pending_tasks": 69.85,
+        "mean_ready_tasks": 7.816,
+        "task_energy": 48377.5089217209,
+        "task_energy_per_completed_dag": 188.23933432576226
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.5,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 86
+    },
+    {
+      "arm": "energy_balanced",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed86/training/20260827_210714_r2_energy_balanced_seed86_formal_seed86/checkpoints/latest.pt",
+      "eval_seed": 86,
+      "metrics": {
+        "arrival_admitted_count": 383,
+        "avg_critical_path_delay": 45.682295788695754,
+        "avg_dag_flowtime": 136.86284488461263,
+        "avg_uav_queue": 8.3064,
+        "completed_dag_count": 364,
+        "completion_rate": 0.9503916449086162,
+        "episode_reward": 2252.4267502782436,
+        "generated_dag_count": 383,
+        "mean_pending_tasks": 44.956,
+        "mean_ready_tasks": 4.882,
+        "task_energy": 54187.901147084194,
+        "task_energy_per_completed_dag": 148.86786029418735
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.5,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 86
+    },
+    {
+      "arm": "energy_balanced",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed86/training/20260827_210714_r2_energy_balanced_seed86_formal_seed86/checkpoints/latest.pt",
+      "eval_seed": 1042,
+      "metrics": {
+        "arrival_admitted_count": 271,
+        "avg_critical_path_delay": 84.34533707845868,
+        "avg_dag_flowtime": 249.4221961842022,
+        "avg_uav_queue": 10.598,
+        "completed_dag_count": 235,
+        "completion_rate": 0.8671586715867159,
+        "episode_reward": 1079.366255773878,
+        "generated_dag_count": 271,
+        "mean_pending_tasks": 61.59,
+        "mean_ready_tasks": 3.324,
+        "task_energy": 38229.11566553842,
+        "task_energy_per_completed_dag": 162.67708793846134
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.5,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 86
+    },
+    {
+      "arm": "energy_balanced",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed1042/training/20260827_210714_r2_energy_balanced_seed1042_formal_seed1042/checkpoints/latest.pt",
+      "eval_seed": 42,
+      "metrics": {
+        "arrival_admitted_count": 159,
+        "avg_critical_path_delay": 272.3536981185633,
+        "avg_dag_flowtime": 755.6494839927982,
+        "avg_uav_queue": 15.0744,
+        "completed_dag_count": 114,
+        "completion_rate": 0.7169811320754716,
+        "episode_reward": -332.05171387786385,
+        "generated_dag_count": 159,
+        "mean_pending_tasks": 113.298,
+        "mean_ready_tasks": 19.91,
+        "task_energy": 24912.756920831835,
+        "task_energy_per_completed_dag": 218.5329554458933
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.5,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 1042
+    },
+    {
+      "arm": "energy_balanced",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed1042/training/20260827_210714_r2_energy_balanced_seed1042_formal_seed1042/checkpoints/latest.pt",
+      "eval_seed": 86,
+      "metrics": {
+        "arrival_admitted_count": 219,
+        "avg_critical_path_delay": 163.02387549390002,
+        "avg_dag_flowtime": 471.42233166847194,
+        "avg_uav_queue": 14.5804,
+        "completed_dag_count": 177,
+        "completion_rate": 0.8082191780821918,
+        "episode_reward": 271.00266000926774,
+        "generated_dag_count": 219,
+        "mean_pending_tasks": 93.966,
+        "mean_ready_tasks": 12.292,
+        "task_energy": 31342.38420549863,
+        "task_energy_per_completed_dag": 177.07561698021826
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.5,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 1042
+    },
+    {
+      "arm": "energy_balanced",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed1042/training/20260827_210714_r2_energy_balanced_seed1042_formal_seed1042/checkpoints/latest.pt",
+      "eval_seed": 1042,
+      "metrics": {
+        "arrival_admitted_count": 172,
+        "avg_critical_path_delay": 188.01140815740428,
+        "avg_dag_flowtime": 622.579470686643,
+        "avg_uav_queue": 13.3556,
+        "completed_dag_count": 136,
+        "completion_rate": 0.7906976744186046,
+        "episode_reward": 95.9079592842906,
+        "generated_dag_count": 172,
+        "mean_pending_tasks": 80.708,
+        "mean_ready_tasks": 4.948,
+        "task_energy": 25792.960154538487,
+        "task_energy_per_completed_dag": 189.65411878337122
+      },
+      "reward_override": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.5,
+        "movement_position_shaping": true
+      },
+      "schema": "r2_reward_checkpoint_strict_crn_eval_v1",
+      "slots": 500,
+      "training_seed": 1042
+    }
+  ],
+  "initialization_equality": [
+    {
+      "arms": [
+        "control",
+        "no_position",
+        "low_cancel",
+        "energy_balanced"
+      ],
+      "compared_tensors": 96,
+      "direct_tensor_equality": true,
+      "pairwise_reference_comparisons": 3,
+      "seed": 42
+    },
+    {
+      "arms": [
+        "control",
+        "no_position",
+        "low_cancel",
+        "energy_balanced"
+      ],
+      "compared_tensors": 96,
+      "direct_tensor_equality": true,
+      "pairwise_reference_comparisons": 3,
+      "seed": 86
+    },
+    {
+      "arms": [
+        "control",
+        "no_position",
+        "low_cancel",
+        "energy_balanced"
+      ],
+      "compared_tensors": 96,
+      "direct_tensor_equality": true,
+      "pairwise_reference_comparisons": 3,
+      "seed": 1042
+    }
+  ],
+  "jobs": [
+    {
+      "arm": "control",
+      "completed_update_count": 4000,
+      "controls": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.05,
+        "position_shaping": true
+      },
+      "evaluation_outputs": [
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed42/evaluations/eval_seed42.json",
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed42/evaluations/eval_seed86.json",
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed42/evaluations/eval_seed1042.json"
+      ],
+      "final_checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed42/training/20260827_210714_r2_control_seed42_formal_seed42/checkpoints/latest.pt",
+      "finished_at": "2026-08-27T18:22:41.844558+00:00",
+      "gpu": "0",
+      "initial_checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/initializations/control_seed42/20260827_172731_r2_control_seed42_initial_seed42/checkpoints/checkpoint_update_0000.pt",
+      "job_root": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed42",
+      "seed": 42,
+      "started_at": "2026-08-27T13:07:12.696642+00:00",
+      "status": "completed",
+      "training_diagnostics": {
+        "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed42/training/20260827_210714_r2_control_seed42_formal_seed42/checkpoints/latest.pt",
+        "run_summary_json": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed42/training/20260827_210714_r2_control_seed42_formal_seed42/run_summary.json",
+        "train_metrics_jsonl": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed42/training/20260827_210714_r2_control_seed42_formal_seed42/train_metrics.jsonl"
+      },
+      "training_run_dir": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed42/training/20260827_210714_r2_control_seed42_formal_seed42",
+      "worker_pid": 903453
+    },
+    {
+      "arm": "control",
+      "completed_update_count": 4000,
+      "controls": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.05,
+        "position_shaping": true
+      },
+      "evaluation_outputs": [
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed86/evaluations/eval_seed42.json",
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed86/evaluations/eval_seed86.json",
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed86/evaluations/eval_seed1042.json"
+      ],
+      "final_checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed86/training/20260827_210714_r2_control_seed86_formal_seed86/checkpoints/latest.pt",
+      "finished_at": "2026-08-28T12:34:45.494356+00:00",
+      "gpu": "1",
+      "initial_checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/initializations/control_seed86/20260827_172749_r2_control_seed86_initial_seed86/checkpoints/checkpoint_update_0000.pt",
+      "job_root": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed86",
+      "seed": 86,
+      "started_at": "2026-08-27T13:07:12.697434+00:00",
+      "status": "completed",
+      "training_diagnostics": {
+        "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed86/training/20260827_210714_r2_control_seed86_formal_seed86/checkpoints/latest.pt",
+        "run_summary_json": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed86/training/20260827_210714_r2_control_seed86_formal_seed86/run_summary.json",
+        "train_metrics_jsonl": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed86/training/20260827_210714_r2_control_seed86_formal_seed86/train_metrics.jsonl"
+      },
+      "training_run_dir": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed86/training/20260827_210714_r2_control_seed86_formal_seed86",
+      "worker_pid": 903454
+    },
+    {
+      "arm": "control",
+      "completed_update_count": 4000,
+      "controls": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.05,
+        "position_shaping": true
+      },
+      "evaluation_outputs": [
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed1042/evaluations/eval_seed42.json",
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed1042/evaluations/eval_seed86.json",
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed1042/evaluations/eval_seed1042.json"
+      ],
+      "final_checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed1042/training/20260827_210714_r2_control_seed1042_formal_seed1042/checkpoints/latest.pt",
+      "finished_at": "2026-08-27T18:51:32.300403+00:00",
+      "gpu": "2",
+      "initial_checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/initializations/control_seed1042/20260827_172801_r2_control_seed1042_initial_seed1042/checkpoints/checkpoint_update_0000.pt",
+      "job_root": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed1042",
+      "seed": 1042,
+      "started_at": "2026-08-27T13:07:12.698861+00:00",
+      "status": "completed",
+      "training_diagnostics": {
+        "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed1042/training/20260827_210714_r2_control_seed1042_formal_seed1042/checkpoints/latest.pt",
+        "run_summary_json": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed1042/training/20260827_210714_r2_control_seed1042_formal_seed1042/run_summary.json",
+        "train_metrics_jsonl": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed1042/training/20260827_210714_r2_control_seed1042_formal_seed1042/train_metrics.jsonl"
+      },
+      "training_run_dir": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/control_seed1042/training/20260827_210714_r2_control_seed1042_formal_seed1042",
+      "worker_pid": 903455
+    },
+    {
+      "arm": "no_position",
+      "completed_update_count": 4000,
+      "controls": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.05,
+        "position_shaping": false
+      },
+      "evaluation_outputs": [
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed42/evaluations/eval_seed42.json",
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed42/evaluations/eval_seed86.json",
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed42/evaluations/eval_seed1042.json"
+      ],
+      "final_checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed42/training/20260827_210714_r2_no_position_seed42_formal_seed42/checkpoints/latest.pt",
+      "finished_at": "2026-08-27T18:56:34.725112+00:00",
+      "gpu": "GPU-e8dbb22e-027a-7c9e-ffe1-7a0559d6f2bc",
+      "initial_checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/initializations/no_position_seed42/20260827_172739_r2_no_position_seed42_initial_seed42/checkpoints/checkpoint_update_0000.pt",
+      "job_root": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed42",
+      "seed": 42,
+      "started_at": "2026-08-27T13:07:12.699963+00:00",
+      "status": "completed",
+      "training_diagnostics": {
+        "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed42/training/20260827_210714_r2_no_position_seed42_formal_seed42/checkpoints/latest.pt",
+        "run_summary_json": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed42/training/20260827_210714_r2_no_position_seed42_formal_seed42/run_summary.json",
+        "train_metrics_jsonl": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed42/training/20260827_210714_r2_no_position_seed42_formal_seed42/train_metrics.jsonl"
+      },
+      "training_run_dir": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed42/training/20260827_210714_r2_no_position_seed42_formal_seed42",
+      "worker_pid": 903456
+    },
+    {
+      "arm": "no_position",
+      "completed_update_count": 4000,
+      "controls": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.05,
+        "position_shaping": false
+      },
+      "evaluation_outputs": [
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed86/evaluations/eval_seed42.json",
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed86/evaluations/eval_seed86.json",
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed86/evaluations/eval_seed1042.json"
+      ],
+      "final_checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed86/training/20260827_210714_r2_no_position_seed86_formal_seed86/checkpoints/latest.pt",
+      "finished_at": "2026-08-27T18:52:12.306164+00:00",
+      "gpu": "GPU-e8dbb22e",
+      "initial_checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/initializations/no_position_seed86/20260827_172752_r2_no_position_seed86_initial_seed86/checkpoints/checkpoint_update_0000.pt",
+      "job_root": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed86",
+      "seed": 86,
+      "started_at": "2026-08-27T13:07:12.701143+00:00",
+      "status": "completed",
+      "training_diagnostics": {
+        "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed86/training/20260827_210714_r2_no_position_seed86_formal_seed86/checkpoints/latest.pt",
+        "run_summary_json": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed86/training/20260827_210714_r2_no_position_seed86_formal_seed86/run_summary.json",
+        "train_metrics_jsonl": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed86/training/20260827_210714_r2_no_position_seed86_formal_seed86/train_metrics.jsonl"
+      },
+      "training_run_dir": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed86/training/20260827_210714_r2_no_position_seed86_formal_seed86",
+      "worker_pid": 903457
+    },
+    {
+      "arm": "no_position",
+      "completed_update_count": 4000,
+      "controls": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.05,
+        "position_shaping": false
+      },
+      "evaluation_outputs": [
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed1042/evaluations/eval_seed42.json",
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed1042/evaluations/eval_seed86.json",
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed1042/evaluations/eval_seed1042.json"
+      ],
+      "final_checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed1042/training/20260827_210714_r2_no_position_seed1042_formal_seed1042/checkpoints/latest.pt",
+      "finished_at": "2026-08-27T18:22:26.841412+00:00",
+      "gpu": "3",
+      "initial_checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/initializations/no_position_seed1042/20260827_172805_r2_no_position_seed1042_initial_seed1042/checkpoints/checkpoint_update_0000.pt",
+      "job_root": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed1042",
+      "seed": 1042,
+      "started_at": "2026-08-27T13:07:12.702346+00:00",
+      "status": "completed",
+      "training_diagnostics": {
+        "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed1042/training/20260827_210714_r2_no_position_seed1042_formal_seed1042/checkpoints/latest.pt",
+        "run_summary_json": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed1042/training/20260827_210714_r2_no_position_seed1042_formal_seed1042/run_summary.json",
+        "train_metrics_jsonl": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed1042/training/20260827_210714_r2_no_position_seed1042_formal_seed1042/train_metrics.jsonl"
+      },
+      "training_run_dir": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/no_position_seed1042/training/20260827_210714_r2_no_position_seed1042_formal_seed1042",
+      "worker_pid": 903458
+    },
+    {
+      "arm": "low_cancel",
+      "completed_update_count": 4000,
+      "controls": {
+        "completed_dag_weight": 2.0,
+        "energy_weight": 0.05,
+        "position_shaping": true
+      },
+      "evaluation_outputs": [
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed42/evaluations/eval_seed42.json",
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed42/evaluations/eval_seed86.json",
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed42/evaluations/eval_seed1042.json"
+      ],
+      "final_checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed42/training/20260827_210714_r2_low_cancel_seed42_formal_seed42/checkpoints/latest.pt",
+      "finished_at": "2026-08-27T18:22:31.842660+00:00",
+      "gpu": "4",
+      "initial_checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/initializations/low_cancel_seed42/20260827_172743_r2_low_cancel_seed42_initial_seed42/checkpoints/checkpoint_update_0000.pt",
+      "job_root": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed42",
+      "seed": 42,
+      "started_at": "2026-08-27T13:07:12.703474+00:00",
+      "status": "completed",
+      "training_diagnostics": {
+        "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed42/training/20260827_210714_r2_low_cancel_seed42_formal_seed42/checkpoints/latest.pt",
+        "run_summary_json": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed42/training/20260827_210714_r2_low_cancel_seed42_formal_seed42/run_summary.json",
+        "train_metrics_jsonl": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed42/training/20260827_210714_r2_low_cancel_seed42_formal_seed42/train_metrics.jsonl"
+      },
+      "training_run_dir": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed42/training/20260827_210714_r2_low_cancel_seed42_formal_seed42",
+      "worker_pid": 903459
+    },
+    {
+      "arm": "low_cancel",
+      "completed_update_count": 4000,
+      "controls": {
+        "completed_dag_weight": 2.0,
+        "energy_weight": 0.05,
+        "position_shaping": true
+      },
+      "evaluation_outputs": [
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed86/evaluations/eval_seed42.json",
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed86/evaluations/eval_seed86.json",
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed86/evaluations/eval_seed1042.json"
+      ],
+      "final_checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed86/training/20260827_210714_r2_low_cancel_seed86_formal_seed86/checkpoints/latest.pt",
+      "finished_at": "2026-08-27T19:16:56.853565+00:00",
+      "gpu": "5",
+      "initial_checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/initializations/low_cancel_seed86/20260827_172755_r2_low_cancel_seed86_initial_seed86/checkpoints/checkpoint_update_0000.pt",
+      "job_root": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed86",
+      "seed": 86,
+      "started_at": "2026-08-27T13:07:12.704053+00:00",
+      "status": "completed",
+      "training_diagnostics": {
+        "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed86/training/20260827_210714_r2_low_cancel_seed86_formal_seed86/checkpoints/latest.pt",
+        "run_summary_json": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed86/training/20260827_210714_r2_low_cancel_seed86_formal_seed86/run_summary.json",
+        "train_metrics_jsonl": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed86/training/20260827_210714_r2_low_cancel_seed86_formal_seed86/train_metrics.jsonl"
+      },
+      "training_run_dir": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed86/training/20260827_210714_r2_low_cancel_seed86_formal_seed86",
+      "worker_pid": 903460
+    },
+    {
+      "arm": "low_cancel",
+      "completed_update_count": 4000,
+      "controls": {
+        "completed_dag_weight": 2.0,
+        "energy_weight": 0.05,
+        "position_shaping": true
+      },
+      "evaluation_outputs": [
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed1042/evaluations/eval_seed42.json",
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed1042/evaluations/eval_seed86.json",
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed1042/evaluations/eval_seed1042.json"
+      ],
+      "final_checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed1042/training/20260827_210714_r2_low_cancel_seed1042_formal_seed1042/checkpoints/latest.pt",
+      "finished_at": "2026-08-27T19:10:17.741469+00:00",
+      "gpu": "GPU-e9b1414e-b14f-f897-2a39-24976dc8c26e",
+      "initial_checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/initializations/low_cancel_seed1042/20260827_172808_r2_low_cancel_seed1042_initial_seed1042/checkpoints/checkpoint_update_0000.pt",
+      "job_root": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed1042",
+      "seed": 1042,
+      "started_at": "2026-08-27T13:07:12.704707+00:00",
+      "status": "completed",
+      "training_diagnostics": {
+        "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed1042/training/20260827_210714_r2_low_cancel_seed1042_formal_seed1042/checkpoints/latest.pt",
+        "run_summary_json": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed1042/training/20260827_210714_r2_low_cancel_seed1042_formal_seed1042/run_summary.json",
+        "train_metrics_jsonl": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed1042/training/20260827_210714_r2_low_cancel_seed1042_formal_seed1042/train_metrics.jsonl"
+      },
+      "training_run_dir": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/low_cancel_seed1042/training/20260827_210714_r2_low_cancel_seed1042_formal_seed1042",
+      "worker_pid": 903461
+    },
+    {
+      "arm": "energy_balanced",
+      "completed_update_count": 4000,
+      "controls": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.5,
+        "position_shaping": true
+      },
+      "evaluation_outputs": [
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed42/evaluations/eval_seed42.json",
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed42/evaluations/eval_seed86.json",
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed42/evaluations/eval_seed1042.json"
+      ],
+      "final_checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed42/training/20260827_210714_r2_energy_balanced_seed42_formal_seed42/checkpoints/latest.pt",
+      "finished_at": "2026-08-27T19:12:47.433647+00:00",
+      "gpu": "GPU-e9b1414e",
+      "initial_checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/initializations/energy_balanced_seed42/20260827_172746_r2_energy_balanced_seed42_initial_seed42/checkpoints/checkpoint_update_0000.pt",
+      "job_root": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed42",
+      "seed": 42,
+      "started_at": "2026-08-27T13:07:12.706067+00:00",
+      "status": "completed",
+      "training_diagnostics": {
+        "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed42/training/20260827_210714_r2_energy_balanced_seed42_formal_seed42/checkpoints/latest.pt",
+        "run_summary_json": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed42/training/20260827_210714_r2_energy_balanced_seed42_formal_seed42/run_summary.json",
+        "train_metrics_jsonl": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed42/training/20260827_210714_r2_energy_balanced_seed42_formal_seed42/train_metrics.jsonl"
+      },
+      "training_run_dir": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed42/training/20260827_210714_r2_energy_balanced_seed42_formal_seed42",
+      "worker_pid": 903462
+    },
+    {
+      "arm": "energy_balanced",
+      "completed_update_count": 4000,
+      "controls": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.5,
+        "position_shaping": true
+      },
+      "evaluation_outputs": [
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed86/evaluations/eval_seed42.json",
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed86/evaluations/eval_seed86.json",
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed86/evaluations/eval_seed1042.json"
+      ],
+      "final_checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed86/training/20260827_210714_r2_energy_balanced_seed86_formal_seed86/checkpoints/latest.pt",
+      "finished_at": "2026-08-27T19:02:11.510357+00:00",
+      "gpu": "6",
+      "initial_checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/initializations/energy_balanced_seed86/20260827_172758_r2_energy_balanced_seed86_initial_seed86/checkpoints/checkpoint_update_0000.pt",
+      "job_root": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed86",
+      "seed": 86,
+      "started_at": "2026-08-27T13:07:12.707298+00:00",
+      "status": "completed",
+      "training_diagnostics": {
+        "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed86/training/20260827_210714_r2_energy_balanced_seed86_formal_seed86/checkpoints/latest.pt",
+        "run_summary_json": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed86/training/20260827_210714_r2_energy_balanced_seed86_formal_seed86/run_summary.json",
+        "train_metrics_jsonl": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed86/training/20260827_210714_r2_energy_balanced_seed86_formal_seed86/train_metrics.jsonl"
+      },
+      "training_run_dir": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed86/training/20260827_210714_r2_energy_balanced_seed86_formal_seed86",
+      "worker_pid": 903463
+    },
+    {
+      "arm": "energy_balanced",
+      "completed_update_count": 4000,
+      "controls": {
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.5,
+        "position_shaping": true
+      },
+      "evaluation_outputs": [
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed1042/evaluations/eval_seed42.json",
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed1042/evaluations/eval_seed86.json",
+        "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed1042/evaluations/eval_seed1042.json"
+      ],
+      "final_checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed1042/training/20260827_210714_r2_energy_balanced_seed1042_formal_seed1042/checkpoints/latest.pt",
+      "finished_at": "2026-08-27T19:01:26.504681+00:00",
+      "gpu": "GPU-fcd0008a-df40-2498-501e-983c8e5744b2",
+      "initial_checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/initializations/energy_balanced_seed1042/20260827_172811_r2_energy_balanced_seed1042_initial_seed1042/checkpoints/checkpoint_update_0000.pt",
+      "job_root": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed1042",
+      "seed": 1042,
+      "started_at": "2026-08-27T13:07:12.708445+00:00",
+      "status": "completed",
+      "training_diagnostics": {
+        "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed1042/training/20260827_210714_r2_energy_balanced_seed1042_formal_seed1042/checkpoints/latest.pt",
+        "run_summary_json": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed1042/training/20260827_210714_r2_energy_balanced_seed1042_formal_seed1042/run_summary.json",
+        "train_metrics_jsonl": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed1042/training/20260827_210714_r2_energy_balanced_seed1042_formal_seed1042/train_metrics.jsonl"
+      },
+      "training_run_dir": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/jobs/energy_balanced_seed1042/training/20260827_210714_r2_energy_balanced_seed1042_formal_seed1042",
+      "worker_pid": 903464
+    }
+  ],
+  "offline_sweep": {
+    "candidate_sets": {
+      "completed_dag_weight": [
+        8.0,
+        6.0,
+        4.0,
+        2.0
+      ],
+      "energy_weight": [
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0
+      ]
+    },
+    "energy_candidates": [
+      {
+        "alignment_by_seed": [
+          {
+            "reward_ranking_best_to_worst": [
+              "nearest_legal",
+              "greedy_eft",
+              "random_legal"
+            ],
+            "seed": 42,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          },
+          {
+            "reward_ranking_best_to_worst": [
+              "greedy_eft",
+              "nearest_legal",
+              "random_legal"
+            ],
+            "seed": 86,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          },
+          {
+            "reward_ranking_best_to_worst": [
+              "nearest_legal",
+              "greedy_eft",
+              "random_legal"
+            ],
+            "seed": 1042,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          }
+        ],
+        "completed_dag_weight": 8.0,
+        "distance_to_target_share_0_03": 0.02742990626156998,
+        "energy_weight": 0.05,
+        "mean_cancellation_ratio": 0.7119419940081163,
+        "mean_task_energy_absolute_share": 0.002570093738430016,
+        "obvious_reverse_ranking": false,
+        "pareto_contradiction_count": 0,
+        "pareto_contradictions": [],
+        "selection_constraints_pass": true
+      },
+      {
+        "alignment_by_seed": [
+          {
+            "reward_ranking_best_to_worst": [
+              "nearest_legal",
+              "greedy_eft",
+              "random_legal"
+            ],
+            "seed": 42,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          },
+          {
+            "reward_ranking_best_to_worst": [
+              "greedy_eft",
+              "nearest_legal",
+              "random_legal"
+            ],
+            "seed": 86,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          },
+          {
+            "reward_ranking_best_to_worst": [
+              "nearest_legal",
+              "greedy_eft",
+              "random_legal"
+            ],
+            "seed": 1042,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          }
+        ],
+        "completed_dag_weight": 8.0,
+        "distance_to_target_share_0_03": 0.024873194754610587,
+        "energy_weight": 0.1,
+        "mean_cancellation_ratio": 0.7143426804922118,
+        "mean_task_energy_absolute_share": 0.005126805245389412,
+        "obvious_reverse_ranking": false,
+        "pareto_contradiction_count": 0,
+        "pareto_contradictions": [],
+        "selection_constraints_pass": true
+      },
+      {
+        "alignment_by_seed": [
+          {
+            "reward_ranking_best_to_worst": [
+              "nearest_legal",
+              "greedy_eft",
+              "random_legal"
+            ],
+            "seed": 42,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          },
+          {
+            "reward_ranking_best_to_worst": [
+              "greedy_eft",
+              "nearest_legal",
+              "random_legal"
+            ],
+            "seed": 86,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          },
+          {
+            "reward_ranking_best_to_worst": [
+              "nearest_legal",
+              "greedy_eft",
+              "random_legal"
+            ],
+            "seed": 1042,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          }
+        ],
+        "completed_dag_weight": 8.0,
+        "distance_to_target_share_0_03": 0.017282301549187362,
+        "energy_weight": 0.25,
+        "mean_cancellation_ratio": 0.7214636580838952,
+        "mean_task_energy_absolute_share": 0.012717698450812638,
+        "obvious_reverse_ranking": false,
+        "pareto_contradiction_count": 0,
+        "pareto_contradictions": [],
+        "selection_constraints_pass": true
+      },
+      {
+        "alignment_by_seed": [
+          {
+            "reward_ranking_best_to_worst": [
+              "nearest_legal",
+              "greedy_eft",
+              "random_legal"
+            ],
+            "seed": 42,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          },
+          {
+            "reward_ranking_best_to_worst": [
+              "greedy_eft",
+              "nearest_legal",
+              "random_legal"
+            ],
+            "seed": 86,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          },
+          {
+            "reward_ranking_best_to_worst": [
+              "nearest_legal",
+              "greedy_eft",
+              "random_legal"
+            ],
+            "seed": 1042,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          }
+        ],
+        "completed_dag_weight": 8.0,
+        "distance_to_target_share_0_03": 0.004888803567682256,
+        "energy_weight": 0.5,
+        "mean_cancellation_ratio": 0.7330684293537578,
+        "mean_task_energy_absolute_share": 0.025111196432317743,
+        "obvious_reverse_ranking": false,
+        "pareto_contradiction_count": 0,
+        "pareto_contradictions": [],
+        "selection_constraints_pass": true
+      },
+      {
+        "alignment_by_seed": [
+          {
+            "reward_ranking_best_to_worst": [
+              "nearest_legal",
+              "greedy_eft",
+              "random_legal"
+            ],
+            "seed": 42,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          },
+          {
+            "reward_ranking_best_to_worst": [
+              "greedy_eft",
+              "nearest_legal",
+              "random_legal"
+            ],
+            "seed": 86,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          },
+          {
+            "reward_ranking_best_to_worst": [
+              "nearest_legal",
+              "greedy_eft",
+              "random_legal"
+            ],
+            "seed": 1042,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          }
+        ],
+        "completed_dag_weight": 8.0,
+        "distance_to_target_share_0_03": 0.01897459454945105,
+        "energy_weight": 1.0,
+        "mean_cancellation_ratio": 0.7553377674388939,
+        "mean_task_energy_absolute_share": 0.04897459454945105,
+        "obvious_reverse_ranking": false,
+        "pareto_contradiction_count": 0,
+        "pareto_contradictions": [],
+        "selection_constraints_pass": true
+      }
+    ],
+    "energy_selection_target_absolute_share": 0.03,
+    "low_cancel_candidates": [
+      {
+        "alignment_by_seed": [
+          {
+            "reward_ranking_best_to_worst": [
+              "nearest_legal",
+              "greedy_eft",
+              "random_legal"
+            ],
+            "seed": 42,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          },
+          {
+            "reward_ranking_best_to_worst": [
+              "greedy_eft",
+              "nearest_legal",
+              "random_legal"
+            ],
+            "seed": 86,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          },
+          {
+            "reward_ranking_best_to_worst": [
+              "nearest_legal",
+              "greedy_eft",
+              "random_legal"
+            ],
+            "seed": 1042,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          }
+        ],
+        "cancellation_reduction_vs_weight_8": 0.0,
+        "completed_dag_weight": 8.0,
+        "energy_weight": 0.05,
+        "mean_cancellation_ratio": 0.7119419940081163,
+        "mean_task_energy_absolute_share": 0.002570093738430016,
+        "obvious_reverse_ranking": false,
+        "pareto_contradiction_count": 0,
+        "pareto_contradictions": [],
+        "selection_constraints_pass": false
+      },
+      {
+        "alignment_by_seed": [
+          {
+            "reward_ranking_best_to_worst": [
+              "nearest_legal",
+              "greedy_eft",
+              "random_legal"
+            ],
+            "seed": 42,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          },
+          {
+            "reward_ranking_best_to_worst": [
+              "greedy_eft",
+              "nearest_legal",
+              "random_legal"
+            ],
+            "seed": 86,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          },
+          {
+            "reward_ranking_best_to_worst": [
+              "nearest_legal",
+              "greedy_eft",
+              "random_legal"
+            ],
+            "seed": 1042,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          }
+        ],
+        "cancellation_reduction_vs_weight_8": -0.09191199548183447,
+        "completed_dag_weight": 6.0,
+        "energy_weight": 0.05,
+        "mean_cancellation_ratio": 0.7773780033447185,
+        "mean_task_energy_absolute_share": 0.0030279735914179595,
+        "obvious_reverse_ranking": false,
+        "pareto_contradiction_count": 0,
+        "pareto_contradictions": [],
+        "selection_constraints_pass": false
+      },
+      {
+        "alignment_by_seed": [
+          {
+            "reward_ranking_best_to_worst": [
+              "nearest_legal",
+              "greedy_eft",
+              "random_legal"
+            ],
+            "seed": 42,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          },
+          {
+            "reward_ranking_best_to_worst": [
+              "greedy_eft",
+              "nearest_legal",
+              "random_legal"
+            ],
+            "seed": 86,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          },
+          {
+            "reward_ranking_best_to_worst": [
+              "nearest_legal",
+              "greedy_eft",
+              "random_legal"
+            ],
+            "seed": 1042,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          }
+        ],
+        "cancellation_reduction_vs_weight_8": -0.08210692080989196,
+        "completed_dag_weight": 4.0,
+        "energy_weight": 0.05,
+        "mean_cancellation_ratio": 0.7703973589313773,
+        "mean_task_energy_absolute_share": 0.0037015658847549667,
+        "obvious_reverse_ranking": false,
+        "pareto_contradiction_count": 0,
+        "pareto_contradictions": [],
+        "selection_constraints_pass": false
+      },
+      {
+        "alignment_by_seed": [
+          {
+            "reward_ranking_best_to_worst": [
+              "nearest_legal",
+              "greedy_eft",
+              "random_legal"
+            ],
+            "seed": 42,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          },
+          {
+            "reward_ranking_best_to_worst": [
+              "nearest_legal",
+              "greedy_eft",
+              "random_legal"
+            ],
+            "seed": 86,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 0.5,
+              "completed_dags": 0.5,
+              "critical_path_delay": 0.5
+            }
+          },
+          {
+            "reward_ranking_best_to_worst": [
+              "nearest_legal",
+              "greedy_eft",
+              "random_legal"
+            ],
+            "seed": 1042,
+            "spearman_reward_vs_better_metric": {
+              "avg_flowtime": 1.0,
+              "completed_dags": 1.0,
+              "critical_path_delay": 1.0
+            }
+          }
+        ],
+        "cancellation_reduction_vs_weight_8": 0.06575438781308525,
+        "completed_dag_weight": 2.0,
+        "energy_weight": 0.05,
+        "mean_cancellation_ratio": 0.6651286840336854,
+        "mean_task_energy_absolute_share": 0.004812637301400753,
+        "obvious_reverse_ranking": false,
+        "pareto_contradiction_count": 0,
+        "pareto_contradictions": [],
+        "selection_constraints_pass": false
+      }
+    ],
+    "low_cancel_selection_rule_applied": "fallback: valid direction/Pareto candidate with minimum cancellation",
+    "schema": "r2_reward_offline_sweep_v1",
+    "selected_energy_weight": 0.5,
+    "selected_low_cancel_weight": 2.0,
+    "source_schema": "r1b_reward_alignment_v1",
+    "source_server_code_commit": "c5e173f0715b6000ca0c9434755e3908dfe964b3"
+  },
+  "r1a2_reference_lines": [
+    {
+      "admitted": 165,
+      "avg_flowtime": 724.2876899143758,
+      "avg_queue": 14.7192,
+      "blocked_fraction": 0.7011333333333334,
+      "completed": 126,
+      "completion_rate": 0.7636363636363637,
+      "episode_reward": -129.68018525341614,
+      "generated": 165,
+      "policy": "random_legal",
+      "seed": 42
+    },
+    {
+      "admitted": 286,
+      "avg_flowtime": 281.3459947053166,
+      "avg_queue": 11.7168,
+      "blocked_fraction": 0.5246,
+      "completed": 250,
+      "completion_rate": 0.8741258741258742,
+      "episode_reward": 1156.8134522984192,
+      "generated": 286,
+      "policy": "nearest_legal",
+      "seed": 42
+    },
+    {
+      "admitted": 213,
+      "avg_flowtime": 412.5630938835452,
+      "avg_queue": 13.682,
+      "blocked_fraction": 0.6112666666666666,
+      "completed": 175,
+      "completion_rate": 0.8215962441314554,
+      "episode_reward": 392.0668339234182,
+      "generated": 213,
+      "policy": "greedy_eft",
+      "seed": 42
+    },
+    {
+      "admitted": 211,
+      "avg_flowtime": 473.3046193544357,
+      "avg_queue": 13.7568,
+      "blocked_fraction": 0.6205333333333334,
+      "completed": 171,
+      "completion_rate": 0.8104265402843602,
+      "episode_reward": 409.53563180598616,
+      "generated": 211,
+      "policy": "random_legal",
+      "seed": 86
+    },
+    {
+      "admitted": 308,
+      "avg_flowtime": 221.47394954758153,
+      "avg_queue": 10.4716,
+      "blocked_fraction": 0.4587333333333333,
+      "completed": 273,
+      "completion_rate": 0.8863636363636364,
+      "episode_reward": 1439.6756805957511,
+      "generated": 308,
+      "policy": "nearest_legal",
+      "seed": 86
+    },
+    {
+      "admitted": 313,
+      "avg_flowtime": 215.02348776208498,
+      "avg_queue": 10.836,
+      "blocked_fraction": 0.4432333333333333,
+      "completed": 287,
+      "completion_rate": 0.9169329073482428,
+      "episode_reward": 1523.4795192360396,
+      "generated": 313,
+      "policy": "greedy_eft",
+      "seed": 86
+    },
+    {
+      "admitted": 138,
+      "avg_flowtime": 915.6338332444433,
+      "avg_queue": 14.7972,
+      "blocked_fraction": 0.7401666666666666,
+      "completed": 91,
+      "completion_rate": 0.6594202898550725,
+      "episode_reward": -369.59529944952436,
+      "generated": 138,
+      "policy": "random_legal",
+      "seed": 1042
+    },
+    {
+      "admitted": 340,
+      "avg_flowtime": 163.65609546104747,
+      "avg_queue": 8.074,
+      "blocked_fraction": 0.36706666666666665,
+      "completed": 310,
+      "completion_rate": 0.9117647058823529,
+      "episode_reward": 1899.3704167074252,
+      "generated": 340,
+      "policy": "nearest_legal",
+      "seed": 1042
+    },
+    {
+      "admitted": 201,
+      "avg_flowtime": 460.49803538008956,
+      "avg_queue": 13.8116,
+      "blocked_fraction": 0.5924333333333334,
+      "completed": 165,
+      "completion_rate": 0.8208955223880597,
+      "episode_reward": 317.8058225067833,
+      "generated": 201,
+      "policy": "greedy_eft",
+      "seed": 1042
+    }
+  ],
+  "schema": "r2_reward_ablation_mlp_bundle_summary_v1",
+  "status": "completed"
+}

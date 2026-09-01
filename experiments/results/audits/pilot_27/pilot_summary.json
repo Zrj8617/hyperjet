@@ -1,0 +1,169 @@
+{
+  "configured_decision_cap": 27,
+  "historical_training_snapshot_recovered": false,
+  "phases": {
+    "early": {
+      "by_seed": {
+        "0": {
+          "censored_fraction": 0.0,
+          "q_spread_mean_all": 0.009788413842519125,
+          "q_spread_mean_usable": 0.009788413842519125,
+          "q_top1_accuracy": 0.0,
+          "selected_decision_count": 3,
+          "spearman_decision_count": 3,
+          "spearman_mean": -0.09999999999999999,
+          "training_q_ev_post": -0.00047432902146371525,
+          "training_q_ev_pre": -0.00038462002499395354,
+          "usable_decision_count": 3
+        },
+        "1": {
+          "censored_fraction": 0.0,
+          "q_spread_mean_all": 0.11585720380147298,
+          "q_spread_mean_usable": 0.11585720380147298,
+          "q_top1_accuracy": 0.3333333333333333,
+          "selected_decision_count": 3,
+          "spearman_decision_count": 3,
+          "spearman_mean": 0.46666666666666656,
+          "training_q_ev_post": 0.00015403732846330787,
+          "training_q_ev_pre": 6.907729623395475e-05,
+          "usable_decision_count": 3
+        },
+        "2": {
+          "censored_fraction": 0.0,
+          "q_spread_mean_all": 0.28103311856587726,
+          "q_spread_mean_usable": 0.28103311856587726,
+          "q_top1_accuracy": 0.3333333333333333,
+          "selected_decision_count": 3,
+          "spearman_decision_count": 3,
+          "spearman_mean": 0.09999999999999998,
+          "training_q_ev_post": 0.0010647981065338152,
+          "training_q_ev_pre": 0.0009108709963900896,
+          "usable_decision_count": 3
+        }
+      },
+      "checkpoint_update": 30,
+      "pooled": {
+        "censored_fraction": 0.0,
+        "q_spread_mean_all": 0.13555957873662314,
+        "q_spread_mean_usable": 0.13555957873662314,
+        "q_top1_accuracy": 0.2222222222222222,
+        "selected_decision_count": 9,
+        "spearman_decision_count": 9,
+        "spearman_mean": 0.15555555555555556,
+        "training_q_ev_post_mean": 0.00024816880451113593,
+        "training_q_ev_pre_mean": 0.00019844275587669694,
+        "usable_decision_count": 9
+      }
+    },
+    "late": {
+      "by_seed": {
+        "0": {
+          "censored_fraction": 0.0,
+          "q_spread_mean_all": 1.6665433247884114,
+          "q_spread_mean_usable": 1.6665433247884114,
+          "q_top1_accuracy": 0.3333333333333333,
+          "selected_decision_count": 3,
+          "spearman_decision_count": 3,
+          "spearman_mean": 0.3333333333333333,
+          "training_q_ev_post": 0.15663268902006466,
+          "training_q_ev_pre": 0.1562684868041332,
+          "usable_decision_count": 3
+        },
+        "1": {
+          "censored_fraction": 0.0,
+          "q_spread_mean_all": 5.7601470947265625,
+          "q_spread_mean_usable": 5.7601470947265625,
+          "q_top1_accuracy": 1.0,
+          "selected_decision_count": 3,
+          "spearman_decision_count": 3,
+          "spearman_mean": 0.06666666666666667,
+          "training_q_ev_post": 0.1220516384768019,
+          "training_q_ev_pre": 0.12089669344221565,
+          "usable_decision_count": 3
+        },
+        "2": {
+          "censored_fraction": 0.0,
+          "q_spread_mean_all": 2.519627888997396,
+          "q_spread_mean_usable": 2.519627888997396,
+          "q_top1_accuracy": 0.0,
+          "selected_decision_count": 3,
+          "spearman_decision_count": 3,
+          "spearman_mean": 0.03333333333333335,
+          "training_q_ev_post": 0.1689307092828889,
+          "training_q_ev_pre": 0.1685494690789886,
+          "usable_decision_count": 3
+        }
+      },
+      "checkpoint_update": 120,
+      "pooled": {
+        "censored_fraction": 0.0,
+        "q_spread_mean_all": 3.3154394361707897,
+        "q_spread_mean_usable": 3.3154394361707897,
+        "q_top1_accuracy": 0.4444444444444444,
+        "selected_decision_count": 9,
+        "spearman_decision_count": 9,
+        "spearman_mean": 0.14444444444444443,
+        "training_q_ev_post_mean": 0.14920501225991847,
+        "training_q_ev_pre_mean": 0.14857154977511247,
+        "usable_decision_count": 9
+      }
+    },
+    "mid": {
+      "by_seed": {
+        "0": {
+          "censored_fraction": 0.0,
+          "q_spread_mean_all": 0.9014434814453125,
+          "q_spread_mean_usable": 0.9014434814453125,
+          "q_top1_accuracy": 0.6666666666666666,
+          "selected_decision_count": 3,
+          "spearman_decision_count": 3,
+          "spearman_mean": 0.3333333333333333,
+          "training_q_ev_post": 0.03080854145874079,
+          "training_q_ev_pre": 0.030182515130441456,
+          "usable_decision_count": 3
+        },
+        "1": {
+          "censored_fraction": 0.6666666666666666,
+          "q_spread_mean_all": 1.482129414876302,
+          "q_spread_mean_usable": 1.8065643310546875,
+          "q_top1_accuracy": 0.0,
+          "selected_decision_count": 3,
+          "spearman_decision_count": 1,
+          "spearman_mean": -0.7999999999999999,
+          "training_q_ev_post": 0.06960488485103955,
+          "training_q_ev_pre": 0.07203153679405694,
+          "usable_decision_count": 1
+        },
+        "2": {
+          "censored_fraction": 0.0,
+          "q_spread_mean_all": 0.9190654754638672,
+          "q_spread_mean_usable": 0.9190654754638672,
+          "q_top1_accuracy": 0.0,
+          "selected_decision_count": 3,
+          "spearman_decision_count": 3,
+          "spearman_mean": -0.06666666666666661,
+          "training_q_ev_post": 0.03243976219457201,
+          "training_q_ev_pre": 0.032588526044271204,
+          "usable_decision_count": 3
+        }
+      },
+      "checkpoint_update": 60,
+      "pooled": {
+        "censored_fraction": 0.2222222222222222,
+        "q_spread_mean_all": 1.1008794572618272,
+        "q_spread_mean_usable": 1.0382987431117467,
+        "q_top1_accuracy": 0.2857142857142857,
+        "selected_decision_count": 9,
+        "spearman_decision_count": 7,
+        "spearman_mean": 3.172065784643304e-17,
+        "training_q_ev_post_mean": 0.04428439616811745,
+        "training_q_ev_pre_mean": 0.04493419265625653,
+        "usable_decision_count": 7
+      }
+    }
+  },
+  "pilot_only_not_final_statistics": true,
+  "schema": "decision_q_v2_ranking_crn_pilot_summary_v1",
+  "selected_decision_count": 27,
+  "state_semantics": "frozen-checkpoint replay-generated on-policy decision states"
+}

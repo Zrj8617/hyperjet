@@ -1,0 +1,103 @@
+{
+  "equality_by_seed": [
+    {
+      "arms": [
+        "control",
+        "no_position",
+        "low_cancel",
+        "energy_balanced"
+      ],
+      "compared_tensors": 96,
+      "direct_tensor_equality": true,
+      "pairwise_reference_comparisons": 3,
+      "seed": 42
+    },
+    {
+      "arms": [
+        "control",
+        "no_position",
+        "low_cancel",
+        "energy_balanced"
+      ],
+      "compared_tensors": 96,
+      "direct_tensor_equality": true,
+      "pairwise_reference_comparisons": 3,
+      "seed": 86
+    },
+    {
+      "arms": [
+        "control",
+        "no_position",
+        "low_cancel",
+        "energy_balanced"
+      ],
+      "compared_tensors": 96,
+      "direct_tensor_equality": true,
+      "pairwise_reference_comparisons": 3,
+      "seed": 1042
+    }
+  ],
+  "rows": [
+    {
+      "arm": "control",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/initializations/control_seed42/20260827_172731_r2_control_seed42_initial_seed42/checkpoints/checkpoint_update_0000.pt",
+      "seed": 42
+    },
+    {
+      "arm": "no_position",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/initializations/no_position_seed42/20260827_172739_r2_no_position_seed42_initial_seed42/checkpoints/checkpoint_update_0000.pt",
+      "seed": 42
+    },
+    {
+      "arm": "low_cancel",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/initializations/low_cancel_seed42/20260827_172743_r2_low_cancel_seed42_initial_seed42/checkpoints/checkpoint_update_0000.pt",
+      "seed": 42
+    },
+    {
+      "arm": "energy_balanced",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/initializations/energy_balanced_seed42/20260827_172746_r2_energy_balanced_seed42_initial_seed42/checkpoints/checkpoint_update_0000.pt",
+      "seed": 42
+    },
+    {
+      "arm": "control",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/initializations/control_seed86/20260827_172749_r2_control_seed86_initial_seed86/checkpoints/checkpoint_update_0000.pt",
+      "seed": 86
+    },
+    {
+      "arm": "no_position",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/initializations/no_position_seed86/20260827_172752_r2_no_position_seed86_initial_seed86/checkpoints/checkpoint_update_0000.pt",
+      "seed": 86
+    },
+    {
+      "arm": "low_cancel",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/initializations/low_cancel_seed86/20260827_172755_r2_low_cancel_seed86_initial_seed86/checkpoints/checkpoint_update_0000.pt",
+      "seed": 86
+    },
+    {
+      "arm": "energy_balanced",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/initializations/energy_balanced_seed86/20260827_172758_r2_energy_balanced_seed86_initial_seed86/checkpoints/checkpoint_update_0000.pt",
+      "seed": 86
+    },
+    {
+      "arm": "control",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/initializations/control_seed1042/20260827_172801_r2_control_seed1042_initial_seed1042/checkpoints/checkpoint_update_0000.pt",
+      "seed": 1042
+    },
+    {
+      "arm": "no_position",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/initializations/no_position_seed1042/20260827_172805_r2_no_position_seed1042_initial_seed1042/checkpoints/checkpoint_update_0000.pt",
+      "seed": 1042
+    },
+    {
+      "arm": "low_cancel",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/initializations/low_cancel_seed1042/20260827_172808_r2_low_cancel_seed1042_initial_seed1042/checkpoints/checkpoint_update_0000.pt",
+      "seed": 1042
+    },
+    {
+      "arm": "energy_balanced",
+      "checkpoint": "/data2/zrj2025/HyperUAV-r2-formal-8070bc4/logs/r2_reward_bundle/initializations/energy_balanced_seed1042/20260827_172811_r2_energy_balanced_seed1042_initial_seed1042/checkpoints/checkpoint_update_0000.pt",
+      "seed": 1042
+    }
+  ],
+  "schema": "r2_reward_initialization_equality_v1"
+}

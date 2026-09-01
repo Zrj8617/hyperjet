@@ -1,0 +1,98 @@
+{
+  "0": {
+    "movement_entropy_fields": [
+      "ppo_movement_entropy",
+      "rollout_movement_entropy_normalized_mean"
+    ],
+    "ppo_updates": [
+      1,
+      120
+    ],
+    "required_diagnostic_fields": [
+      "decision_advantage_std",
+      "decision_critic_ev_post_update",
+      "decision_critic_ev_pre_update",
+      "decision_critic_normalized_loss",
+      "decision_critic_preclip_grad_norm_max",
+      "decision_critic_preclip_grad_norm_mean",
+      "decision_critic_raw_target_mean",
+      "decision_critic_raw_target_std",
+      "decision_critic_value_clip_fraction",
+      "decision_within_slot_advantage_std",
+      "grad_clip_scale",
+      "grad_post_clip_movement",
+      "grad_pre_clip_movement",
+      "offloading_ppo_target_grad_norm",
+      "rollout_movement_entropy_normalized_mean",
+      "rollout_offloading_entropy_normalized_mean",
+      "rollout_offloading_logit_spread_mean",
+      "rollout_offloading_probability_spread_mean"
+    ],
+    "required_fields_pass": true,
+    "training_rows": 120
+  },
+  "1": {
+    "movement_entropy_fields": [
+      "ppo_movement_entropy",
+      "rollout_movement_entropy_normalized_mean"
+    ],
+    "ppo_updates": [
+      1,
+      120
+    ],
+    "required_diagnostic_fields": [
+      "decision_advantage_std",
+      "decision_critic_ev_post_update",
+      "decision_critic_ev_pre_update",
+      "decision_critic_normalized_loss",
+      "decision_critic_preclip_grad_norm_max",
+      "decision_critic_preclip_grad_norm_mean",
+      "decision_critic_raw_target_mean",
+      "decision_critic_raw_target_std",
+      "decision_critic_value_clip_fraction",
+      "decision_within_slot_advantage_std",
+      "grad_clip_scale",
+      "grad_post_clip_movement",
+      "grad_pre_clip_movement",
+      "offloading_ppo_target_grad_norm",
+      "rollout_movement_entropy_normalized_mean",
+      "rollout_offloading_entropy_normalized_mean",
+      "rollout_offloading_logit_spread_mean",
+      "rollout_offloading_probability_spread_mean"
+    ],
+    "required_fields_pass": true,
+    "training_rows": 120
+  },
+  "2": {
+    "movement_entropy_fields": [
+      "ppo_movement_entropy",
+      "rollout_movement_entropy_normalized_mean"
+    ],
+    "ppo_updates": [
+      1,
+      120
+    ],
+    "required_diagnostic_fields": [
+      "decision_advantage_std",
+      "decision_critic_ev_post_update",
+      "decision_critic_ev_pre_update",
+      "decision_critic_normalized_loss",
+      "decision_critic_preclip_grad_norm_max",
+      "decision_critic_preclip_grad_norm_mean",
+      "decision_critic_raw_target_mean",
+      "decision_critic_raw_target_std",
+      "decision_critic_value_clip_fraction",
+      "decision_within_slot_advantage_std",
+      "grad_clip_scale",
+      "grad_post_clip_movement",
+      "grad_pre_clip_movement",
+      "offloading_ppo_target_grad_norm",
+      "rollout_movement_entropy_normalized_mean",
+      "rollout_offloading_entropy_normalized_mean",
+      "rollout_offloading_logit_spread_mean",
+      "rollout_offloading_probability_spread_mean"
+    ],
+    "required_fields_pass": true,
+    "training_rows": 120
+  }
+}

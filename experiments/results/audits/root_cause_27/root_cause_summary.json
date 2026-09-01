@@ -1,0 +1,1325 @@
+{
+  "bootstrap_audit": {
+    "early": {
+      "bootstrap_only": {
+        "action_row_count": 40,
+        "bootstrap_action_spread_mean": 0.017481486747457177,
+        "bootstrap_variance": 3.4918473547610516,
+        "decision_count_all_actions_in_group": 8,
+        "mean_abs_bootstrap_over_mean_abs_target": 1.0,
+        "q_spread_mean": 0.13463985174894333,
+        "q_vs_truth": {
+          "censored_fraction": 0.0,
+          "pairwise_comparison_count": 80,
+          "pairwise_ordering_accuracy": 0.55,
+          "spearman_mean": 0.0875,
+          "top1_accuracy": 0.25,
+          "usable_decision_count": 8
+        },
+        "rho_variance": 0.0,
+        "target_variance": 3.4918473547610516,
+        "target_vs_truth": {
+          "censored_fraction": 0.0,
+          "pairwise_comparison_count": 80,
+          "pairwise_ordering_accuracy": 0.5625,
+          "spearman_mean": 0.125,
+          "top1_accuracy": 0.25,
+          "usable_decision_count": 8
+        },
+        "two_cov_rho_bootstrap": 0.0,
+        "variance_identity_error": 0.0
+      },
+      "bootstrap_only_action_row_fraction": 0.8888888888888888,
+      "delta_positive": {
+        "action_row_count": 5,
+        "bootstrap_action_spread_mean": 0.12306187377840283,
+        "bootstrap_variance": 0.0021508990121586985,
+        "decision_count_all_actions_in_group": 1,
+        "mean_abs_bootstrap_over_mean_abs_target": 0.8445875034652609,
+        "q_spread_mean": 0.14291739463806152,
+        "q_vs_truth": {
+          "censored_fraction": 0.0,
+          "pairwise_comparison_count": 10,
+          "pairwise_ordering_accuracy": 0.8,
+          "spearman_mean": 0.7,
+          "top1_accuracy": 0.0,
+          "usable_decision_count": 1
+        },
+        "rho_variance": 0.001251100557248374,
+        "target_variance": 0.006457175803597369,
+        "target_vs_truth": {
+          "censored_fraction": 0.0,
+          "pairwise_comparison_count": 10,
+          "pairwise_ordering_accuracy": 0.6,
+          "spearman_mean": 0.49999999999999994,
+          "top1_accuracy": 0.0,
+          "usable_decision_count": 1
+        },
+        "two_cov_rho_bootstrap": 0.003055176234190293,
+        "variance_identity_error": 3.469446951953614e-18
+      }
+    },
+    "late": {
+      "bootstrap_only": {
+        "action_row_count": 35,
+        "bootstrap_action_spread_mean": 0.7164257732728824,
+        "bootstrap_variance": 79.33790341546425,
+        "decision_count_all_actions_in_group": 7,
+        "mean_abs_bootstrap_over_mean_abs_target": 1.0,
+        "q_spread_mean": 2.9856670924595425,
+        "q_vs_truth": {
+          "censored_fraction": 0.0,
+          "pairwise_comparison_count": 70,
+          "pairwise_ordering_accuracy": 0.5142857142857142,
+          "spearman_mean": 0.0857142857142857,
+          "top1_accuracy": 0.2857142857142857,
+          "usable_decision_count": 7
+        },
+        "rho_variance": 0.0,
+        "target_variance": 79.33790341546425,
+        "target_vs_truth": {
+          "censored_fraction": 0.0,
+          "pairwise_comparison_count": 70,
+          "pairwise_ordering_accuracy": 0.4857142857142857,
+          "spearman_mean": -0.049497197967182875,
+          "top1_accuracy": 0.42857142857142855,
+          "usable_decision_count": 7
+        },
+        "two_cov_rho_bootstrap": 0.0,
+        "variance_identity_error": 0.0
+      },
+      "bootstrap_only_action_row_fraction": 0.7777777777777778,
+      "delta_positive": {
+        "action_row_count": 10,
+        "bootstrap_action_spread_mean": 4.160730100664367,
+        "bootstrap_variance": 19.624461344863857,
+        "decision_count_all_actions_in_group": 2,
+        "mean_abs_bootstrap_over_mean_abs_target": 1.0020761467671815,
+        "q_spread_mean": 4.469642639160156,
+        "q_vs_truth": {
+          "censored_fraction": 0.0,
+          "pairwise_comparison_count": 20,
+          "pairwise_ordering_accuracy": 0.6,
+          "spearman_mean": 0.35,
+          "top1_accuracy": 1.0,
+          "usable_decision_count": 2
+        },
+        "rho_variance": 0.0007218798111337492,
+        "target_variance": 19.649417881264306,
+        "target_vs_truth": {
+          "censored_fraction": 0.0,
+          "pairwise_comparison_count": 20,
+          "pairwise_ordering_accuracy": 0.45,
+          "spearman_mean": -0.04999999999999999,
+          "top1_accuracy": 0.0,
+          "usable_decision_count": 2
+        },
+        "two_cov_rho_bootstrap": 0.024234656589320308,
+        "variance_identity_error": -5.9674487573602164e-15
+      }
+    },
+    "mid": {
+      "bootstrap_only": {
+        "action_row_count": 40,
+        "bootstrap_action_spread_mean": 0.2965552260690347,
+        "bootstrap_variance": 11.019624999723739,
+        "decision_count_all_actions_in_group": 8,
+        "mean_abs_bootstrap_over_mean_abs_target": 1.0,
+        "q_spread_mean": 1.0783307552337646,
+        "q_vs_truth": {
+          "censored_fraction": 0.25,
+          "pairwise_comparison_count": 60,
+          "pairwise_ordering_accuracy": 0.5,
+          "spearman_mean": -0.016666666666666646,
+          "top1_accuracy": 0.16666666666666666,
+          "usable_decision_count": 6
+        },
+        "rho_variance": 0.0,
+        "target_variance": 11.019624999723739,
+        "target_vs_truth": {
+          "censored_fraction": 0.25,
+          "pairwise_comparison_count": 60,
+          "pairwise_ordering_accuracy": 0.48333333333333334,
+          "spearman_mean": -0.033333333333333305,
+          "top1_accuracy": 0.0,
+          "usable_decision_count": 6
+        },
+        "two_cov_rho_bootstrap": 0.0,
+        "variance_identity_error": 0.0
+      },
+      "bootstrap_only_action_row_fraction": 0.8888888888888888,
+      "delta_positive": {
+        "action_row_count": 5,
+        "bootstrap_action_spread_mean": 0.029211615886502784,
+        "bootstrap_variance": 0.00011501856307144643,
+        "decision_count_all_actions_in_group": 1,
+        "mean_abs_bootstrap_over_mean_abs_target": 1.0024845711705062,
+        "q_spread_mean": 1.2812690734863281,
+        "q_vs_truth": {
+          "censored_fraction": 0.0,
+          "pairwise_comparison_count": 10,
+          "pairwise_ordering_accuracy": 0.5,
+          "spearman_mean": 0.09999999999999999,
+          "top1_accuracy": 1.0,
+          "usable_decision_count": 1
+        },
+        "rho_variance": 0.0,
+        "target_variance": 0.00011501856307144643,
+        "target_vs_truth": {
+          "censored_fraction": 0.0,
+          "pairwise_comparison_count": 10,
+          "pairwise_ordering_accuracy": 0.7,
+          "spearman_mean": 0.49999999999999994,
+          "top1_accuracy": 0.0,
+          "usable_decision_count": 1
+        },
+        "two_cov_rho_bootstrap": 0.0,
+        "variance_identity_error": 0.0
+      }
+    }
+  },
+  "gates": {
+    "all_decision_gates": true,
+    "optimizer_steps": 0,
+    "semantic_mismatch_count": 0,
+    "unrecognized_environment_rng_calls": 0
+  },
+  "historical_training_snapshot_recovered": false,
+  "phases": {
+    "early": {
+      "by_seed": {
+        "0": {
+          "actor_normalized_entropy_mean": 0.9992647736556686,
+          "actor_preference_vs_crn_truth": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.5333333333333333,
+            "spearman_mean": 0.13333333333333333,
+            "top1_accuracy": 0.0,
+            "usable_decision_count": 3
+          },
+          "actor_preference_vs_q_prediction": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.26666666666666666,
+            "spearman_mean": -0.5666666666666665,
+            "top1_accuracy": 0.0,
+            "usable_decision_count": 3
+          },
+          "actor_preference_vs_training_target": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.4,
+            "spearman_mean": -0.2333333333333333,
+            "top1_accuracy": 0.3333333333333333,
+            "usable_decision_count": 3
+          },
+          "actor_probability_spread_mean": 0.022394393895189924,
+          "q_prediction_vs_crn_truth": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.4666666666666667,
+            "spearman_mean": -0.09999999999999999,
+            "top1_accuracy": 0.0,
+            "usable_decision_count": 3
+          },
+          "q_prediction_vs_training_target": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.4666666666666667,
+            "spearman_mean": -0.033333333333333284,
+            "top1_accuracy": 0.6666666666666666,
+            "usable_decision_count": 3
+          },
+          "q_spread_mean": 0.009788413842519125,
+          "selected_decision_count": 3,
+          "target_censored_fraction": 0.0,
+          "training_q_ev": {
+            "training_q_ev_post": -0.00047432902146371525,
+            "training_q_ev_pre": -0.00038462002499395354
+          },
+          "training_target_vs_crn_truth": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.5333333333333333,
+            "spearman_mean": 0.13333333333333333,
+            "top1_accuracy": 0.0,
+            "usable_decision_count": 3
+          },
+          "truth_censored_fraction": 0.0
+        },
+        "1": {
+          "actor_normalized_entropy_mean": 0.8808068997450107,
+          "actor_preference_vs_crn_truth": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.7333333333333333,
+            "spearman_mean": 0.46666666666666656,
+            "top1_accuracy": 0.3333333333333333,
+            "usable_decision_count": 3
+          },
+          "actor_preference_vs_q_prediction": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 1.0,
+            "spearman_mean": 0.9999999999999999,
+            "top1_accuracy": 1.0,
+            "usable_decision_count": 3
+          },
+          "actor_preference_vs_training_target": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.9333333333333333,
+            "spearman_mean": 0.9333333333333332,
+            "top1_accuracy": 1.0,
+            "usable_decision_count": 3
+          },
+          "actor_probability_spread_mean": 0.36347321754354617,
+          "q_prediction_vs_crn_truth": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.7333333333333333,
+            "spearman_mean": 0.46666666666666656,
+            "top1_accuracy": 0.3333333333333333,
+            "usable_decision_count": 3
+          },
+          "q_prediction_vs_training_target": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.9333333333333333,
+            "spearman_mean": 0.9333333333333332,
+            "top1_accuracy": 1.0,
+            "usable_decision_count": 3
+          },
+          "q_spread_mean": 0.11585720380147298,
+          "selected_decision_count": 3,
+          "target_censored_fraction": 0.0,
+          "training_q_ev": {
+            "training_q_ev_post": 0.00015403732846330787,
+            "training_q_ev_pre": 6.907729623395475e-05
+          },
+          "training_target_vs_crn_truth": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.6666666666666666,
+            "spearman_mean": 0.3999999999999999,
+            "top1_accuracy": 0.3333333333333333,
+            "usable_decision_count": 3
+          },
+          "truth_censored_fraction": 0.0
+        },
+        "2": {
+          "actor_normalized_entropy_mean": 0.3555863780953094,
+          "actor_preference_vs_crn_truth": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.5333333333333333,
+            "spearman_mean": 0.09999999999999998,
+            "top1_accuracy": 0.3333333333333333,
+            "usable_decision_count": 3
+          },
+          "actor_preference_vs_q_prediction": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 1.0,
+            "spearman_mean": 0.9999999999999999,
+            "top1_accuracy": 1.0,
+            "usable_decision_count": 3
+          },
+          "actor_preference_vs_training_target": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.7,
+            "spearman_mean": 0.49999999999999994,
+            "top1_accuracy": 1.0,
+            "usable_decision_count": 3
+          },
+          "actor_probability_spread_mean": 0.7124650262735012,
+          "q_prediction_vs_crn_truth": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.5333333333333333,
+            "spearman_mean": 0.09999999999999998,
+            "top1_accuracy": 0.3333333333333333,
+            "usable_decision_count": 3
+          },
+          "q_prediction_vs_training_target": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.7,
+            "spearman_mean": 0.49999999999999994,
+            "top1_accuracy": 1.0,
+            "usable_decision_count": 3
+          },
+          "q_spread_mean": 0.28103311856587726,
+          "selected_decision_count": 3,
+          "target_censored_fraction": 0.0,
+          "training_q_ev": {
+            "training_q_ev_post": 0.0010647981065338152,
+            "training_q_ev_pre": 0.0009108709963900896
+          },
+          "training_target_vs_crn_truth": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.5,
+            "spearman_mean": -0.033333333333333326,
+            "top1_accuracy": 0.3333333333333333,
+            "usable_decision_count": 3
+          },
+          "truth_censored_fraction": 0.0
+        }
+      },
+      "checkpoint_update": 30,
+      "pooled": {
+        "actor_normalized_entropy_mean": 0.7452193504986628,
+        "actor_preference_vs_crn_truth": {
+          "censored_fraction": 0.0,
+          "pairwise_comparison_count": 90,
+          "pairwise_ordering_accuracy": 0.6,
+          "spearman_mean": 0.23333333333333328,
+          "top1_accuracy": 0.2222222222222222,
+          "usable_decision_count": 9
+        },
+        "actor_preference_vs_q_prediction": {
+          "censored_fraction": 0.0,
+          "pairwise_comparison_count": 90,
+          "pairwise_ordering_accuracy": 0.7555555555555555,
+          "spearman_mean": 0.47777777777777775,
+          "top1_accuracy": 0.6666666666666666,
+          "usable_decision_count": 9
+        },
+        "actor_preference_vs_training_target": {
+          "censored_fraction": 0.0,
+          "pairwise_comparison_count": 90,
+          "pairwise_ordering_accuracy": 0.6777777777777778,
+          "spearman_mean": 0.39999999999999997,
+          "top1_accuracy": 0.7777777777777778,
+          "usable_decision_count": 9
+        },
+        "actor_probability_spread_mean": 0.3661108792374124,
+        "q_prediction_vs_crn_truth": {
+          "censored_fraction": 0.0,
+          "pairwise_comparison_count": 90,
+          "pairwise_ordering_accuracy": 0.5777777777777777,
+          "spearman_mean": 0.15555555555555556,
+          "top1_accuracy": 0.2222222222222222,
+          "usable_decision_count": 9
+        },
+        "q_prediction_vs_training_target": {
+          "censored_fraction": 0.0,
+          "pairwise_comparison_count": 90,
+          "pairwise_ordering_accuracy": 0.7,
+          "spearman_mean": 0.46666666666666656,
+          "top1_accuracy": 0.8888888888888888,
+          "usable_decision_count": 9
+        },
+        "q_spread_mean": 0.13555957873662314,
+        "selected_decision_count": 9,
+        "target_censored_fraction": 0.0,
+        "training_q_ev_post_mean": 0.00024816880451113593,
+        "training_q_ev_pre_mean": 0.00019844275587669694,
+        "training_target_vs_crn_truth": {
+          "censored_fraction": 0.0,
+          "pairwise_comparison_count": 90,
+          "pairwise_ordering_accuracy": 0.5666666666666667,
+          "spearman_mean": 0.16666666666666663,
+          "top1_accuracy": 0.2222222222222222,
+          "usable_decision_count": 9
+        },
+        "truth_censored_fraction": 0.0
+      }
+    },
+    "late": {
+      "by_seed": {
+        "0": {
+          "actor_normalized_entropy_mean": 0.2681856730202066,
+          "actor_preference_vs_crn_truth": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.6666666666666666,
+            "spearman_mean": 0.3999999999999999,
+            "top1_accuracy": 0.6666666666666666,
+            "usable_decision_count": 3
+          },
+          "actor_preference_vs_q_prediction": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.9666666666666667,
+            "spearman_mean": 0.9666666666666665,
+            "top1_accuracy": 0.6666666666666666,
+            "usable_decision_count": 3
+          },
+          "actor_preference_vs_training_target": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.7,
+            "spearman_mean": 0.5333333333333332,
+            "top1_accuracy": 0.6666666666666666,
+            "usable_decision_count": 3
+          },
+          "actor_probability_spread_mean": 0.7843296754899542,
+          "q_prediction_vs_crn_truth": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.6333333333333333,
+            "spearman_mean": 0.3333333333333333,
+            "top1_accuracy": 0.3333333333333333,
+            "usable_decision_count": 3
+          },
+          "q_prediction_vs_training_target": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.6666666666666666,
+            "spearman_mean": 0.49999999999999994,
+            "top1_accuracy": 0.3333333333333333,
+            "usable_decision_count": 3
+          },
+          "q_spread_mean": 1.6665433247884114,
+          "selected_decision_count": 3,
+          "target_censored_fraction": 0.0,
+          "training_q_ev": {
+            "training_q_ev_post": 0.15663268902006466,
+            "training_q_ev_pre": 0.1562684868041332
+          },
+          "training_target_vs_crn_truth": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.5,
+            "spearman_mean": 0.0,
+            "top1_accuracy": 0.3333333333333333,
+            "usable_decision_count": 3
+          },
+          "truth_censored_fraction": 0.0
+        },
+        "1": {
+          "actor_normalized_entropy_mean": 3.11783660258294e-08,
+          "actor_preference_vs_crn_truth": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.65,
+            "spearman_mean": 0.06666666666666667,
+            "top1_accuracy": 1.0,
+            "usable_decision_count": 3
+          },
+          "actor_preference_vs_q_prediction": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.75,
+            "spearman_mean": 0.9999999999999999,
+            "top1_accuracy": 1.0,
+            "usable_decision_count": 3
+          },
+          "actor_preference_vs_training_target": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 26,
+            "pairwise_ordering_accuracy": 0.6730769230769231,
+            "spearman_mean": 0.23016424220177642,
+            "top1_accuracy": 0.6666666666666666,
+            "usable_decision_count": 3
+          },
+          "actor_probability_spread_mean": 0.999999997451401,
+          "q_prediction_vs_crn_truth": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.4666666666666667,
+            "spearman_mean": 0.06666666666666667,
+            "top1_accuracy": 1.0,
+            "usable_decision_count": 3
+          },
+          "q_prediction_vs_training_target": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 26,
+            "pairwise_ordering_accuracy": 0.5769230769230769,
+            "spearman_mean": 0.23016424220177642,
+            "top1_accuracy": 0.6666666666666666,
+            "usable_decision_count": 3
+          },
+          "q_spread_mean": 5.7601470947265625,
+          "selected_decision_count": 3,
+          "target_censored_fraction": 0.0,
+          "training_q_ev": {
+            "training_q_ev_post": 0.1220516384768019,
+            "training_q_ev_pre": 0.12089669344221565
+          },
+          "training_target_vs_crn_truth": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.6,
+            "spearman_mean": 0.2845065380765732,
+            "top1_accuracy": 0.6666666666666666,
+            "usable_decision_count": 3
+          },
+          "truth_censored_fraction": 0.0
+        },
+        "2": {
+          "actor_normalized_entropy_mean": 0.07469823204664715,
+          "actor_preference_vs_crn_truth": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.5,
+            "spearman_mean": 0.03333333333333335,
+            "top1_accuracy": 0.0,
+            "usable_decision_count": 3
+          },
+          "actor_preference_vs_q_prediction": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.9666666666666667,
+            "spearman_mean": 0.9999999999999999,
+            "top1_accuracy": 1.0,
+            "usable_decision_count": 3
+          },
+          "actor_preference_vs_training_target": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 28,
+            "pairwise_ordering_accuracy": 0.5178571428571429,
+            "spearman_mean": 0.06666666666666665,
+            "top1_accuracy": 0.3333333333333333,
+            "usable_decision_count": 3
+          },
+          "actor_probability_spread_mean": 0.9632629658829224,
+          "q_prediction_vs_crn_truth": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.5,
+            "spearman_mean": 0.03333333333333335,
+            "top1_accuracy": 0.0,
+            "usable_decision_count": 3
+          },
+          "q_prediction_vs_training_target": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 28,
+            "pairwise_ordering_accuracy": 0.5,
+            "spearman_mean": 0.06666666666666665,
+            "top1_accuracy": 0.3333333333333333,
+            "usable_decision_count": 3
+          },
+          "q_spread_mean": 2.519627888997396,
+          "selected_decision_count": 3,
+          "target_censored_fraction": 0.0,
+          "training_q_ev": {
+            "training_q_ev_post": 0.1689307092828889,
+            "training_q_ev_pre": 0.1685494690789886
+          },
+          "training_target_vs_crn_truth": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.3333333333333333,
+            "spearman_mean": -0.43333333333333335,
+            "top1_accuracy": 0.0,
+            "usable_decision_count": 3
+          },
+          "truth_censored_fraction": 0.0
+        }
+      },
+      "checkpoint_update": 120,
+      "pooled": {
+        "actor_normalized_entropy_mean": 0.11429464541507328,
+        "actor_preference_vs_crn_truth": {
+          "censored_fraction": 0.0,
+          "pairwise_comparison_count": 90,
+          "pairwise_ordering_accuracy": 0.6055555555555555,
+          "spearman_mean": 0.16666666666666666,
+          "top1_accuracy": 0.5555555555555556,
+          "usable_decision_count": 9
+        },
+        "actor_preference_vs_q_prediction": {
+          "censored_fraction": 0.0,
+          "pairwise_comparison_count": 90,
+          "pairwise_ordering_accuracy": 0.8944444444444445,
+          "spearman_mean": 0.9888888888888887,
+          "top1_accuracy": 0.8888888888888888,
+          "usable_decision_count": 9
+        },
+        "actor_preference_vs_training_target": {
+          "censored_fraction": 0.0,
+          "pairwise_comparison_count": 84,
+          "pairwise_ordering_accuracy": 0.6309523809523809,
+          "spearman_mean": 0.2767214140672588,
+          "top1_accuracy": 0.5555555555555556,
+          "usable_decision_count": 9
+        },
+        "actor_probability_spread_mean": 0.9158642129414258,
+        "q_prediction_vs_crn_truth": {
+          "censored_fraction": 0.0,
+          "pairwise_comparison_count": 90,
+          "pairwise_ordering_accuracy": 0.5333333333333333,
+          "spearman_mean": 0.14444444444444443,
+          "top1_accuracy": 0.4444444444444444,
+          "usable_decision_count": 9
+        },
+        "q_prediction_vs_training_target": {
+          "censored_fraction": 0.0,
+          "pairwise_comparison_count": 84,
+          "pairwise_ordering_accuracy": 0.5833333333333334,
+          "spearman_mean": 0.2656103029561477,
+          "top1_accuracy": 0.4444444444444444,
+          "usable_decision_count": 9
+        },
+        "q_spread_mean": 3.3154394361707897,
+        "selected_decision_count": 9,
+        "target_censored_fraction": 0.0,
+        "training_q_ev_post_mean": 0.14920501225991847,
+        "training_q_ev_pre_mean": 0.14857154977511247,
+        "training_target_vs_crn_truth": {
+          "censored_fraction": 0.0,
+          "pairwise_comparison_count": 90,
+          "pairwise_ordering_accuracy": 0.4777777777777778,
+          "spearman_mean": -0.04960893175225336,
+          "top1_accuracy": 0.3333333333333333,
+          "usable_decision_count": 9
+        },
+        "truth_censored_fraction": 0.0
+      }
+    },
+    "mid": {
+      "by_seed": {
+        "0": {
+          "actor_normalized_entropy_mean": 0.267945145489329,
+          "actor_preference_vs_crn_truth": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.6,
+            "spearman_mean": 0.3333333333333333,
+            "top1_accuracy": 0.6666666666666666,
+            "usable_decision_count": 3
+          },
+          "actor_preference_vs_q_prediction": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 1.0,
+            "spearman_mean": 0.9999999999999999,
+            "top1_accuracy": 1.0,
+            "usable_decision_count": 3
+          },
+          "actor_preference_vs_training_target": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.6,
+            "spearman_mean": 0.3333333333333333,
+            "top1_accuracy": 0.3333333333333333,
+            "usable_decision_count": 3
+          },
+          "actor_probability_spread_mean": 0.8086499513121584,
+          "q_prediction_vs_crn_truth": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.6,
+            "spearman_mean": 0.3333333333333333,
+            "top1_accuracy": 0.6666666666666666,
+            "usable_decision_count": 3
+          },
+          "q_prediction_vs_training_target": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.6,
+            "spearman_mean": 0.3333333333333333,
+            "top1_accuracy": 0.3333333333333333,
+            "usable_decision_count": 3
+          },
+          "q_spread_mean": 0.9014434814453125,
+          "selected_decision_count": 3,
+          "target_censored_fraction": 0.0,
+          "training_q_ev": {
+            "training_q_ev_post": 0.03080854145874079,
+            "training_q_ev_pre": 0.030182515130441456
+          },
+          "training_target_vs_crn_truth": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.6666666666666666,
+            "spearman_mean": 0.36666666666666664,
+            "top1_accuracy": 0.0,
+            "usable_decision_count": 3
+          },
+          "truth_censored_fraction": 0.0
+        },
+        "1": {
+          "actor_normalized_entropy_mean": 0.15077302917156699,
+          "actor_preference_vs_crn_truth": {
+            "censored_fraction": 0.6666666666666667,
+            "pairwise_comparison_count": 10,
+            "pairwise_ordering_accuracy": 0.2,
+            "spearman_mean": -0.7999999999999999,
+            "top1_accuracy": 0.0,
+            "usable_decision_count": 1
+          },
+          "actor_preference_vs_q_prediction": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.8666666666666667,
+            "spearman_mean": 0.9666666666666665,
+            "top1_accuracy": 0.6666666666666666,
+            "usable_decision_count": 3
+          },
+          "actor_preference_vs_training_target": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.5333333333333333,
+            "spearman_mean": 0.23333333333333328,
+            "top1_accuracy": 0.6666666666666666,
+            "usable_decision_count": 3
+          },
+          "actor_probability_spread_mean": 0.8819903558519856,
+          "q_prediction_vs_crn_truth": {
+            "censored_fraction": 0.6666666666666667,
+            "pairwise_comparison_count": 10,
+            "pairwise_ordering_accuracy": 0.2,
+            "spearman_mean": -0.7999999999999999,
+            "top1_accuracy": 0.0,
+            "usable_decision_count": 1
+          },
+          "q_prediction_vs_training_target": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.5666666666666667,
+            "spearman_mean": 0.1666666666666666,
+            "top1_accuracy": 0.6666666666666666,
+            "usable_decision_count": 3
+          },
+          "q_spread_mean": 1.482129414876302,
+          "selected_decision_count": 3,
+          "target_censored_fraction": 0.0,
+          "training_q_ev": {
+            "training_q_ev_post": 0.06960488485103955,
+            "training_q_ev_pre": 0.07203153679405694
+          },
+          "training_target_vs_crn_truth": {
+            "censored_fraction": 0.6666666666666667,
+            "pairwise_comparison_count": 10,
+            "pairwise_ordering_accuracy": 0.5,
+            "spearman_mean": -0.09999999999999999,
+            "top1_accuracy": 0.0,
+            "usable_decision_count": 1
+          },
+          "truth_censored_fraction": 0.6666666666666666
+        },
+        "2": {
+          "actor_normalized_entropy_mean": 0.029760663156751976,
+          "actor_preference_vs_crn_truth": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.4666666666666667,
+            "spearman_mean": -0.13333333333333328,
+            "top1_accuracy": 0.0,
+            "usable_decision_count": 3
+          },
+          "actor_preference_vs_q_prediction": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.9666666666666667,
+            "spearman_mean": 0.9666666666666665,
+            "top1_accuracy": 1.0,
+            "usable_decision_count": 3
+          },
+          "actor_preference_vs_training_target": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.5666666666666667,
+            "spearman_mean": 0.26666666666666666,
+            "top1_accuracy": 1.0,
+            "usable_decision_count": 3
+          },
+          "actor_probability_spread_mean": 0.990479862340743,
+          "q_prediction_vs_crn_truth": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.5,
+            "spearman_mean": -0.06666666666666661,
+            "top1_accuracy": 0.0,
+            "usable_decision_count": 3
+          },
+          "q_prediction_vs_training_target": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.6,
+            "spearman_mean": 0.33333333333333326,
+            "top1_accuracy": 1.0,
+            "usable_decision_count": 3
+          },
+          "q_spread_mean": 0.9190654754638672,
+          "selected_decision_count": 3,
+          "target_censored_fraction": 0.0,
+          "training_q_ev": {
+            "training_q_ev_post": 0.03243976219457201,
+            "training_q_ev_pre": 0.032588526044271204
+          },
+          "training_target_vs_crn_truth": {
+            "censored_fraction": 0.0,
+            "pairwise_comparison_count": 30,
+            "pairwise_ordering_accuracy": 0.36666666666666664,
+            "spearman_mean": -0.23333333333333328,
+            "top1_accuracy": 0.0,
+            "usable_decision_count": 3
+          },
+          "truth_censored_fraction": 0.0
+        }
+      },
+      "checkpoint_update": 60,
+      "pooled": {
+        "actor_normalized_entropy_mean": 0.149492945939216,
+        "actor_preference_vs_crn_truth": {
+          "censored_fraction": 0.2222222222222222,
+          "pairwise_comparison_count": 70,
+          "pairwise_ordering_accuracy": 0.4857142857142857,
+          "spearman_mean": -0.028571428571428543,
+          "top1_accuracy": 0.2857142857142857,
+          "usable_decision_count": 7
+        },
+        "actor_preference_vs_q_prediction": {
+          "censored_fraction": 0.0,
+          "pairwise_comparison_count": 90,
+          "pairwise_ordering_accuracy": 0.9444444444444444,
+          "spearman_mean": 0.9777777777777776,
+          "top1_accuracy": 0.8888888888888888,
+          "usable_decision_count": 9
+        },
+        "actor_preference_vs_training_target": {
+          "censored_fraction": 0.0,
+          "pairwise_comparison_count": 90,
+          "pairwise_ordering_accuracy": 0.5666666666666667,
+          "spearman_mean": 0.2777777777777778,
+          "top1_accuracy": 0.6666666666666666,
+          "usable_decision_count": 9
+        },
+        "actor_probability_spread_mean": 0.8937067231682957,
+        "q_prediction_vs_crn_truth": {
+          "censored_fraction": 0.2222222222222222,
+          "pairwise_comparison_count": 70,
+          "pairwise_ordering_accuracy": 0.5,
+          "spearman_mean": 3.172065784643304e-17,
+          "top1_accuracy": 0.2857142857142857,
+          "usable_decision_count": 7
+        },
+        "q_prediction_vs_training_target": {
+          "censored_fraction": 0.0,
+          "pairwise_comparison_count": 90,
+          "pairwise_ordering_accuracy": 0.5888888888888889,
+          "spearman_mean": 0.27777777777777773,
+          "top1_accuracy": 0.6666666666666666,
+          "usable_decision_count": 9
+        },
+        "q_spread_mean": 1.1008794572618272,
+        "selected_decision_count": 9,
+        "target_censored_fraction": 0.0,
+        "training_q_ev_post_mean": 0.04428439616811745,
+        "training_q_ev_pre_mean": 0.04493419265625653,
+        "training_target_vs_crn_truth": {
+          "censored_fraction": 0.2222222222222222,
+          "pairwise_comparison_count": 70,
+          "pairwise_ordering_accuracy": 0.5142857142857142,
+          "spearman_mean": 0.042857142857142864,
+          "top1_accuracy": 0.0,
+          "usable_decision_count": 7
+        },
+        "truth_censored_fraction": 0.2222222222222222
+      }
+    }
+  },
+  "pilot_only_not_final_statistics": true,
+  "schema": "decision_q_v2_root_cause_summary_v1",
+  "selected_decision_count": 27,
+  "state_nearest_pairs": [
+    {
+      "candidate_pair_count": 3,
+      "crn_return_vector_spearman": 0.6,
+      "pair": [
+        {
+          "slot_index": 0,
+          "task_id": "task_1"
+        },
+        {
+          "slot_index": 2,
+          "task_id": "task_2"
+        }
+      ],
+      "phase": "early",
+      "q_input_rms_distance": 0.09789393650791256,
+      "seed": 0
+    },
+    {
+      "candidate_pair_count": 3,
+      "crn_return_vector_spearman": 0.6,
+      "pair": [
+        {
+          "slot_index": 1,
+          "task_id": "task_8"
+        },
+        {
+          "slot_index": 2,
+          "task_id": "task_16"
+        }
+      ],
+      "phase": "mid",
+      "q_input_rms_distance": 0.065686727759265,
+      "seed": 0
+    },
+    {
+      "candidate_pair_count": 3,
+      "crn_return_vector_spearman": -0.3,
+      "pair": [
+        {
+          "slot_index": 0,
+          "task_id": "task_1"
+        },
+        {
+          "slot_index": 1,
+          "task_id": "task_3"
+        }
+      ],
+      "phase": "late",
+      "q_input_rms_distance": 0.0906089740391173,
+      "seed": 0
+    },
+    {
+      "candidate_pair_count": 3,
+      "crn_return_vector_spearman": -0.09999999999999999,
+      "pair": [
+        {
+          "slot_index": 1,
+          "task_id": "task_2"
+        },
+        {
+          "slot_index": 2,
+          "task_id": "task_5"
+        }
+      ],
+      "phase": "early",
+      "q_input_rms_distance": 0.06896930856664608,
+      "seed": 1
+    },
+    {
+      "candidate_pair_count": 3,
+      "crn_return_vector_spearman": 0.8999999999999998,
+      "pair": [
+        {
+          "slot_index": 1,
+          "task_id": "task_8"
+        },
+        {
+          "slot_index": 3,
+          "task_id": "task_13"
+        }
+      ],
+      "phase": "late",
+      "q_input_rms_distance": 0.038504717159783146,
+      "seed": 1
+    },
+    {
+      "candidate_pair_count": 3,
+      "crn_return_vector_spearman": -0.6,
+      "pair": [
+        {
+          "slot_index": 3,
+          "task_id": "task_9"
+        },
+        {
+          "slot_index": 5,
+          "task_id": "task_16"
+        }
+      ],
+      "phase": "early",
+      "q_input_rms_distance": 0.08613183517267496,
+      "seed": 2
+    },
+    {
+      "candidate_pair_count": 3,
+      "crn_return_vector_spearman": 0.3,
+      "pair": [
+        {
+          "slot_index": 2,
+          "task_id": "task_3"
+        },
+        {
+          "slot_index": 3,
+          "task_id": "task_11"
+        }
+      ],
+      "phase": "mid",
+      "q_input_rms_distance": 0.07803396328499333,
+      "seed": 2
+    },
+    {
+      "candidate_pair_count": 3,
+      "crn_return_vector_spearman": 0.7,
+      "pair": [
+        {
+          "slot_index": 1,
+          "task_id": "task_16"
+        },
+        {
+          "slot_index": 2,
+          "task_id": "task_2"
+        }
+      ],
+      "phase": "late",
+      "q_input_rms_distance": 0.07347417935708786,
+      "seed": 2
+    }
+  ],
+  "state_semantics": "frozen-checkpoint replay-generated on-policy decision states",
+  "training_timeline": {
+    "by_seed": {
+      "0": {
+        "correlations": {
+          "movement_entropy_vs_q_ev_post": -0.49921060904794445,
+          "movement_entropy_vs_q_spread": -0.7806826203886296,
+          "q_ev_post_vs_offloading_entropy": -0.600079600669654,
+          "q_spread_vs_actor_parameter_update": -0.6186877370168058,
+          "q_spread_vs_offloading_entropy": -0.9055951585929093
+        },
+        "first_update_below_movement_entropy": {
+          "0.2": 42,
+          "0.5": 35,
+          "0.8": 30
+        },
+        "mean_q_ev_single_update_gain": 0.00017044887923477376,
+        "windows": {
+          "early_1_30": {
+            "global_grad_clip_scale": 0.909465276833363,
+            "movement_entropy": 0.9659361944643078,
+            "offloading_actor_parameter_update_norm": 0.12522587560035522,
+            "offloading_actor_preclip_grad_norm": 0.00021326582767034778,
+            "offloading_entropy": 0.9851602537438343,
+            "q_ev_post": 0.0011345732454350703,
+            "q_ev_pre": 0.0008713481179811818,
+            "q_normalized_loss": 0.5074634095033009,
+            "q_preclip_grad_norm_max": 0.08754995384564003,
+            "q_preclip_grad_norm_mean": 0.08348276012887558,
+            "q_spread": 0.007740575685835075,
+            "q_value_clip_fraction": 0.0,
+            "scaled_actor_advantage_std": 0.0017370506733035047,
+            "target_std": 2.64906671444575
+          },
+          "late_61_120": {
+            "global_grad_clip_scale": 0.3037681982196034,
+            "movement_entropy": 0.09470549010465852,
+            "offloading_actor_parameter_update_norm": 0.06921274444841236,
+            "offloading_actor_preclip_grad_norm": 0.0017657889368513965,
+            "offloading_entropy": 0.13592031073233735,
+            "q_ev_post": 0.1714541501407351,
+            "q_ev_pre": 0.1713340309922368,
+            "q_normalized_loss": 0.4228236979908413,
+            "q_preclip_grad_norm_max": 3.7657613197962445,
+            "q_preclip_grad_norm_mean": 2.317252968686323,
+            "q_spread": 1.439027360582358,
+            "q_value_clip_fraction": 0.16496644428310298,
+            "scaled_actor_advantage_std": 0.006539232896951338,
+            "target_std": 3.8007157842318215
+          },
+          "mid_31_60": {
+            "global_grad_clip_scale": 0.5898366497257698,
+            "movement_entropy": 0.2842054947010414,
+            "offloading_actor_parameter_update_norm": 0.13571978529055231,
+            "offloading_actor_preclip_grad_norm": 0.001581839730948178,
+            "offloading_entropy": 0.6127669472428701,
+            "q_ev_post": 0.009732573843815547,
+            "q_ev_pre": 0.009554241751326915,
+            "q_normalized_loss": 0.5115987747907639,
+            "q_preclip_grad_norm_max": 0.985090475032727,
+            "q_preclip_grad_norm_mean": 0.6677257842487759,
+            "q_spread": 0.28822023691400134,
+            "q_value_clip_fraction": 0.04922376019466255,
+            "scaled_actor_advantage_std": 0.00784672445928057,
+            "target_std": 3.4867699066797893
+          }
+        }
+      },
+      "1": {
+        "correlations": {
+          "movement_entropy_vs_q_ev_post": -0.5227625613259331,
+          "movement_entropy_vs_q_spread": -0.8333602587152326,
+          "q_ev_post_vs_offloading_entropy": -0.5493484583920931,
+          "q_spread_vs_actor_parameter_update": -0.7500452522584103,
+          "q_spread_vs_offloading_entropy": -0.8931527685566037
+        },
+        "first_update_below_movement_entropy": {
+          "0.2": 38,
+          "0.5": 32,
+          "0.8": 27
+        },
+        "mean_q_ev_single_update_gain": 3.0916274816235786e-07,
+        "windows": {
+          "early_1_30": {
+            "global_grad_clip_scale": 0.8184926535865762,
+            "movement_entropy": 0.9205698256064738,
+            "offloading_actor_parameter_update_norm": 0.12692626038855023,
+            "offloading_actor_preclip_grad_norm": 0.0006649469622823707,
+            "offloading_entropy": 0.9543844418046424,
+            "q_ev_post": 0.00028450479849830473,
+            "q_ev_pre": 5.9486698374200395e-05,
+            "q_normalized_loss": 0.5084775663084454,
+            "q_preclip_grad_norm_max": 0.13942278635998567,
+            "q_preclip_grad_norm_mean": 0.1272584522349967,
+            "q_spread": 0.025368461149675156,
+            "q_value_clip_fraction": 0.0,
+            "scaled_actor_advantage_std": 0.0028794438083423303,
+            "target_std": 2.741960346698761
+          },
+          "late_61_120": {
+            "global_grad_clip_scale": 0.27156127182473766,
+            "movement_entropy": 0.08820017148206834,
+            "offloading_actor_parameter_update_norm": 0.05646382601833079,
+            "offloading_actor_preclip_grad_norm": 0.0017193038499563498,
+            "offloading_entropy": 0.09355494613725147,
+            "q_ev_post": 0.2527482389583278,
+            "q_ev_pre": 0.2524966436213317,
+            "q_normalized_loss": 0.38028766877121395,
+            "q_preclip_grad_norm_max": 3.448419775565465,
+            "q_preclip_grad_norm_mean": 2.0625083353370424,
+            "q_spread": 1.746727921598233,
+            "q_value_clip_fraction": 0.09624547648450567,
+            "scaled_actor_advantage_std": 0.005369963446476807,
+            "target_std": 4.138969767093658
+          },
+          "mid_31_60": {
+            "global_grad_clip_scale": 0.41109659439732094,
+            "movement_entropy": 0.20260734198927421,
+            "offloading_actor_parameter_update_norm": 0.08631146584791678,
+            "offloading_actor_preclip_grad_norm": 0.0012434270111308882,
+            "offloading_entropy": 0.2821199578436992,
+            "q_ev_post": 0.024686029608815316,
+            "q_ev_pre": 0.025413001731939226,
+            "q_normalized_loss": 0.49893561204274495,
+            "q_preclip_grad_norm_max": 1.5821512162685394,
+            "q_preclip_grad_norm_mean": 1.041150441020727,
+            "q_spread": 0.693615674838051,
+            "q_value_clip_fraction": 0.046690994997819264,
+            "scaled_actor_advantage_std": 0.007255644506464402,
+            "target_std": 3.4839007298151654
+          }
+        }
+      },
+      "2": {
+        "correlations": {
+          "movement_entropy_vs_q_ev_post": -0.46558743049093726,
+          "movement_entropy_vs_q_spread": -0.7789902311535793,
+          "q_ev_post_vs_offloading_entropy": -0.5561239145608605,
+          "q_spread_vs_actor_parameter_update": -0.5719440847299262,
+          "q_spread_vs_offloading_entropy": -0.9019111966464463
+        },
+        "first_update_below_movement_entropy": {
+          "0.2": 31,
+          "0.5": 25,
+          "0.8": 22
+        },
+        "mean_q_ev_single_update_gain": 0.0003133187683047739,
+        "windows": {
+          "early_1_30": {
+            "global_grad_clip_scale": 0.755307757384594,
+            "movement_entropy": 0.8010294071725392,
+            "offloading_actor_parameter_update_norm": 0.12850164037335313,
+            "offloading_actor_preclip_grad_norm": 0.0009744960122584925,
+            "offloading_entropy": 0.8963529964997619,
+            "q_ev_post": 0.0010445643287540496,
+            "q_ev_pre": 0.0007203726754680654,
+            "q_normalized_loss": 0.5115172160996332,
+            "q_preclip_grad_norm_max": 0.21055459330479304,
+            "q_preclip_grad_norm_mean": 0.18267730157822368,
+            "q_spread": 0.0432447575151603,
+            "q_value_clip_fraction": 0.0,
+            "scaled_actor_advantage_std": 0.003975081430204834,
+            "target_std": 2.9765392104784647
+          },
+          "late_61_120": {
+            "global_grad_clip_scale": 0.26609829333274676,
+            "movement_entropy": 0.11200741553139505,
+            "offloading_actor_parameter_update_norm": 0.0829708849772521,
+            "offloading_actor_preclip_grad_norm": 0.0020267546335390563,
+            "offloading_entropy": 0.0955035464128166,
+            "q_ev_post": 0.3090804221406659,
+            "q_ev_pre": 0.3085412657963857,
+            "q_normalized_loss": 0.3516721953948339,
+            "q_preclip_grad_norm_max": 3.3875237067540485,
+            "q_preclip_grad_norm_mean": 1.939524899919828,
+            "q_spread": 1.5613695523520152,
+            "q_value_clip_fraction": 0.07537588256721696,
+            "scaled_actor_advantage_std": 0.0057193687922942145,
+            "target_std": 4.278686881065369
+          },
+          "mid_31_60": {
+            "global_grad_clip_scale": 0.41940411953193,
+            "movement_entropy": 0.14721673896918241,
+            "offloading_actor_parameter_update_norm": 0.11726954880985874,
+            "offloading_actor_preclip_grad_norm": 0.001187509243312904,
+            "offloading_entropy": 0.25322652532035955,
+            "q_ev_post": 0.03779485347089882,
+            "q_ev_pre": 0.03794408273952617,
+            "q_normalized_loss": 0.49115114112695063,
+            "q_preclip_grad_norm_max": 1.7927421867847442,
+            "q_preclip_grad_norm_mean": 1.130984343505568,
+            "q_spread": 0.75447268383653,
+            "q_value_clip_fraction": 0.059956986622677906,
+            "scaled_actor_advantage_std": 0.007100386094922821,
+            "target_std": 3.5722026030222573
+          }
+        }
+      }
+    },
+    "pooled": {
+      "correlations": {
+        "movement_entropy_vs_q_ev_post": -0.4856770293293496,
+        "movement_entropy_vs_q_spread": -0.7950426523397555,
+        "q_ev_post_vs_offloading_entropy": -0.5620089243576648,
+        "q_spread_vs_actor_parameter_update": -0.6397133021791119,
+        "q_spread_vs_offloading_entropy": -0.8986129940652176
+      },
+      "first_update_below_movement_entropy": {
+        "0.2": 31,
+        "0.5": 25,
+        "0.8": 22
+      },
+      "mean_q_ev_single_update_gain": 0.00016135893676257,
+      "windows": {
+        "early_1_30": {
+          "global_grad_clip_scale": 0.8277552292681777,
+          "movement_entropy": 0.8958451424144405,
+          "offloading_actor_parameter_update_norm": 0.1268845921207529,
+          "offloading_actor_preclip_grad_norm": 0.0006175696007370702,
+          "offloading_entropy": 0.9452992306827462,
+          "q_ev_post": 0.0008212141242291415,
+          "q_ev_pre": 0.0005504024972744825,
+          "q_normalized_loss": 0.5091527306371266,
+          "q_preclip_grad_norm_max": 0.14584244450347292,
+          "q_preclip_grad_norm_mean": 0.13113950464736535,
+          "q_spread": 0.025451264783556842,
+          "q_value_clip_fraction": 0.0,
+          "scaled_actor_advantage_std": 0.002863858637283556,
+          "target_std": 2.7891887572076586
+        },
+        "late_61_120": {
+          "global_grad_clip_scale": 0.2804759211256959,
+          "movement_entropy": 0.09830435903937397,
+          "offloading_actor_parameter_update_norm": 0.06954915181466509,
+          "offloading_actor_preclip_grad_norm": 0.0018372824734489343,
+          "offloading_entropy": 0.1083262677608018,
+          "q_ev_post": 0.24442760374657627,
+          "q_ev_pre": 0.24412398013665135,
+          "q_normalized_loss": 0.38492785405229646,
+          "q_preclip_grad_norm_max": 3.533901600705253,
+          "q_preclip_grad_norm_mean": 2.106428734647731,
+          "q_spread": 1.5823749448442015,
+          "q_value_clip_fraction": 0.11219593444494184,
+          "scaled_actor_advantage_std": 0.00587618837857412,
+          "target_std": 4.07279081079695
+        },
+        "mid_31_60": {
+          "global_grad_clip_scale": 0.47344578788500685,
+          "movement_entropy": 0.21134319188649936,
+          "offloading_actor_parameter_update_norm": 0.1131002666494426,
+          "offloading_actor_preclip_grad_norm": 0.0013375919951306567,
+          "offloading_entropy": 0.3827044768023096,
+          "q_ev_post": 0.02407115230784323,
+          "q_ev_pre": 0.02430377540759744,
+          "q_normalized_loss": 0.5005618426534865,
+          "q_preclip_grad_norm_max": 1.4533279593620034,
+          "q_preclip_grad_norm_mean": 0.9466201895916904,
+          "q_spread": 0.5787695318628607,
+          "q_value_clip_fraction": 0.05195724727171991,
+          "scaled_actor_advantage_std": 0.007400918353555931,
+          "target_std": 3.5142910798390705
+        }
+      }
+    }
+  }
+}

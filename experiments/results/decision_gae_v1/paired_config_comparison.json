@@ -1,0 +1,104 @@
+{
+  "schema": "paired_resolved_config_comparison_v1",
+  "seeds": {
+    "0": {
+      "active_differences": [
+        {
+          "decision": true,
+          "path": "cli.offloading_decision_gae",
+          "shared": false
+        },
+        {
+          "decision": true,
+          "path": "experiment_controls.offloading_decision_gae",
+          "shared": false
+        }
+      ],
+      "ignored_run_provenance_differences": [
+        {
+          "decision": "/data2/zrj2025/HyperUAV-decision-gae-paired-120u-20260830/runs/seed0/decision_gae",
+          "path": "cli.output_dir",
+          "shared": "/data2/zrj2025/HyperUAV-decision-gae-paired-120u-20260830/runs/seed0/shared_slot_gae"
+        },
+        {
+          "decision": "/data2/zrj2025/HyperUAV-decision-gae-paired-120u-20260830/preflight/seed0/decision_gae/20260830_162107_paired120_decision_gae_seed0_init_seed0/checkpoints/checkpoint_update_0000.pt",
+          "path": "cli.resume_checkpoint",
+          "shared": "/data2/zrj2025/HyperUAV-decision-gae-paired-120u-20260830/preflight/seed0/shared_slot_gae/20260830_162107_paired120_shared_slot_gae_seed0_init_seed0/checkpoints/checkpoint_update_0000.pt"
+        },
+        {
+          "decision": "paired120_decision_gae_seed0_visible7",
+          "path": "cli.run_name",
+          "shared": "paired120_shared_slot_gae_seed0_visible7"
+        }
+      ],
+      "only_active_semantic_difference": true,
+      "unexpected_differences": []
+    },
+    "1": {
+      "active_differences": [
+        {
+          "decision": true,
+          "path": "cli.offloading_decision_gae",
+          "shared": false
+        },
+        {
+          "decision": true,
+          "path": "experiment_controls.offloading_decision_gae",
+          "shared": false
+        }
+      ],
+      "ignored_run_provenance_differences": [
+        {
+          "decision": "/data2/zrj2025/HyperUAV-decision-gae-paired-120u-20260830/runs/seed1/decision_gae",
+          "path": "cli.output_dir",
+          "shared": "/data2/zrj2025/HyperUAV-decision-gae-paired-120u-20260830/runs/seed1/shared_slot_gae"
+        },
+        {
+          "decision": "/data2/zrj2025/HyperUAV-decision-gae-paired-120u-20260830/preflight/seed1/decision_gae/20260830_162107_paired120_decision_gae_seed1_init_seed1/checkpoints/checkpoint_update_0000.pt",
+          "path": "cli.resume_checkpoint",
+          "shared": "/data2/zrj2025/HyperUAV-decision-gae-paired-120u-20260830/preflight/seed1/shared_slot_gae/20260830_162107_paired120_shared_slot_gae_seed1_init_seed1/checkpoints/checkpoint_update_0000.pt"
+        },
+        {
+          "decision": "paired120_decision_gae_seed1_visible7",
+          "path": "cli.run_name",
+          "shared": "paired120_shared_slot_gae_seed1_visible7"
+        }
+      ],
+      "only_active_semantic_difference": true,
+      "unexpected_differences": []
+    },
+    "2": {
+      "active_differences": [
+        {
+          "decision": true,
+          "path": "cli.offloading_decision_gae",
+          "shared": false
+        },
+        {
+          "decision": true,
+          "path": "experiment_controls.offloading_decision_gae",
+          "shared": false
+        }
+      ],
+      "ignored_run_provenance_differences": [
+        {
+          "decision": "/data2/zrj2025/HyperUAV-decision-gae-paired-120u-20260830/runs/seed2/decision_gae",
+          "path": "cli.output_dir",
+          "shared": "/data2/zrj2025/HyperUAV-decision-gae-paired-120u-20260830/runs/seed2/shared_slot_gae"
+        },
+        {
+          "decision": "/data2/zrj2025/HyperUAV-decision-gae-paired-120u-20260830/preflight/seed2/decision_gae/20260830_162107_paired120_decision_gae_seed2_init_seed2/checkpoints/checkpoint_update_0000.pt",
+          "path": "cli.resume_checkpoint",
+          "shared": "/data2/zrj2025/HyperUAV-decision-gae-paired-120u-20260830/preflight/seed2/shared_slot_gae/20260830_162107_paired120_shared_slot_gae_seed2_init_seed2/checkpoints/checkpoint_update_0000.pt"
+        },
+        {
+          "decision": "paired120_decision_gae_seed2_visible7",
+          "path": "cli.run_name",
+          "shared": "paired120_shared_slot_gae_seed2_visible7"
+        }
+      ],
+      "only_active_semantic_difference": true,
+      "unexpected_differences": []
+    }
+  }
+}

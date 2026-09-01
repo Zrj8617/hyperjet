@@ -1,0 +1,23 @@
+{
+  "branch": "codex/offloading-decision-gae-critic-v2-20260830",
+  "checkpoint_files_in_archive": false,
+  "deterministic_eval_json_count": 12,
+  "eval_checkpoints": [
+    30,
+    60,
+    90,
+    120
+  ],
+  "eval_reward_available": false,
+  "eval_reward_note": "eval_clean_mainline does not emit episode reward; training rewards remain in train_metrics.jsonl",
+  "git_status_clean": true,
+  "head": "a7d6bb0645b4c37b7b1e6eacac561ef369f39429",
+  "schema": "decision_gae_v2_3seed_results_bundle_v1",
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "training_run_count": 3,
+  "training_updates": 120
+}

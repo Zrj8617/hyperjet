@@ -1,0 +1,66 @@
+{
+  "all_matching_decision_diagnostic_keys": [
+    "decision_advantage_mean",
+    "decision_advantage_std",
+    "decision_critic_enabled",
+    "decision_critic_ev",
+    "decision_critic_grad_norm",
+    "decision_critic_loss",
+    "decision_critic_movement_ev",
+    "decision_critic_movement_loss",
+    "decision_critic_offloading_ev",
+    "decision_critic_offloading_loss",
+    "decision_eligible_count",
+    "decision_td_residual_mean",
+    "decision_td_residual_std",
+    "decision_unresolved_count",
+    "decision_within_slot_advantage_std",
+    "offloading_lagged_q_censor_fraction",
+    "offloading_lagged_q_censored_sample_count"
+  ],
+  "ppo_diagnostics_key_count": 137,
+  "presence": {
+    "grad_clip_scale": true,
+    "grad_post_clip_movement": true,
+    "grad_pre_clip_movement": true,
+    "offloading_ppo_target_grad_norm": true,
+    "rollout_movement_entropy_normalized_mean": true,
+    "rollout_offloading_entropy_normalized_mean": true,
+    "rollout_offloading_logit_spread_mean": true,
+    "rollout_offloading_probability_spread_mean": true
+  },
+  "requested_groups": {
+    "coupling": [
+      "grad_clip_scale",
+      "grad_pre_clip_movement",
+      "grad_post_clip_movement",
+      "rollout_movement_entropy_normalized_mean"
+    ],
+    "decision_credit_patterns": [
+      "decision_advantage_mean",
+      "decision_advantage_std",
+      "decision_critic_enabled",
+      "decision_critic_ev",
+      "decision_critic_grad_norm",
+      "decision_critic_loss",
+      "decision_critic_movement_ev",
+      "decision_critic_movement_loss",
+      "decision_critic_offloading_ev",
+      "decision_critic_offloading_loss",
+      "decision_eligible_count",
+      "decision_td_residual_mean",
+      "decision_td_residual_std",
+      "decision_unresolved_count",
+      "decision_within_slot_advantage_std",
+      "offloading_lagged_q_censor_fraction",
+      "offloading_lagged_q_censored_sample_count"
+    ],
+    "offloading_credit": [
+      "offloading_ppo_target_grad_norm",
+      "rollout_offloading_entropy_normalized_mean",
+      "rollout_offloading_logit_spread_mean",
+      "rollout_offloading_probability_spread_mean"
+    ]
+  },
+  "top_level_key_count": 84
+}

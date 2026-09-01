@@ -1,0 +1,1552 @@
+{
+  "adaptive_root_cap": 32,
+  "calibration": {
+    "delta_positive_secondary": {
+      "decision_count": 4,
+      "phases": {
+        "early": {
+          "by_seed": {
+            "0": {
+              "actor_vs_expected_truth": {
+                "pair_count": 0,
+                "pairwise_ordering_accuracy": null,
+                "resolved_pair_count": 0,
+                "resolved_pair_only_accuracy": null,
+                "spearman_decision_count": 0,
+                "spearman_mean": null,
+                "top1_accuracy": null
+              },
+              "censor_fraction": null,
+              "configured_root_count": 0,
+              "q_vs_expected_truth": {
+                "pair_count": 0,
+                "pairwise_ordering_accuracy": null,
+                "resolved_pair_count": 0,
+                "resolved_pair_only_accuracy": null,
+                "spearman_decision_count": 0,
+                "spearman_mean": null,
+                "top1_accuracy": null
+              },
+              "q_vs_training_target": {
+                "pair_count": 0,
+                "pairwise_ordering_accuracy": null,
+                "resolved_pair_count": 0,
+                "resolved_pair_only_accuracy": null,
+                "spearman_decision_count": 0,
+                "spearman_mean": null,
+                "top1_accuracy": null
+              },
+              "selected_decision_count": 0,
+              "target_vs_expected_truth": {
+                "pair_count": 0,
+                "pairwise_ordering_accuracy": null,
+                "resolved_pair_count": 0,
+                "resolved_pair_only_accuracy": null,
+                "spearman_decision_count": 0,
+                "spearman_mean": null,
+                "top1_accuracy": null
+              },
+              "unresolved_pair_fraction": null,
+              "usable_decision_count": 0,
+              "usable_root_count": 0
+            },
+            "1": {
+              "actor_vs_expected_truth": {
+                "pair_count": 10,
+                "pairwise_ordering_accuracy": 0.9,
+                "resolved_pair_count": 3,
+                "resolved_pair_only_accuracy": 1.0,
+                "spearman_decision_count": 1,
+                "spearman_mean": 0.8999999999999998,
+                "top1_accuracy": 0.0
+              },
+              "censor_fraction": 0.0,
+              "configured_root_count": 32,
+              "q_vs_expected_truth": {
+                "pair_count": 10,
+                "pairwise_ordering_accuracy": 0.9,
+                "resolved_pair_count": 3,
+                "resolved_pair_only_accuracy": 1.0,
+                "spearman_decision_count": 1,
+                "spearman_mean": 0.8999999999999998,
+                "top1_accuracy": 0.0
+              },
+              "q_vs_training_target": {
+                "pair_count": 10,
+                "pairwise_ordering_accuracy": 0.8,
+                "resolved_pair_count": 10,
+                "resolved_pair_only_accuracy": 0.8,
+                "spearman_decision_count": 1,
+                "spearman_mean": 0.7999999999999999,
+                "top1_accuracy": 1.0
+              },
+              "selected_decision_count": 1,
+              "target_vs_expected_truth": {
+                "pair_count": 10,
+                "pairwise_ordering_accuracy": 0.7,
+                "resolved_pair_count": 3,
+                "resolved_pair_only_accuracy": 1.0,
+                "spearman_decision_count": 1,
+                "spearman_mean": 0.6,
+                "top1_accuracy": 0.0
+              },
+              "unresolved_pair_fraction": 0.7,
+              "usable_decision_count": 1,
+              "usable_root_count": 32
+            },
+            "2": {
+              "actor_vs_expected_truth": {
+                "pair_count": 0,
+                "pairwise_ordering_accuracy": null,
+                "resolved_pair_count": 0,
+                "resolved_pair_only_accuracy": null,
+                "spearman_decision_count": 0,
+                "spearman_mean": null,
+                "top1_accuracy": null
+              },
+              "censor_fraction": null,
+              "configured_root_count": 0,
+              "q_vs_expected_truth": {
+                "pair_count": 0,
+                "pairwise_ordering_accuracy": null,
+                "resolved_pair_count": 0,
+                "resolved_pair_only_accuracy": null,
+                "spearman_decision_count": 0,
+                "spearman_mean": null,
+                "top1_accuracy": null
+              },
+              "q_vs_training_target": {
+                "pair_count": 0,
+                "pairwise_ordering_accuracy": null,
+                "resolved_pair_count": 0,
+                "resolved_pair_only_accuracy": null,
+                "spearman_decision_count": 0,
+                "spearman_mean": null,
+                "top1_accuracy": null
+              },
+              "selected_decision_count": 0,
+              "target_vs_expected_truth": {
+                "pair_count": 0,
+                "pairwise_ordering_accuracy": null,
+                "resolved_pair_count": 0,
+                "resolved_pair_only_accuracy": null,
+                "spearman_decision_count": 0,
+                "spearman_mean": null,
+                "top1_accuracy": null
+              },
+              "unresolved_pair_fraction": null,
+              "usable_decision_count": 0,
+              "usable_root_count": 0
+            }
+          },
+          "pooled": {
+            "actor_vs_expected_truth": {
+              "pair_count": 10,
+              "pairwise_ordering_accuracy": 0.9,
+              "resolved_pair_count": 3,
+              "resolved_pair_only_accuracy": 1.0,
+              "spearman_decision_count": 1,
+              "spearman_mean": 0.8999999999999998,
+              "top1_accuracy": 0.0
+            },
+            "censor_fraction": 0.0,
+            "configured_root_count": 32,
+            "q_vs_expected_truth": {
+              "pair_count": 10,
+              "pairwise_ordering_accuracy": 0.9,
+              "resolved_pair_count": 3,
+              "resolved_pair_only_accuracy": 1.0,
+              "spearman_decision_count": 1,
+              "spearman_mean": 0.8999999999999998,
+              "top1_accuracy": 0.0
+            },
+            "q_vs_training_target": {
+              "pair_count": 10,
+              "pairwise_ordering_accuracy": 0.8,
+              "resolved_pair_count": 10,
+              "resolved_pair_only_accuracy": 0.8,
+              "spearman_decision_count": 1,
+              "spearman_mean": 0.7999999999999999,
+              "top1_accuracy": 1.0
+            },
+            "selected_decision_count": 1,
+            "target_vs_expected_truth": {
+              "pair_count": 10,
+              "pairwise_ordering_accuracy": 0.7,
+              "resolved_pair_count": 3,
+              "resolved_pair_only_accuracy": 1.0,
+              "spearman_decision_count": 1,
+              "spearman_mean": 0.6,
+              "top1_accuracy": 0.0
+            },
+            "unresolved_pair_fraction": 0.7,
+            "usable_decision_count": 1,
+            "usable_root_count": 32
+          }
+        },
+        "late": {
+          "by_seed": {
+            "0": {
+              "actor_vs_expected_truth": {
+                "pair_count": 10,
+                "pairwise_ordering_accuracy": 0.3,
+                "resolved_pair_count": 4,
+                "resolved_pair_only_accuracy": 0.25,
+                "spearman_decision_count": 1,
+                "spearman_mean": -0.39999999999999997,
+                "top1_accuracy": 0.0
+              },
+              "censor_fraction": 0.0,
+              "configured_root_count": 32,
+              "q_vs_expected_truth": {
+                "pair_count": 10,
+                "pairwise_ordering_accuracy": 0.3,
+                "resolved_pair_count": 4,
+                "resolved_pair_only_accuracy": 0.25,
+                "spearman_decision_count": 1,
+                "spearman_mean": -0.39999999999999997,
+                "top1_accuracy": 0.0
+              },
+              "q_vs_training_target": {
+                "pair_count": 10,
+                "pairwise_ordering_accuracy": 0.9,
+                "resolved_pair_count": 10,
+                "resolved_pair_only_accuracy": 0.9,
+                "spearman_decision_count": 1,
+                "spearman_mean": 0.8999999999999998,
+                "top1_accuracy": 0.0
+              },
+              "selected_decision_count": 1,
+              "target_vs_expected_truth": {
+                "pair_count": 10,
+                "pairwise_ordering_accuracy": 0.2,
+                "resolved_pair_count": 4,
+                "resolved_pair_only_accuracy": 0.0,
+                "spearman_decision_count": 1,
+                "spearman_mean": -0.7,
+                "top1_accuracy": 0.0
+              },
+              "unresolved_pair_fraction": 0.6,
+              "usable_decision_count": 1,
+              "usable_root_count": 32
+            },
+            "1": {
+              "actor_vs_expected_truth": {
+                "pair_count": 10,
+                "pairwise_ordering_accuracy": 0.4,
+                "resolved_pair_count": 3,
+                "resolved_pair_only_accuracy": 0.0,
+                "spearman_decision_count": 1,
+                "spearman_mean": -0.49999999999999994,
+                "top1_accuracy": 0.0
+              },
+              "censor_fraction": 0.0,
+              "configured_root_count": 32,
+              "q_vs_expected_truth": {
+                "pair_count": 10,
+                "pairwise_ordering_accuracy": 0.4,
+                "resolved_pair_count": 3,
+                "resolved_pair_only_accuracy": 0.0,
+                "spearman_decision_count": 1,
+                "spearman_mean": -0.49999999999999994,
+                "top1_accuracy": 0.0
+              },
+              "q_vs_training_target": {
+                "pair_count": 10,
+                "pairwise_ordering_accuracy": 0.4,
+                "resolved_pair_count": 10,
+                "resolved_pair_only_accuracy": 0.4,
+                "spearman_decision_count": 1,
+                "spearman_mean": -0.19999999999999998,
+                "top1_accuracy": 0.0
+              },
+              "selected_decision_count": 1,
+              "target_vs_expected_truth": {
+                "pair_count": 10,
+                "pairwise_ordering_accuracy": 0.2,
+                "resolved_pair_count": 3,
+                "resolved_pair_only_accuracy": 0.0,
+                "spearman_decision_count": 1,
+                "spearman_mean": -0.7,
+                "top1_accuracy": 0.0
+              },
+              "unresolved_pair_fraction": 0.7,
+              "usable_decision_count": 1,
+              "usable_root_count": 32
+            },
+            "2": {
+              "actor_vs_expected_truth": {
+                "pair_count": 0,
+                "pairwise_ordering_accuracy": null,
+                "resolved_pair_count": 0,
+                "resolved_pair_only_accuracy": null,
+                "spearman_decision_count": 0,
+                "spearman_mean": null,
+                "top1_accuracy": null
+              },
+              "censor_fraction": null,
+              "configured_root_count": 0,
+              "q_vs_expected_truth": {
+                "pair_count": 0,
+                "pairwise_ordering_accuracy": null,
+                "resolved_pair_count": 0,
+                "resolved_pair_only_accuracy": null,
+                "spearman_decision_count": 0,
+                "spearman_mean": null,
+                "top1_accuracy": null
+              },
+              "q_vs_training_target": {
+                "pair_count": 0,
+                "pairwise_ordering_accuracy": null,
+                "resolved_pair_count": 0,
+                "resolved_pair_only_accuracy": null,
+                "spearman_decision_count": 0,
+                "spearman_mean": null,
+                "top1_accuracy": null
+              },
+              "selected_decision_count": 0,
+              "target_vs_expected_truth": {
+                "pair_count": 0,
+                "pairwise_ordering_accuracy": null,
+                "resolved_pair_count": 0,
+                "resolved_pair_only_accuracy": null,
+                "spearman_decision_count": 0,
+                "spearman_mean": null,
+                "top1_accuracy": null
+              },
+              "unresolved_pair_fraction": null,
+              "usable_decision_count": 0,
+              "usable_root_count": 0
+            }
+          },
+          "pooled": {
+            "actor_vs_expected_truth": {
+              "pair_count": 20,
+              "pairwise_ordering_accuracy": 0.35,
+              "resolved_pair_count": 7,
+              "resolved_pair_only_accuracy": 0.14285714285714285,
+              "spearman_decision_count": 2,
+              "spearman_mean": -0.44999999999999996,
+              "top1_accuracy": 0.0
+            },
+            "censor_fraction": 0.0,
+            "configured_root_count": 64,
+            "q_vs_expected_truth": {
+              "pair_count": 20,
+              "pairwise_ordering_accuracy": 0.35,
+              "resolved_pair_count": 7,
+              "resolved_pair_only_accuracy": 0.14285714285714285,
+              "spearman_decision_count": 2,
+              "spearman_mean": -0.44999999999999996,
+              "top1_accuracy": 0.0
+            },
+            "q_vs_training_target": {
+              "pair_count": 20,
+              "pairwise_ordering_accuracy": 0.65,
+              "resolved_pair_count": 20,
+              "resolved_pair_only_accuracy": 0.65,
+              "spearman_decision_count": 2,
+              "spearman_mean": 0.3499999999999999,
+              "top1_accuracy": 0.0
+            },
+            "selected_decision_count": 2,
+            "target_vs_expected_truth": {
+              "pair_count": 20,
+              "pairwise_ordering_accuracy": 0.2,
+              "resolved_pair_count": 7,
+              "resolved_pair_only_accuracy": 0.0,
+              "spearman_decision_count": 2,
+              "spearman_mean": -0.7,
+              "top1_accuracy": 0.0
+            },
+            "unresolved_pair_fraction": 0.6499999999999999,
+            "usable_decision_count": 2,
+            "usable_root_count": 64
+          }
+        },
+        "mid": {
+          "by_seed": {
+            "0": {
+              "actor_vs_expected_truth": {
+                "pair_count": 10,
+                "pairwise_ordering_accuracy": 0.4,
+                "resolved_pair_count": 0,
+                "resolved_pair_only_accuracy": null,
+                "spearman_decision_count": 1,
+                "spearman_mean": -0.3,
+                "top1_accuracy": 0.0
+              },
+              "censor_fraction": 0.0,
+              "configured_root_count": 32,
+              "q_vs_expected_truth": {
+                "pair_count": 10,
+                "pairwise_ordering_accuracy": 0.4,
+                "resolved_pair_count": 0,
+                "resolved_pair_only_accuracy": null,
+                "spearman_decision_count": 1,
+                "spearman_mean": -0.3,
+                "top1_accuracy": 0.0
+              },
+              "q_vs_training_target": {
+                "pair_count": 10,
+                "pairwise_ordering_accuracy": 0.6,
+                "resolved_pair_count": 10,
+                "resolved_pair_only_accuracy": 0.6,
+                "spearman_decision_count": 1,
+                "spearman_mean": 0.19999999999999998,
+                "top1_accuracy": 0.0
+              },
+              "selected_decision_count": 1,
+              "target_vs_expected_truth": {
+                "pair_count": 10,
+                "pairwise_ordering_accuracy": 0.6,
+                "resolved_pair_count": 0,
+                "resolved_pair_only_accuracy": null,
+                "spearman_decision_count": 1,
+                "spearman_mean": 0.3,
+                "top1_accuracy": 1.0
+              },
+              "unresolved_pair_fraction": 1.0,
+              "usable_decision_count": 1,
+              "usable_root_count": 32
+            },
+            "1": {
+              "actor_vs_expected_truth": {
+                "pair_count": 0,
+                "pairwise_ordering_accuracy": null,
+                "resolved_pair_count": 0,
+                "resolved_pair_only_accuracy": null,
+                "spearman_decision_count": 0,
+                "spearman_mean": null,
+                "top1_accuracy": null
+              },
+              "censor_fraction": null,
+              "configured_root_count": 0,
+              "q_vs_expected_truth": {
+                "pair_count": 0,
+                "pairwise_ordering_accuracy": null,
+                "resolved_pair_count": 0,
+                "resolved_pair_only_accuracy": null,
+                "spearman_decision_count": 0,
+                "spearman_mean": null,
+                "top1_accuracy": null
+              },
+              "q_vs_training_target": {
+                "pair_count": 0,
+                "pairwise_ordering_accuracy": null,
+                "resolved_pair_count": 0,
+                "resolved_pair_only_accuracy": null,
+                "spearman_decision_count": 0,
+                "spearman_mean": null,
+                "top1_accuracy": null
+              },
+              "selected_decision_count": 0,
+              "target_vs_expected_truth": {
+                "pair_count": 0,
+                "pairwise_ordering_accuracy": null,
+                "resolved_pair_count": 0,
+                "resolved_pair_only_accuracy": null,
+                "spearman_decision_count": 0,
+                "spearman_mean": null,
+                "top1_accuracy": null
+              },
+              "unresolved_pair_fraction": null,
+              "usable_decision_count": 0,
+              "usable_root_count": 0
+            },
+            "2": {
+              "actor_vs_expected_truth": {
+                "pair_count": 0,
+                "pairwise_ordering_accuracy": null,
+                "resolved_pair_count": 0,
+                "resolved_pair_only_accuracy": null,
+                "spearman_decision_count": 0,
+                "spearman_mean": null,
+                "top1_accuracy": null
+              },
+              "censor_fraction": null,
+              "configured_root_count": 0,
+              "q_vs_expected_truth": {
+                "pair_count": 0,
+                "pairwise_ordering_accuracy": null,
+                "resolved_pair_count": 0,
+                "resolved_pair_only_accuracy": null,
+                "spearman_decision_count": 0,
+                "spearman_mean": null,
+                "top1_accuracy": null
+              },
+              "q_vs_training_target": {
+                "pair_count": 0,
+                "pairwise_ordering_accuracy": null,
+                "resolved_pair_count": 0,
+                "resolved_pair_only_accuracy": null,
+                "spearman_decision_count": 0,
+                "spearman_mean": null,
+                "top1_accuracy": null
+              },
+              "selected_decision_count": 0,
+              "target_vs_expected_truth": {
+                "pair_count": 0,
+                "pairwise_ordering_accuracy": null,
+                "resolved_pair_count": 0,
+                "resolved_pair_only_accuracy": null,
+                "spearman_decision_count": 0,
+                "spearman_mean": null,
+                "top1_accuracy": null
+              },
+              "unresolved_pair_fraction": null,
+              "usable_decision_count": 0,
+              "usable_root_count": 0
+            }
+          },
+          "pooled": {
+            "actor_vs_expected_truth": {
+              "pair_count": 10,
+              "pairwise_ordering_accuracy": 0.4,
+              "resolved_pair_count": 0,
+              "resolved_pair_only_accuracy": null,
+              "spearman_decision_count": 1,
+              "spearman_mean": -0.3,
+              "top1_accuracy": 0.0
+            },
+            "censor_fraction": 0.0,
+            "configured_root_count": 32,
+            "q_vs_expected_truth": {
+              "pair_count": 10,
+              "pairwise_ordering_accuracy": 0.4,
+              "resolved_pair_count": 0,
+              "resolved_pair_only_accuracy": null,
+              "spearman_decision_count": 1,
+              "spearman_mean": -0.3,
+              "top1_accuracy": 0.0
+            },
+            "q_vs_training_target": {
+              "pair_count": 10,
+              "pairwise_ordering_accuracy": 0.6,
+              "resolved_pair_count": 10,
+              "resolved_pair_only_accuracy": 0.6,
+              "spearman_decision_count": 1,
+              "spearman_mean": 0.19999999999999998,
+              "top1_accuracy": 0.0
+            },
+            "selected_decision_count": 1,
+            "target_vs_expected_truth": {
+              "pair_count": 10,
+              "pairwise_ordering_accuracy": 0.6,
+              "resolved_pair_count": 0,
+              "resolved_pair_only_accuracy": null,
+              "spearman_decision_count": 1,
+              "spearman_mean": 0.3,
+              "top1_accuracy": 1.0
+            },
+            "unresolved_pair_fraction": 1.0,
+            "usable_decision_count": 1,
+            "usable_root_count": 32
+          }
+        }
+      },
+      "pooled": {
+        "actor_vs_expected_truth": {
+          "pair_count": 40,
+          "pairwise_ordering_accuracy": 0.5,
+          "resolved_pair_count": 10,
+          "resolved_pair_only_accuracy": 0.4,
+          "spearman_decision_count": 4,
+          "spearman_mean": -0.07500000000000002,
+          "top1_accuracy": 0.0
+        },
+        "censor_fraction": 0.0,
+        "configured_root_count": 128,
+        "q_vs_expected_truth": {
+          "pair_count": 40,
+          "pairwise_ordering_accuracy": 0.5,
+          "resolved_pair_count": 10,
+          "resolved_pair_only_accuracy": 0.4,
+          "spearman_decision_count": 4,
+          "spearman_mean": -0.07500000000000002,
+          "top1_accuracy": 0.0
+        },
+        "q_vs_training_target": {
+          "pair_count": 40,
+          "pairwise_ordering_accuracy": 0.675,
+          "resolved_pair_count": 40,
+          "resolved_pair_only_accuracy": 0.675,
+          "spearman_decision_count": 4,
+          "spearman_mean": 0.425,
+          "top1_accuracy": 0.25
+        },
+        "selected_decision_count": 4,
+        "target_vs_expected_truth": {
+          "pair_count": 40,
+          "pairwise_ordering_accuracy": 0.425,
+          "resolved_pair_count": 10,
+          "resolved_pair_only_accuracy": 0.3,
+          "spearman_decision_count": 4,
+          "spearman_mean": -0.12499999999999999,
+          "top1_accuracy": 0.25
+        },
+        "unresolved_pair_fraction": 0.75,
+        "usable_decision_count": 4,
+        "usable_root_count": 128
+      }
+    },
+    "same_slot_primary": {
+      "decision_count": 23,
+      "phases": {
+        "early": {
+          "by_seed": {
+            "0": {
+              "actor_vs_expected_truth": {
+                "pair_count": 30,
+                "pairwise_ordering_accuracy": 0.6,
+                "resolved_pair_count": 9,
+                "resolved_pair_only_accuracy": 0.7777777777777778,
+                "spearman_decision_count": 3,
+                "spearman_mean": 0.26666666666666666,
+                "top1_accuracy": 0.3333333333333333
+              },
+              "censor_fraction": 0.0,
+              "configured_root_count": 96,
+              "q_vs_expected_truth": {
+                "pair_count": 30,
+                "pairwise_ordering_accuracy": 0.4666666666666667,
+                "resolved_pair_count": 9,
+                "resolved_pair_only_accuracy": 0.2222222222222222,
+                "spearman_decision_count": 3,
+                "spearman_mean": -0.06666666666666667,
+                "top1_accuracy": 0.3333333333333333
+              },
+              "q_vs_training_target": {
+                "pair_count": 30,
+                "pairwise_ordering_accuracy": 0.4666666666666667,
+                "resolved_pair_count": 30,
+                "resolved_pair_only_accuracy": 0.4666666666666667,
+                "spearman_decision_count": 3,
+                "spearman_mean": -0.033333333333333284,
+                "top1_accuracy": 0.6666666666666666
+              },
+              "selected_decision_count": 3,
+              "target_vs_expected_truth": {
+                "pair_count": 30,
+                "pairwise_ordering_accuracy": 0.4,
+                "resolved_pair_count": 9,
+                "resolved_pair_only_accuracy": 0.5555555555555556,
+                "spearman_decision_count": 3,
+                "spearman_mean": -0.26666666666666666,
+                "top1_accuracy": 0.0
+              },
+              "unresolved_pair_fraction": 0.7000000000000001,
+              "usable_decision_count": 3,
+              "usable_root_count": 96
+            },
+            "1": {
+              "actor_vs_expected_truth": {
+                "pair_count": 20,
+                "pairwise_ordering_accuracy": 0.65,
+                "resolved_pair_count": 10,
+                "resolved_pair_only_accuracy": 0.4,
+                "spearman_decision_count": 2,
+                "spearman_mean": 0.29999999999999993,
+                "top1_accuracy": 0.5
+              },
+              "censor_fraction": 0.0,
+              "configured_root_count": 40,
+              "q_vs_expected_truth": {
+                "pair_count": 20,
+                "pairwise_ordering_accuracy": 0.65,
+                "resolved_pair_count": 10,
+                "resolved_pair_only_accuracy": 0.4,
+                "spearman_decision_count": 2,
+                "spearman_mean": 0.29999999999999993,
+                "top1_accuracy": 0.5
+              },
+              "q_vs_training_target": {
+                "pair_count": 20,
+                "pairwise_ordering_accuracy": 1.0,
+                "resolved_pair_count": 20,
+                "resolved_pair_only_accuracy": 1.0,
+                "spearman_decision_count": 2,
+                "spearman_mean": 0.9999999999999999,
+                "top1_accuracy": 1.0
+              },
+              "selected_decision_count": 2,
+              "target_vs_expected_truth": {
+                "pair_count": 20,
+                "pairwise_ordering_accuracy": 0.65,
+                "resolved_pair_count": 10,
+                "resolved_pair_only_accuracy": 0.4,
+                "spearman_decision_count": 2,
+                "spearman_mean": 0.29999999999999993,
+                "top1_accuracy": 0.5
+              },
+              "unresolved_pair_fraction": 0.5,
+              "usable_decision_count": 2,
+              "usable_root_count": 40
+            },
+            "2": {
+              "actor_vs_expected_truth": {
+                "pair_count": 30,
+                "pairwise_ordering_accuracy": 0.43333333333333335,
+                "resolved_pair_count": 8,
+                "resolved_pair_only_accuracy": 0.125,
+                "spearman_decision_count": 3,
+                "spearman_mean": -0.1333333333333333,
+                "top1_accuracy": 0.3333333333333333
+              },
+              "censor_fraction": 0.0,
+              "configured_root_count": 96,
+              "q_vs_expected_truth": {
+                "pair_count": 30,
+                "pairwise_ordering_accuracy": 0.43333333333333335,
+                "resolved_pair_count": 8,
+                "resolved_pair_only_accuracy": 0.125,
+                "spearman_decision_count": 3,
+                "spearman_mean": -0.1333333333333333,
+                "top1_accuracy": 0.3333333333333333
+              },
+              "q_vs_training_target": {
+                "pair_count": 30,
+                "pairwise_ordering_accuracy": 0.7,
+                "resolved_pair_count": 30,
+                "resolved_pair_only_accuracy": 0.7,
+                "spearman_decision_count": 3,
+                "spearman_mean": 0.49999999999999994,
+                "top1_accuracy": 1.0
+              },
+              "selected_decision_count": 3,
+              "target_vs_expected_truth": {
+                "pair_count": 30,
+                "pairwise_ordering_accuracy": 0.4,
+                "resolved_pair_count": 8,
+                "resolved_pair_only_accuracy": 0.0,
+                "spearman_decision_count": 3,
+                "spearman_mean": -0.23333333333333328,
+                "top1_accuracy": 0.3333333333333333
+              },
+              "unresolved_pair_fraction": 0.7333333333333334,
+              "usable_decision_count": 3,
+              "usable_root_count": 96
+            }
+          },
+          "pooled": {
+            "actor_vs_expected_truth": {
+              "pair_count": 80,
+              "pairwise_ordering_accuracy": 0.55,
+              "resolved_pair_count": 27,
+              "resolved_pair_only_accuracy": 0.4444444444444444,
+              "spearman_decision_count": 8,
+              "spearman_mean": 0.12499999999999997,
+              "top1_accuracy": 0.375
+            },
+            "censor_fraction": 0.0,
+            "configured_root_count": 232,
+            "q_vs_expected_truth": {
+              "pair_count": 80,
+              "pairwise_ordering_accuracy": 0.5,
+              "resolved_pair_count": 27,
+              "resolved_pair_only_accuracy": 0.25925925925925924,
+              "spearman_decision_count": 8,
+              "spearman_mean": -2.7755575615628914e-17,
+              "top1_accuracy": 0.375
+            },
+            "q_vs_training_target": {
+              "pair_count": 80,
+              "pairwise_ordering_accuracy": 0.6875,
+              "resolved_pair_count": 80,
+              "resolved_pair_only_accuracy": 0.6875,
+              "spearman_decision_count": 8,
+              "spearman_mean": 0.42499999999999993,
+              "top1_accuracy": 0.875
+            },
+            "selected_decision_count": 8,
+            "target_vs_expected_truth": {
+              "pair_count": 80,
+              "pairwise_ordering_accuracy": 0.4625,
+              "resolved_pair_count": 27,
+              "resolved_pair_only_accuracy": 0.3333333333333333,
+              "spearman_decision_count": 8,
+              "spearman_mean": -0.11250000000000002,
+              "top1_accuracy": 0.25
+            },
+            "unresolved_pair_fraction": 0.6625000000000001,
+            "usable_decision_count": 8,
+            "usable_root_count": 232
+          }
+        },
+        "late": {
+          "by_seed": {
+            "0": {
+              "actor_vs_expected_truth": {
+                "pair_count": 20,
+                "pairwise_ordering_accuracy": 0.45,
+                "resolved_pair_count": 6,
+                "resolved_pair_only_accuracy": 0.6666666666666666,
+                "spearman_decision_count": 2,
+                "spearman_mean": -0.1,
+                "top1_accuracy": 0.0
+              },
+              "censor_fraction": 0.0,
+              "configured_root_count": 64,
+              "q_vs_expected_truth": {
+                "pair_count": 20,
+                "pairwise_ordering_accuracy": 0.5,
+                "resolved_pair_count": 6,
+                "resolved_pair_only_accuracy": 0.6666666666666666,
+                "spearman_decision_count": 2,
+                "spearman_mean": -0.05,
+                "top1_accuracy": 0.0
+              },
+              "q_vs_training_target": {
+                "pair_count": 20,
+                "pairwise_ordering_accuracy": 0.55,
+                "resolved_pair_count": 20,
+                "resolved_pair_only_accuracy": 0.55,
+                "spearman_decision_count": 2,
+                "spearman_mean": 0.3,
+                "top1_accuracy": 0.5
+              },
+              "selected_decision_count": 2,
+              "target_vs_expected_truth": {
+                "pair_count": 20,
+                "pairwise_ordering_accuracy": 0.25,
+                "resolved_pair_count": 6,
+                "resolved_pair_only_accuracy": 0.5,
+                "spearman_decision_count": 2,
+                "spearman_mean": -0.6499999999999999,
+                "top1_accuracy": 0.0
+              },
+              "unresolved_pair_fraction": 0.7,
+              "usable_decision_count": 2,
+              "usable_root_count": 64
+            },
+            "1": {
+              "actor_vs_expected_truth": {
+                "pair_count": 20,
+                "pairwise_ordering_accuracy": 0.5,
+                "resolved_pair_count": 10,
+                "resolved_pair_only_accuracy": 0.2,
+                "spearman_decision_count": 2,
+                "spearman_mean": -0.24999999999999997,
+                "top1_accuracy": 0.0
+              },
+              "censor_fraction": 0.0,
+              "configured_root_count": 64,
+              "q_vs_expected_truth": {
+                "pair_count": 20,
+                "pairwise_ordering_accuracy": 0.5,
+                "resolved_pair_count": 10,
+                "resolved_pair_only_accuracy": 0.2,
+                "spearman_decision_count": 2,
+                "spearman_mean": -0.24999999999999997,
+                "top1_accuracy": 0.0
+              },
+              "q_vs_training_target": {
+                "pair_count": 20,
+                "pairwise_ordering_accuracy": 0.65,
+                "resolved_pair_count": 20,
+                "resolved_pair_only_accuracy": 0.65,
+                "spearman_decision_count": 2,
+                "spearman_mean": 0.4452463633026646,
+                "top1_accuracy": 1.0
+              },
+              "selected_decision_count": 2,
+              "target_vs_expected_truth": {
+                "pair_count": 20,
+                "pairwise_ordering_accuracy": 0.15,
+                "resolved_pair_count": 10,
+                "resolved_pair_only_accuracy": 0.05,
+                "spearman_decision_count": 2,
+                "spearman_mean": -0.8832543951361483,
+                "top1_accuracy": 0.0
+              },
+              "unresolved_pair_fraction": 0.5,
+              "usable_decision_count": 2,
+              "usable_root_count": 64
+            },
+            "2": {
+              "actor_vs_expected_truth": {
+                "pair_count": 30,
+                "pairwise_ordering_accuracy": 0.26666666666666666,
+                "resolved_pair_count": 1,
+                "resolved_pair_only_accuracy": 0.0,
+                "spearman_decision_count": 3,
+                "spearman_mean": -0.5666666666666665,
+                "top1_accuracy": 0.0
+              },
+              "censor_fraction": 0.0,
+              "configured_root_count": 96,
+              "q_vs_expected_truth": {
+                "pair_count": 30,
+                "pairwise_ordering_accuracy": 0.26666666666666666,
+                "resolved_pair_count": 1,
+                "resolved_pair_only_accuracy": 0.0,
+                "spearman_decision_count": 3,
+                "spearman_mean": -0.5666666666666665,
+                "top1_accuracy": 0.0
+              },
+              "q_vs_training_target": {
+                "pair_count": 30,
+                "pairwise_ordering_accuracy": 0.4666666666666667,
+                "resolved_pair_count": 30,
+                "resolved_pair_only_accuracy": 0.4666666666666667,
+                "spearman_decision_count": 3,
+                "spearman_mean": 0.06666666666666665,
+                "top1_accuracy": 0.3333333333333333
+              },
+              "selected_decision_count": 3,
+              "target_vs_expected_truth": {
+                "pair_count": 30,
+                "pairwise_ordering_accuracy": 0.3333333333333333,
+                "resolved_pair_count": 1,
+                "resolved_pair_only_accuracy": 0.0,
+                "spearman_decision_count": 3,
+                "spearman_mean": -0.4333333333333333,
+                "top1_accuracy": 0.0
+              },
+              "unresolved_pair_fraction": 0.9666666666666667,
+              "usable_decision_count": 3,
+              "usable_root_count": 96
+            }
+          },
+          "pooled": {
+            "actor_vs_expected_truth": {
+              "pair_count": 70,
+              "pairwise_ordering_accuracy": 0.38571428571428573,
+              "resolved_pair_count": 17,
+              "resolved_pair_only_accuracy": 0.35294117647058826,
+              "spearman_decision_count": 7,
+              "spearman_mean": -0.34285714285714286,
+              "top1_accuracy": 0.0
+            },
+            "censor_fraction": 0.0,
+            "configured_root_count": 224,
+            "q_vs_expected_truth": {
+              "pair_count": 70,
+              "pairwise_ordering_accuracy": 0.4,
+              "resolved_pair_count": 17,
+              "resolved_pair_only_accuracy": 0.35294117647058826,
+              "spearman_decision_count": 7,
+              "spearman_mean": -0.32857142857142857,
+              "top1_accuracy": 0.0
+            },
+            "q_vs_training_target": {
+              "pair_count": 70,
+              "pairwise_ordering_accuracy": 0.5428571428571428,
+              "resolved_pair_count": 70,
+              "resolved_pair_only_accuracy": 0.5428571428571428,
+              "spearman_decision_count": 7,
+              "spearman_mean": 0.24149896094361847,
+              "top1_accuracy": 0.5714285714285714
+            },
+            "selected_decision_count": 7,
+            "target_vs_expected_truth": {
+              "pair_count": 70,
+              "pairwise_ordering_accuracy": 0.2571428571428571,
+              "resolved_pair_count": 17,
+              "resolved_pair_only_accuracy": 0.20588235294117646,
+              "spearman_decision_count": 7,
+              "spearman_mean": -0.6237869700388993,
+              "top1_accuracy": 0.0
+            },
+            "unresolved_pair_fraction": 0.7571428571428571,
+            "usable_decision_count": 7,
+            "usable_root_count": 224
+          }
+        },
+        "mid": {
+          "by_seed": {
+            "0": {
+              "actor_vs_expected_truth": {
+                "pair_count": 20,
+                "pairwise_ordering_accuracy": 0.6,
+                "resolved_pair_count": 1,
+                "resolved_pair_only_accuracy": 0.0,
+                "spearman_decision_count": 2,
+                "spearman_mean": 0.25,
+                "top1_accuracy": 0.5
+              },
+              "censor_fraction": 0.046875,
+              "configured_root_count": 64,
+              "q_vs_expected_truth": {
+                "pair_count": 20,
+                "pairwise_ordering_accuracy": 0.6,
+                "resolved_pair_count": 1,
+                "resolved_pair_only_accuracy": 0.0,
+                "spearman_decision_count": 2,
+                "spearman_mean": 0.25,
+                "top1_accuracy": 0.5
+              },
+              "q_vs_training_target": {
+                "pair_count": 20,
+                "pairwise_ordering_accuracy": 0.6,
+                "resolved_pair_count": 20,
+                "resolved_pair_only_accuracy": 0.6,
+                "spearman_decision_count": 2,
+                "spearman_mean": 0.39999999999999997,
+                "top1_accuracy": 0.5
+              },
+              "selected_decision_count": 2,
+              "target_vs_expected_truth": {
+                "pair_count": 20,
+                "pairwise_ordering_accuracy": 0.7,
+                "resolved_pair_count": 1,
+                "resolved_pair_only_accuracy": 1.0,
+                "spearman_decision_count": 2,
+                "spearman_mean": 0.6,
+                "top1_accuracy": 0.0
+              },
+              "unresolved_pair_fraction": 0.95,
+              "usable_decision_count": 2,
+              "usable_root_count": 61
+            },
+            "1": {
+              "actor_vs_expected_truth": {
+                "pair_count": 30,
+                "pairwise_ordering_accuracy": 0.6,
+                "resolved_pair_count": 3,
+                "resolved_pair_only_accuracy": 1.0,
+                "spearman_decision_count": 3,
+                "spearman_mean": 0.19999999999999998,
+                "top1_accuracy": 0.3333333333333333
+              },
+              "censor_fraction": 0.36458333333333337,
+              "configured_root_count": 96,
+              "q_vs_expected_truth": {
+                "pair_count": 30,
+                "pairwise_ordering_accuracy": 0.5666666666666667,
+                "resolved_pair_count": 3,
+                "resolved_pair_only_accuracy": 1.0,
+                "spearman_decision_count": 3,
+                "spearman_mean": 0.09999999999999998,
+                "top1_accuracy": 0.0
+              },
+              "q_vs_training_target": {
+                "pair_count": 30,
+                "pairwise_ordering_accuracy": 0.5666666666666667,
+                "resolved_pair_count": 30,
+                "resolved_pair_only_accuracy": 0.5666666666666667,
+                "spearman_decision_count": 3,
+                "spearman_mean": 0.1666666666666666,
+                "top1_accuracy": 0.6666666666666666
+              },
+              "selected_decision_count": 3,
+              "target_vs_expected_truth": {
+                "pair_count": 30,
+                "pairwise_ordering_accuracy": 0.5333333333333333,
+                "resolved_pair_count": 3,
+                "resolved_pair_only_accuracy": 0.0,
+                "spearman_decision_count": 3,
+                "spearman_mean": 0.033333333333333326,
+                "top1_accuracy": 0.0
+              },
+              "unresolved_pair_fraction": 0.9,
+              "usable_decision_count": 3,
+              "usable_root_count": 61
+            },
+            "2": {
+              "actor_vs_expected_truth": {
+                "pair_count": 30,
+                "pairwise_ordering_accuracy": 0.4666666666666667,
+                "resolved_pair_count": 5,
+                "resolved_pair_only_accuracy": 0.8,
+                "spearman_decision_count": 3,
+                "spearman_mean": -0.09999999999999999,
+                "top1_accuracy": 0.0
+              },
+              "censor_fraction": 0.0,
+              "configured_root_count": 96,
+              "q_vs_expected_truth": {
+                "pair_count": 30,
+                "pairwise_ordering_accuracy": 0.5,
+                "resolved_pair_count": 5,
+                "resolved_pair_only_accuracy": 0.8,
+                "spearman_decision_count": 3,
+                "spearman_mean": -0.03333333333333333,
+                "top1_accuracy": 0.0
+              },
+              "q_vs_training_target": {
+                "pair_count": 30,
+                "pairwise_ordering_accuracy": 0.6,
+                "resolved_pair_count": 30,
+                "resolved_pair_only_accuracy": 0.6,
+                "spearman_decision_count": 3,
+                "spearman_mean": 0.33333333333333326,
+                "top1_accuracy": 1.0
+              },
+              "selected_decision_count": 3,
+              "target_vs_expected_truth": {
+                "pair_count": 30,
+                "pairwise_ordering_accuracy": 0.36666666666666664,
+                "resolved_pair_count": 5,
+                "resolved_pair_only_accuracy": 0.4,
+                "spearman_decision_count": 3,
+                "spearman_mean": -0.4666666666666666,
+                "top1_accuracy": 0.0
+              },
+              "unresolved_pair_fraction": 0.8333333333333334,
+              "usable_decision_count": 3,
+              "usable_root_count": 96
+            }
+          },
+          "pooled": {
+            "actor_vs_expected_truth": {
+              "pair_count": 80,
+              "pairwise_ordering_accuracy": 0.55,
+              "resolved_pair_count": 9,
+              "resolved_pair_only_accuracy": 0.7777777777777778,
+              "spearman_decision_count": 8,
+              "spearman_mean": 0.1,
+              "top1_accuracy": 0.25
+            },
+            "censor_fraction": 0.1484375,
+            "configured_root_count": 256,
+            "q_vs_expected_truth": {
+              "pair_count": 80,
+              "pairwise_ordering_accuracy": 0.55,
+              "resolved_pair_count": 9,
+              "resolved_pair_only_accuracy": 0.7777777777777778,
+              "spearman_decision_count": 8,
+              "spearman_mean": 0.0875,
+              "top1_accuracy": 0.125
+            },
+            "q_vs_training_target": {
+              "pair_count": 80,
+              "pairwise_ordering_accuracy": 0.5875,
+              "resolved_pair_count": 80,
+              "resolved_pair_only_accuracy": 0.5875,
+              "spearman_decision_count": 8,
+              "spearman_mean": 0.2875,
+              "top1_accuracy": 0.75
+            },
+            "selected_decision_count": 8,
+            "target_vs_expected_truth": {
+              "pair_count": 80,
+              "pairwise_ordering_accuracy": 0.5125,
+              "resolved_pair_count": 9,
+              "resolved_pair_only_accuracy": 0.3333333333333333,
+              "spearman_decision_count": 8,
+              "spearman_mean": -0.012499999999999983,
+              "top1_accuracy": 0.0
+            },
+            "unresolved_pair_fraction": 0.8875,
+            "usable_decision_count": 8,
+            "usable_root_count": 218
+          }
+        }
+      },
+      "pooled": {
+        "actor_vs_expected_truth": {
+          "pair_count": 230,
+          "pairwise_ordering_accuracy": 0.5,
+          "resolved_pair_count": 53,
+          "resolved_pair_only_accuracy": 0.4716981132075472,
+          "spearman_decision_count": 23,
+          "spearman_mean": -0.02608695652173915,
+          "top1_accuracy": 0.21739130434782608
+        },
+        "censor_fraction": 0.053370786516853896,
+        "configured_root_count": 712,
+        "q_vs_expected_truth": {
+          "pair_count": 230,
+          "pairwise_ordering_accuracy": 0.48695652173913045,
+          "resolved_pair_count": 53,
+          "resolved_pair_only_accuracy": 0.37735849056603776,
+          "spearman_decision_count": 23,
+          "spearman_mean": -0.06956521739130435,
+          "top1_accuracy": 0.17391304347826086
+        },
+        "q_vs_training_target": {
+          "pair_count": 230,
+          "pairwise_ordering_accuracy": 0.6086956521739131,
+          "resolved_pair_count": 230,
+          "resolved_pair_only_accuracy": 0.6086956521739131,
+          "spearman_decision_count": 23,
+          "spearman_mean": 0.3213257707219707,
+          "top1_accuracy": 0.7391304347826086
+        },
+        "selected_decision_count": 23,
+        "target_vs_expected_truth": {
+          "pair_count": 230,
+          "pairwise_ordering_accuracy": 0.41739130434782606,
+          "resolved_pair_count": 53,
+          "resolved_pair_only_accuracy": 0.29245283018867924,
+          "spearman_decision_count": 23,
+          "spearman_mean": -0.2333264691422737,
+          "top1_accuracy": 0.08695652173913043
+        },
+        "unresolved_pair_fraction": 0.7695652173913043,
+        "usable_decision_count": 23,
+        "usable_root_count": 674
+      }
+    }
+  },
+  "decision_count": 27,
+  "delta_positive_secondary_count": 4,
+  "diagnostic_only_not_training_labels": true,
+  "final_root_budget_distribution": {
+    "16": 0,
+    "32": 26,
+    "8": 1
+  },
+  "gates": {
+    "all_candidate_ids_aligned": true,
+    "all_exact_state_branch_correct": true,
+    "all_policy_and_critics_frozen": true,
+    "all_same_slot_gamma_semantics_unchanged": true,
+    "all_serial_process_equal": true,
+    "all_single_branch_root": true,
+    "all_strict_suffix_feasible": true,
+    "all_training_parameters_unchanged": true,
+    "decision_count_is_27": true,
+    "optimizer_steps_total": 0,
+    "semantic_mismatch_count": 0,
+    "unrecognized_environment_rng_calls": 0
+  },
+  "historical_training_snapshot_recovered": false,
+  "root_budget_stability": {
+    "best_action_flips": {
+      "16_to_32": {
+        "best_action_flip_count": 10,
+        "best_action_flip_fraction": 0.38461538461538464,
+        "decision_count": 26
+      },
+      "8_to_16": {
+        "best_action_flip_count": 11,
+        "best_action_flip_fraction": 0.4230769230769231,
+        "decision_count": 26
+      }
+    },
+    "budgets": {
+      "16": {
+        "decision_count": 26,
+        "delta_positive_secondary": {
+          "actor_vs_expected_truth": {
+            "pair_count": 40,
+            "pairwise_ordering_accuracy": 0.475,
+            "resolved_pair_count": 8,
+            "resolved_pair_only_accuracy": 0.25,
+            "spearman_decision_count": 4,
+            "spearman_mean": -0.04999999999999999,
+            "top1_accuracy": 0.25
+          },
+          "censor_fraction": 0.0,
+          "configured_root_count": 64,
+          "q_vs_expected_truth": {
+            "pair_count": 40,
+            "pairwise_ordering_accuracy": 0.475,
+            "resolved_pair_count": 8,
+            "resolved_pair_only_accuracy": 0.25,
+            "spearman_decision_count": 4,
+            "spearman_mean": -0.04999999999999999,
+            "top1_accuracy": 0.25
+          },
+          "q_vs_training_target": {
+            "pair_count": 40,
+            "pairwise_ordering_accuracy": 0.675,
+            "resolved_pair_count": 40,
+            "resolved_pair_only_accuracy": 0.675,
+            "spearman_decision_count": 4,
+            "spearman_mean": 0.425,
+            "top1_accuracy": 0.25
+          },
+          "selected_decision_count": 4,
+          "target_vs_expected_truth": {
+            "pair_count": 40,
+            "pairwise_ordering_accuracy": 0.45,
+            "resolved_pair_count": 8,
+            "resolved_pair_only_accuracy": 0.0,
+            "spearman_decision_count": 4,
+            "spearman_mean": -0.075,
+            "top1_accuracy": 0.0
+          },
+          "unresolved_pair_fraction": 0.8,
+          "usable_decision_count": 4,
+          "usable_root_count": 64
+        },
+        "same_slot_primary": {
+          "actor_vs_expected_truth": {
+            "pair_count": 220,
+            "pairwise_ordering_accuracy": 0.5136363636363637,
+            "resolved_pair_count": 32,
+            "resolved_pair_only_accuracy": 0.5,
+            "spearman_decision_count": 22,
+            "spearman_mean": 0.004545454545454544,
+            "top1_accuracy": 0.2727272727272727
+          },
+          "censor_fraction": 0.05965909090909094,
+          "configured_root_count": 352,
+          "q_vs_expected_truth": {
+            "pair_count": 220,
+            "pairwise_ordering_accuracy": 0.5,
+            "resolved_pair_count": 32,
+            "resolved_pair_only_accuracy": 0.46875,
+            "spearman_decision_count": 22,
+            "spearman_mean": -0.040909090909090895,
+            "top1_accuracy": 0.22727272727272727
+          },
+          "q_vs_training_target": {
+            "pair_count": 220,
+            "pairwise_ordering_accuracy": 0.5909090909090909,
+            "resolved_pair_count": 220,
+            "resolved_pair_only_accuracy": 0.5909090909090909,
+            "spearman_decision_count": 22,
+            "spearman_mean": 0.29047694211842395,
+            "top1_accuracy": 0.7272727272727273
+          },
+          "selected_decision_count": 22,
+          "target_vs_expected_truth": {
+            "pair_count": 220,
+            "pairwise_ordering_accuracy": 0.4727272727272727,
+            "resolved_pair_count": 32,
+            "resolved_pair_only_accuracy": 0.359375,
+            "spearman_decision_count": 22,
+            "spearman_mean": -0.08484130864874075,
+            "top1_accuracy": 0.18181818181818182
+          },
+          "unresolved_pair_fraction": 0.8545454545454544,
+          "usable_decision_count": 22,
+          "usable_root_count": 331
+        }
+      },
+      "32": {
+        "decision_count": 26,
+        "delta_positive_secondary": {
+          "actor_vs_expected_truth": {
+            "pair_count": 40,
+            "pairwise_ordering_accuracy": 0.5,
+            "resolved_pair_count": 10,
+            "resolved_pair_only_accuracy": 0.4,
+            "spearman_decision_count": 4,
+            "spearman_mean": -0.07500000000000002,
+            "top1_accuracy": 0.0
+          },
+          "censor_fraction": 0.0,
+          "configured_root_count": 128,
+          "q_vs_expected_truth": {
+            "pair_count": 40,
+            "pairwise_ordering_accuracy": 0.5,
+            "resolved_pair_count": 10,
+            "resolved_pair_only_accuracy": 0.4,
+            "spearman_decision_count": 4,
+            "spearman_mean": -0.07500000000000002,
+            "top1_accuracy": 0.0
+          },
+          "q_vs_training_target": {
+            "pair_count": 40,
+            "pairwise_ordering_accuracy": 0.675,
+            "resolved_pair_count": 40,
+            "resolved_pair_only_accuracy": 0.675,
+            "spearman_decision_count": 4,
+            "spearman_mean": 0.425,
+            "top1_accuracy": 0.25
+          },
+          "selected_decision_count": 4,
+          "target_vs_expected_truth": {
+            "pair_count": 40,
+            "pairwise_ordering_accuracy": 0.425,
+            "resolved_pair_count": 10,
+            "resolved_pair_only_accuracy": 0.3,
+            "spearman_decision_count": 4,
+            "spearman_mean": -0.12499999999999999,
+            "top1_accuracy": 0.25
+          },
+          "unresolved_pair_fraction": 0.75,
+          "usable_decision_count": 4,
+          "usable_root_count": 128
+        },
+        "same_slot_primary": {
+          "actor_vs_expected_truth": {
+            "pair_count": 220,
+            "pairwise_ordering_accuracy": 0.5045454545454545,
+            "resolved_pair_count": 43,
+            "resolved_pair_only_accuracy": 0.4883720930232558,
+            "spearman_decision_count": 22,
+            "spearman_mean": -0.013636363636363648,
+            "top1_accuracy": 0.22727272727272727
+          },
+          "censor_fraction": 0.05397727272727271,
+          "configured_root_count": 704,
+          "q_vs_expected_truth": {
+            "pair_count": 220,
+            "pairwise_ordering_accuracy": 0.4909090909090909,
+            "resolved_pair_count": 43,
+            "resolved_pair_only_accuracy": 0.37209302325581395,
+            "spearman_decision_count": 22,
+            "spearman_mean": -0.059090909090909104,
+            "top1_accuracy": 0.18181818181818182
+          },
+          "q_vs_training_target": {
+            "pair_count": 220,
+            "pairwise_ordering_accuracy": 0.5909090909090909,
+            "resolved_pair_count": 220,
+            "resolved_pair_only_accuracy": 0.5909090909090909,
+            "spearman_decision_count": 22,
+            "spearman_mean": 0.29047694211842395,
+            "top1_accuracy": 0.7272727272727273
+          },
+          "selected_decision_count": 22,
+          "target_vs_expected_truth": {
+            "pair_count": 220,
+            "pairwise_ordering_accuracy": 0.41818181818181815,
+            "resolved_pair_count": 43,
+            "resolved_pair_only_accuracy": 0.26744186046511625,
+            "spearman_decision_count": 22,
+            "spearman_mean": -0.23029585410328615,
+            "top1_accuracy": 0.09090909090909091
+          },
+          "unresolved_pair_fraction": 0.8045454545454546,
+          "usable_decision_count": 22,
+          "usable_root_count": 666
+        }
+      },
+      "8": {
+        "decision_count": 27,
+        "delta_positive_secondary": {
+          "actor_vs_expected_truth": {
+            "pair_count": 40,
+            "pairwise_ordering_accuracy": 0.4,
+            "resolved_pair_count": 4,
+            "resolved_pair_only_accuracy": 0.75,
+            "spearman_decision_count": 4,
+            "spearman_mean": -0.22499999999999998,
+            "top1_accuracy": 0.0
+          },
+          "censor_fraction": 0.0,
+          "configured_root_count": 32,
+          "q_vs_expected_truth": {
+            "pair_count": 40,
+            "pairwise_ordering_accuracy": 0.4,
+            "resolved_pair_count": 4,
+            "resolved_pair_only_accuracy": 0.75,
+            "spearman_decision_count": 4,
+            "spearman_mean": -0.22499999999999998,
+            "top1_accuracy": 0.0
+          },
+          "q_vs_training_target": {
+            "pair_count": 40,
+            "pairwise_ordering_accuracy": 0.675,
+            "resolved_pair_count": 40,
+            "resolved_pair_only_accuracy": 0.675,
+            "spearman_decision_count": 4,
+            "spearman_mean": 0.425,
+            "top1_accuracy": 0.25
+          },
+          "selected_decision_count": 4,
+          "target_vs_expected_truth": {
+            "pair_count": 40,
+            "pairwise_ordering_accuracy": 0.525,
+            "resolved_pair_count": 4,
+            "resolved_pair_only_accuracy": 0.25,
+            "spearman_decision_count": 4,
+            "spearman_mean": 0.125,
+            "top1_accuracy": 0.0
+          },
+          "unresolved_pair_fraction": 0.9,
+          "usable_decision_count": 4,
+          "usable_root_count": 32
+        },
+        "same_slot_primary": {
+          "actor_vs_expected_truth": {
+            "pair_count": 230,
+            "pairwise_ordering_accuracy": 0.5347826086956522,
+            "resolved_pair_count": 31,
+            "resolved_pair_only_accuracy": 0.5161290322580645,
+            "spearman_decision_count": 23,
+            "spearman_mean": 0.08695652173913043,
+            "top1_accuracy": 0.21739130434782608
+          },
+          "censor_fraction": 0.03804347826086951,
+          "configured_root_count": 184,
+          "q_vs_expected_truth": {
+            "pair_count": 230,
+            "pairwise_ordering_accuracy": 0.5130434782608696,
+            "resolved_pair_count": 31,
+            "resolved_pair_only_accuracy": 0.41935483870967744,
+            "spearman_decision_count": 23,
+            "spearman_mean": 0.008695652173913047,
+            "top1_accuracy": 0.21739130434782608
+          },
+          "q_vs_training_target": {
+            "pair_count": 230,
+            "pairwise_ordering_accuracy": 0.6086956521739131,
+            "resolved_pair_count": 230,
+            "resolved_pair_only_accuracy": 0.6086956521739131,
+            "spearman_decision_count": 23,
+            "spearman_mean": 0.3213257707219707,
+            "top1_accuracy": 0.7391304347826086
+          },
+          "selected_decision_count": 23,
+          "target_vs_expected_truth": {
+            "pair_count": 230,
+            "pairwise_ordering_accuracy": 0.45217391304347826,
+            "resolved_pair_count": 31,
+            "resolved_pair_only_accuracy": 0.46774193548387094,
+            "spearman_decision_count": 23,
+            "spearman_mean": -0.114908782283579,
+            "top1_accuracy": 0.21739130434782608
+          },
+          "unresolved_pair_fraction": 0.8652173913043477,
+          "usable_decision_count": 23,
+          "usable_root_count": 177
+        }
+      }
+    }
+  },
+  "same_slot_primary_count": 23,
+  "schema": "decision_q_v2_multi_root_crn_summary_v1",
+  "single_root_vs_multi_root": {
+    "delta_positive_secondary": {
+      "q_vs_multi_root": {
+        "pairwise_ordering_accuracy": 0.5,
+        "spearman_mean": -0.07500000000000002,
+        "top1_accuracy": 0.0
+      },
+      "q_vs_single_root": {
+        "pairwise_ordering_accuracy": 0.625,
+        "spearman_mean": 0.375,
+        "top1_accuracy": 0.75
+      },
+      "single_vs_multi_pairwise_agreement": 0.575,
+      "single_vs_multi_spearman_mean": 0.09999999999999995,
+      "single_vs_multi_top1_agreement": 0.25,
+      "target_vs_multi_root": {
+        "pairwise_ordering_accuracy": 0.425,
+        "spearman_mean": -0.12499999999999999,
+        "top1_accuracy": 0.25
+      },
+      "target_vs_single_root": {
+        "pairwise_ordering_accuracy": 0.55,
+        "spearman_mean": 0.22499999999999998,
+        "top1_accuracy": 0.0
+      },
+      "usable_decision_count": 4
+    },
+    "same_slot_primary": {
+      "q_vs_multi_root": {
+        "pairwise_ordering_accuracy": 0.4666666666666667,
+        "spearman_mean": -0.11904761904761904,
+        "top1_accuracy": 0.19047619047619047
+      },
+      "q_vs_single_root": {
+        "pairwise_ordering_accuracy": 0.5238095238095238,
+        "spearman_mean": 0.05714285714285715,
+        "top1_accuracy": 0.23809523809523808
+      },
+      "single_vs_multi_pairwise_agreement": 0.5904761904761905,
+      "single_vs_multi_spearman_mean": 0.24761904761904757,
+      "single_vs_multi_top1_agreement": 0.3333333333333333,
+      "target_vs_multi_root": {
+        "pairwise_ordering_accuracy": 0.4,
+        "spearman_mean": -0.27459565667963315,
+        "top1_accuracy": 0.09523809523809523
+      },
+      "target_vs_single_root": {
+        "pairwise_ordering_accuracy": 0.5190476190476191,
+        "spearman_mean": 0.021596172106177137,
+        "top1_accuracy": 0.23809523809523808
+      },
+      "usable_decision_count": 21
+    }
+  },
+  "state_semantics": "frozen-checkpoint replay-generated on-policy decision states"
+}
