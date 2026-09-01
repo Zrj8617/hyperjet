@@ -259,8 +259,7 @@ class Env:
         slot_index = self._time_step
         previous_internal_state = f"x_{slot_index}^-"
         self._time_step += 1
-        for ue in self._ues:
-            ue.update_position(commit_position=not self.freeze_ue_mobility)
+        self._advance_ues_for_slot(slot_index)
         self._ue_service_positions = {int(ue.id): ue.pos[:2].copy() for ue in self._ues}
         self._slot_service_positions_frozen = True
 
@@ -294,6 +293,12 @@ class Env:
         }
         self._prepared_slot_open = True
         return self._copy_slot_context(self._prepared_slot_context)
+
+    def _advance_ues_for_slot(self, slot_index: int) -> None:
+        """Advance UEs with the production RNG path; diagnostics may inject innovations."""
+        del slot_index
+        for ue in self._ues:
+            ue.update_position(commit_position=not self.freeze_ue_mobility)
 
     def apply_movement(self, movement_actions: dict[int, int | str] | None = None) -> dict[str, Any]:
         """Apply movement after R_t is frozen and expose current service positions.

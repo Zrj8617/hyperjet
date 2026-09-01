@@ -466,7 +466,6 @@ def _dynamic_uav_features(
         ),
         1.0,
     )
-    max_available_time = max(float(config.CLEAN_NORM_AVAIL_TIME_REF), 1.0)
     max_workload = max(
         float(
             capacity_context.queue_workload_norm_ref
@@ -486,12 +485,19 @@ def _dynamic_uav_features(
             np.clip(float(service_pos.reshape(-1)[1]) / float(config.AREA_HEIGHT), 0.0, 1.0),
             np.clip(queue_length / max_queue, 0.0, 1.0),
             np.clip(remaining_slots / remaining_ref, 0.0, 1.0),
-            np.clip(available_delta / max_available_time, 0.0, 1.0),
+            _soft_delay_norm(available_delta, float(config.CLEAN_NORM_DELAY_SOFT_REF)),
             np.clip(queued_workload / max_workload, 0.0, 1.0),
             np.clip(slot_assigned / assigned_ref, 0.0, 1.0),
         ],
         dtype=np.float32,
     )
+
+
+def _soft_delay_norm(value: float, ref: float) -> float:
+    """Strictly monotonic, non-saturating delay normalization in [0, 1)."""
+    x = max(float(value), 0.0)
+    r = max(float(ref), 1e-9)
+    return float(x / (x + r))
 
 
 def _normalize_pair_features(values: list[float]) -> np.ndarray:
@@ -506,7 +512,11 @@ def _normalize_pair_features(values: list[float]) -> np.ndarray:
         dtype=np.float32,
     )
     raw = np.asarray(values, dtype=np.float32)
-    return np.clip(raw / scales, 0.0, 1.0).astype(np.float32)
+    out = np.clip(raw / scales, 0.0, 1.0)
+    soft_ref = float(config.CLEAN_NORM_DELAY_SOFT_REF)
+    for index in (2, 5):
+        out[index] = _soft_delay_norm(float(raw[index]), soft_ref)
+    return out.astype(np.float32)
 
 
 def _clean_tx_seconds(data_size_mb: float, base_bandwidth_mbps: float, distance_m: float) -> float:

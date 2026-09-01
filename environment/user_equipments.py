@@ -22,15 +22,33 @@ class UE:
         self.service_waiting = False
         self.active_dag_id = None
 
-    def update_position(self, *, commit_position: bool = True) -> None:
+    def update_position(
+        self,
+        *,
+        commit_position: bool = True,
+        speed_standard_normal: float | None = None,
+        theta_standard_normal: float | None = None,
+    ) -> None:
         """按高斯—马尔可夫模型推进 UE 一个时隙的位置。
 
         正在等待服务的 UE 会主动降速；移动越过地图边界时采用镜像反弹。
         """
         alpha = float(config.UE_GM_ALPHA)
         noise_scale = np.sqrt(max(1.0 - alpha**2, 0.0))
-        speed_noise = noise_scale * float(config.UE_GM_SPEED_SIGMA) * float(np.random.normal())
-        theta_noise = noise_scale * float(config.UE_GM_THETA_SIGMA) * float(np.random.normal())
+        speed_draw = (
+            float(np.random.normal())
+            if speed_standard_normal is None
+            else float(speed_standard_normal)
+        )
+        theta_draw = (
+            float(np.random.normal())
+            if theta_standard_normal is None
+            else float(theta_standard_normal)
+        )
+        if not np.isfinite(speed_draw) or not np.isfinite(theta_draw):
+            raise ValueError("explicit UE mobility innovations must be finite")
+        speed_noise = noise_scale * float(config.UE_GM_SPEED_SIGMA) * speed_draw
+        theta_noise = noise_scale * float(config.UE_GM_THETA_SIGMA) * theta_draw
 
         # 保留上一时隙的运动趋势，同时加入少量速度和方向扰动。
         walk_speed = alpha * self.speed + (1.0 - alpha) * float(config.UE_WALK_SPEED_MEAN) + speed_noise
