@@ -24,6 +24,10 @@ if str(ROOT) not in sys.path:
 import config
 from environment.env import Env
 from environment.graph_builder import CleanGraphBuilder
+from marl_models.mappo.clean_ppo import (
+    CLEAN_CRITIC_TASK_POOLING_CHOICES,
+    normalize_clean_critic_task_pooling,
+)
 from marl_models.mappo.clean_slot_orchestrator import (
     CleanMovementRolloutRecord,
     CleanOffloadingRolloutRecord,
@@ -33,6 +37,10 @@ from marl_models.mappo.clean_slot_orchestrator import (
     prepare_slot_state,
 )
 from marl_models.mappo.clean_trainer import (
+    CLEAN_COUNTERFACTUAL_BETA,
+    CLEAN_COUNTERFACTUAL_CREDIT_MODE,
+    CLEAN_COUNTERFACTUAL_GRADIENT_CLIPPING,
+    CLEAN_COUNTERFACTUAL_Q_LOSS_COEF,
     CleanCheckpointManager,
     CleanJSONLLogger,
     CleanPPOUpdateConfig,
@@ -232,6 +240,23 @@ def _resolved_offloading_action_value_controls(args: argparse.Namespace) -> tupl
     )
 
 
+def clean_counterfactual_experiment_controls(args: argparse.Namespace) -> dict[str, Any]:
+    enabled = bool(getattr(args, "clean_counterfactual_credit", False))
+    return {
+        "clean_counterfactual_credit": enabled,
+        "clean_counterfactual_credit_mode": (
+            CLEAN_COUNTERFACTUAL_CREDIT_MODE if enabled else "disabled"
+        ),
+        "counterfactual_beta": CLEAN_COUNTERFACTUAL_BETA if enabled else 0.0,
+        "counterfactual_q_loss_coef": (
+            CLEAN_COUNTERFACTUAL_Q_LOSS_COEF if enabled else 0.0
+        ),
+        "gradient_clipping": (
+            CLEAN_COUNTERFACTUAL_GRADIENT_CLIPPING if enabled else "legacy_global"
+        ),
+    }
+
+
 def _validated_offloading_lagged_q_controls(
     lagged_q_coef: str | float,
     lagged_q_loss_coef: str | float,
@@ -264,6 +289,30 @@ def _resolved_offloading_lagged_q_controls(args: argparse.Namespace) -> tuple[fl
     return controls
 
 
+def validate_clean_counterfactual_credit_controls(args: argparse.Namespace) -> None:
+    if not bool(getattr(args, "clean_counterfactual_credit", False)):
+        return
+    legacy_beta, legacy_eta = _resolved_offloading_action_value_controls(args)
+    if legacy_beta > 0.0 or legacy_eta > 0.0:
+        raise ValueError(
+            "--clean-counterfactual-credit cannot combine with the legacy "
+            "counterfactual coefficient path"
+        )
+    lagged_beta, lagged_eta, _, _ = _resolved_offloading_lagged_q_controls(args)
+    if lagged_beta > 0.0 or lagged_eta > 0.0:
+        raise ValueError("--clean-counterfactual-credit cannot combine with lagged-Q")
+    if bool(getattr(args, "decision_critic", False)):
+        raise ValueError("--clean-counterfactual-credit cannot combine with decision critic")
+    if bool(getattr(args, "offloading_eft_advantage", False)):
+        raise ValueError("--clean-counterfactual-credit cannot combine with EFT advantage")
+    if float(getattr(args, "eft_auxiliary_lambda_initial", 0.0)) > 0.0:
+        raise ValueError("--clean-counterfactual-credit cannot combine with EFT auxiliary loss")
+    if getattr(args, "offloading_init_bandit_checkpoint", None) is not None:
+        raise ValueError(
+            "--clean-counterfactual-credit cannot combine with bandit initialization"
+        )
+
+
 def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
     """Resolve experiment controls from new or legacy clean checkpoints."""
     checkpoint_config = payload.get("config", {})
@@ -277,6 +326,25 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
         cli = {}
     if not isinstance(experiment_controls, dict):
         experiment_controls = {}
+    clean_counterfactual_credit = cli.get(
+        "clean_counterfactual_credit",
+        experiment_controls.get("clean_counterfactual_credit", False),
+    )
+    if not isinstance(clean_counterfactual_credit, bool):
+        raise ValueError("checkpoint clean_counterfactual_credit must be boolean")
+    expected_clean_controls = clean_counterfactual_experiment_controls(
+        argparse.Namespace(clean_counterfactual_credit=clean_counterfactual_credit)
+    )
+    for key in (
+        "clean_counterfactual_credit_mode",
+        "counterfactual_beta",
+        "counterfactual_q_loss_coef",
+        "gradient_clipping",
+    ):
+        if key in experiment_controls and experiment_controls[key] != expected_clean_controls[key]:
+            raise ValueError(
+                f"checkpoint {key} is inconsistent with clean counterfactual mode"
+            )
     detach_critic_hgnn = cli.get("detach_critic_hgnn", False)
     if not isinstance(detach_critic_hgnn, bool):
         raise ValueError("checkpoint detach_critic_hgnn must be boolean")
@@ -297,6 +365,10 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
     )
     if counterfactual_coef > 0.0 and lagged_q_coef > 0.0:
         raise ValueError("checkpoint offloading counterfactual v1 and lagged-Q v2 cannot both be enabled")
+    if clean_counterfactual_credit and (counterfactual_coef > 0.0 or lagged_q_coef > 0.0):
+        raise ValueError(
+            "checkpoint clean counterfactual credit cannot combine with legacy counterfactual or lagged-Q"
+        )
     normalize_value_targets = cli.get("normalize_value_targets", False)
     if not isinstance(normalize_value_targets, bool):
         raise ValueError("checkpoint normalize_value_targets must be boolean")
@@ -305,6 +377,12 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("checkpoint value_clip_epsilon must be finite and non-negative")
     task_encoder = str(cli.get("task_encoder", "hgnn"))
     _normalize_task_encoder_for_comparison(task_encoder)
+    critic_task_pooling = normalize_clean_critic_task_pooling(
+        cli.get(
+            "critic_task_pooling",
+            experiment_controls.get("critic_task_pooling", "mean"),
+        )
+    )
     num_envs = int(cli.get("num_envs", 1))
     if num_envs <= 0:
         raise ValueError("checkpoint num_envs must be positive")
@@ -350,7 +428,21 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
     )
     if not isinstance(offloading_initialization, dict):
         raise ValueError("checkpoint offloading initialization identity must be a mapping")
+    if clean_counterfactual_credit:
+        if decision_critic_enabled:
+            raise ValueError(
+                "checkpoint clean counterfactual credit cannot combine with decision critic"
+            )
+        if offloading_eft_advantage or eft_auxiliary_lambda_initial > 0.0:
+            raise ValueError(
+                "checkpoint clean counterfactual credit cannot combine with EFT guidance"
+            )
+        if str(offloading_initialization.get("mode", "random")) != "random":
+            raise ValueError(
+                "checkpoint clean counterfactual credit cannot use bandit initialization"
+            )
     return {
+        **expected_clean_controls,
         "completed_dag_weight": _validated_completed_dag_weight(
             cli.get("completed_dag_weight", config.REWARD_COMPLETED_DAG_WEIGHT)
         ),
@@ -365,6 +457,7 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
         "normalize_value_targets": normalize_value_targets,
         "value_clip_epsilon": value_clip_epsilon,
         "task_encoder": task_encoder,
+        "critic_task_pooling": critic_task_pooling,
         "num_envs": num_envs,
         "sampler_backend": sampler_backend,
         "freeze_movement": freeze_movement,
@@ -387,6 +480,15 @@ def validate_resume_experiment_controls(
 ) -> dict[str, Any]:
     """Reject a resume that would silently change its reward objective."""
     saved = checkpoint_experiment_controls(payload)
+    requested_clean_counterfactual = bool(
+        getattr(args, "clean_counterfactual_credit", False)
+    )
+    if requested_clean_counterfactual != bool(saved["clean_counterfactual_credit"]):
+        raise ValueError(
+            "resume checkpoint clean counterfactual credit mismatch: "
+            f"requested {requested_clean_counterfactual}, "
+            f"checkpoint {saved['clean_counterfactual_credit']}"
+        )
     requested_weight = _resolved_completed_dag_weight(args)
     if not math.isclose(
         requested_weight,
@@ -464,6 +566,14 @@ def validate_resume_experiment_controls(
         raise ValueError(
             "resume checkpoint task encoder mismatch: "
             f"requested {requested_task_encoder}, checkpoint {saved['task_encoder']}"
+        )
+    requested_critic_task_pooling = normalize_clean_critic_task_pooling(
+        getattr(args, "critic_task_pooling", "mean")
+    )
+    if requested_critic_task_pooling != str(saved["critic_task_pooling"]):
+        raise ValueError(
+            "resume checkpoint critic task pooling mismatch: "
+            f"requested {requested_critic_task_pooling}, checkpoint {saved['critic_task_pooling']}"
         )
     requested_num_envs = int(getattr(args, "num_envs", 1))
     if requested_num_envs != int(saved["num_envs"]):
@@ -600,6 +710,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Block value-loss gradients from the critic into the shared HGNN.",
     )
     parser.add_argument(
+        "--critic-task-pooling",
+        choices=CLEAN_CRITIC_TASK_POOLING_CHOICES,
+        default="mean",
+        help="Active-task embedding aggregation used only by the centralized critic.",
+    )
+    parser.add_argument(
         "--freeze-ue-mobility",
         action="store_true",
         default=False,
@@ -610,6 +726,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=_nonnegative_finite_float,
         default=0.0,
         help="Weight beta for the detached action-conditioned counterfactual offloading advantage.",
+    )
+    parser.add_argument(
+        "--clean-counterfactual-credit",
+        action="store_true",
+        default=False,
+        help=(
+            "Phase3-B clean action-conditioned credit with fixed beta=0.25 and "
+            "Q loss coefficient=0.5; mutually exclusive with legacy guidance paths."
+        ),
     )
     parser.add_argument(
         "--offloading-action-value-loss-coef",
@@ -812,9 +937,13 @@ def build_config_snapshot(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "cli": _namespace_to_dict(args),
         "experiment_controls": {
+            **clean_counterfactual_experiment_controls(args),
             "completed_dag_weight": completed_dag_weight,
             "enable_kahypar": bool(getattr(args, "enable_kahypar", False)),
             "detach_critic_hgnn": bool(getattr(args, "detach_critic_hgnn", False)),
+            "critic_task_pooling": normalize_clean_critic_task_pooling(
+                getattr(args, "critic_task_pooling", "mean")
+            ),
             "freeze_ue_mobility": bool(getattr(args, "freeze_ue_mobility", False)),
             "offloading_counterfactual_coef": counterfactual_coef,
             "offloading_action_value_loss_coef": action_value_loss_coef,
@@ -923,7 +1052,11 @@ def initialize_run_files(run_dir: Path, args: argparse.Namespace) -> None:
             "sampler_backend": str(getattr(args, "sampler_backend", "synchronous")),
             "multisample_label": "multisample",
             "detach_critic_hgnn": bool(getattr(args, "detach_critic_hgnn", False)),
+            "critic_task_pooling": normalize_clean_critic_task_pooling(
+                getattr(args, "critic_task_pooling", "mean")
+            ),
             "freeze_ue_mobility": bool(getattr(args, "freeze_ue_mobility", False)),
+            **clean_counterfactual_experiment_controls(args),
             "offloading_counterfactual_coef": counterfactual_coef,
             "offloading_action_value_loss_coef": action_value_loss_coef,
             "offloading_lagged_q_coef": lagged_q_coef,
@@ -968,6 +1101,9 @@ def initialize_run_files(run_dir: Path, args: argparse.Namespace) -> None:
 
 def run_training(args: argparse.Namespace) -> dict[str, Any]:
     args = apply_smoke_overrides(args)
+    args.critic_task_pooling = normalize_clean_critic_task_pooling(
+        getattr(args, "critic_task_pooling", "mean")
+    )
     config.ENABLE_KAHYPAR_PARTITION_HYPEREDGES = bool(args.enable_kahypar)
     args.completed_dag_weight = _resolved_completed_dag_weight(args)
     (
@@ -980,6 +1116,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         args.offloading_lagged_q_scale_seconds,
         args.offloading_lagged_q_censor_weight,
     ) = _resolved_offloading_lagged_q_controls(args)
+    validate_clean_counterfactual_credit_controls(args)
     if getattr(args, "max_updates", None) is not None and int(args.num_envs) != 1:
         raise ValueError("--max-updates diagnostic control currently requires --num-envs 1")
     if float(args.eft_auxiliary_lambda_initial) > 0.0 and str(args.task_encoder) != "mlp":
@@ -1010,7 +1147,10 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         CleanMovementActor,
     )
     from marl_models.mappo.clean_offloading_actor import CleanOffloadingActor
-    from marl_models.mappo.clean_offloading_action_value import CleanOffloadingActionValueCritic
+    from marl_models.mappo.clean_offloading_action_value import (
+        CleanOffloadingActionValueCritic,
+        build_rng_neutral_clean_counterfactual_q,
+    )
     from marl_models.mappo.clean_lagged_residual_q import (
         CleanLaggedOutcomeTracker,
         build_rng_neutral_lagged_residual_q_critic,
@@ -1028,18 +1168,28 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     graph_builder.reset()
     initial_prepared = prepare_slot_state(env=env, graph_builder=graph_builder)
     task_feature_dim = int(initial_prepared.graph_snapshot.task_features.shape[1])
-    critic_input_dim = clean_critic_input_dim(int(args.task_embedding_dim), config.NUM_UAVS)
+    critic_input_dim = clean_critic_input_dim(
+        int(args.task_embedding_dim),
+        config.NUM_UAVS,
+        task_pooling=str(args.critic_task_pooling),
+    )
     offloading_actor = CleanOffloadingActor(
         task_embedding_dim=int(args.task_embedding_dim),
         hidden_dim=int(args.hidden_dim),
     )
-    action_value_enabled = float(args.offloading_counterfactual_coef) > 0.0
+    clean_counterfactual_enabled = bool(args.clean_counterfactual_credit)
+    legacy_action_value_enabled = float(args.offloading_counterfactual_coef) > 0.0
     offloading_action_value_critic = (
-        CleanOffloadingActionValueCritic(
+        build_rng_neutral_clean_counterfactual_q(
             input_dim=int(offloading_actor.candidate_feature_dim) + int(critic_input_dim),
             hidden_dim=int(args.hidden_dim),
         )
-        if action_value_enabled
+        if clean_counterfactual_enabled
+        else CleanOffloadingActionValueCritic(
+            input_dim=int(offloading_actor.candidate_feature_dim) + int(critic_input_dim),
+            hidden_dim=int(args.hidden_dim),
+        )
+        if legacy_action_value_enabled
         else None
     )
     lagged_q_enabled = float(args.offloading_lagged_q_coef) > 0.0
@@ -1086,6 +1236,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         critic=CleanCentralizedCritic(
             input_dim=critic_input_dim,
             hidden_dim=int(args.hidden_dim),
+            task_pooling=str(args.critic_task_pooling),
         ),
         offloading_action_value_critic=offloading_action_value_critic,
         offloading_lagged_q_critic=offloading_lagged_q_critic,
@@ -1124,6 +1275,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             offloading_entropy_coef=float(args.entropy_coef),
             max_grad_norm=float(args.max_grad_norm),
             detach_critic_hgnn=bool(args.detach_critic_hgnn),
+            clean_counterfactual_credit=clean_counterfactual_enabled,
             offloading_eft_advantage=bool(args.offloading_eft_advantage),
             movement_position_advantage=bool(args.movement_position_advantage),
             decision_critic_enabled=bool(args.decision_critic),
@@ -1178,6 +1330,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                 "global_slot": int(global_slot),
                 "completed_update_count": int(updater.update_step),
                 "offloading_initialization": args._offloading_initialization_identity,
+                **clean_counterfactual_experiment_controls(args),
             },
         )
         graph_builder.close()
@@ -1190,7 +1343,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         }
 
     if str(args.sampler_backend) == "process":
-        if float(args.offloading_counterfactual_coef) > 0.0 or float(
+        if clean_counterfactual_enabled or float(args.offloading_counterfactual_coef) > 0.0 or float(
             args.offloading_lagged_q_coef
         ) > 0.0:
             graph_builder.close()
@@ -1432,6 +1585,8 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                     "completed_dag_weight": float(args.completed_dag_weight),
                     "task_encoder": str(args.task_encoder),
                     "detach_critic_hgnn": bool(args.detach_critic_hgnn),
+                    "critic_task_pooling": str(args.critic_task_pooling),
+                    **clean_counterfactual_experiment_controls(args),
                     "freeze_ue_mobility": bool(args.freeze_ue_mobility),
                     "offloading_counterfactual_coef": float(args.offloading_counterfactual_coef),
                     "offloading_action_value_loss_coef": float(args.offloading_action_value_loss_coef),
@@ -1456,6 +1611,8 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         "latest_update": None if latest_update_stats is None else asdict(latest_update_stats),
         "completed_dag_weight": float(args.completed_dag_weight),
         "detach_critic_hgnn": bool(args.detach_critic_hgnn),
+        "critic_task_pooling": str(args.critic_task_pooling),
+        **clean_counterfactual_experiment_controls(args),
         "freeze_ue_mobility": bool(args.freeze_ue_mobility),
         "offloading_counterfactual_coef": float(args.offloading_counterfactual_coef),
         "offloading_action_value_loss_coef": float(args.offloading_action_value_loss_coef),
@@ -1957,6 +2114,8 @@ def _run_multisample_training_loop(
                     "completed_dag_weight": float(args.completed_dag_weight),
                     "task_encoder": str(args.task_encoder),
                     "detach_critic_hgnn": bool(args.detach_critic_hgnn),
+                    "critic_task_pooling": str(args.critic_task_pooling),
+                    **clean_counterfactual_experiment_controls(args),
                     "freeze_ue_mobility": bool(args.freeze_ue_mobility),
                     "offloading_counterfactual_coef": float(
                         args.offloading_counterfactual_coef
@@ -2012,6 +2171,8 @@ def _run_multisample_training_loop(
         "elapsed_seconds": float(elapsed),
         "completed_dag_weight": float(args.completed_dag_weight),
         "detach_critic_hgnn": bool(args.detach_critic_hgnn),
+        "critic_task_pooling": str(args.critic_task_pooling),
+        **clean_counterfactual_experiment_controls(args),
         "freeze_ue_mobility": bool(args.freeze_ue_mobility),
         "offloading_counterfactual_coef": float(args.offloading_counterfactual_coef),
         "offloading_action_value_loss_coef": float(
@@ -2074,6 +2235,7 @@ def _process_sampler_worker(
             task_embedding_dim=int(worker_config["task_embedding_dim"]),
             hidden_dim=int(worker_config["hidden_dim"]),
             task_encoder=str(worker_config["task_encoder"]),
+            critic_task_pooling=str(worker_config["critic_task_pooling"]),
             device=torch.device("cpu"),
         )
         connection.send(
@@ -2300,6 +2462,7 @@ def _run_process_sampler_training_loop(
         "task_embedding_dim": int(args.task_embedding_dim),
         "hidden_dim": int(args.hidden_dim),
         "task_encoder": str(args.task_encoder),
+        "critic_task_pooling": str(args.critic_task_pooling),
         "max_steps_per_episode": int(args.max_steps_per_episode),
         "task_state_ready": str(task_state_ready),
     }
@@ -2542,6 +2705,8 @@ def _run_process_sampler_training_loop(
         "elapsed_seconds": float(elapsed),
         "completed_dag_weight": float(args.completed_dag_weight),
         "detach_critic_hgnn": bool(args.detach_critic_hgnn),
+        "critic_task_pooling": str(args.critic_task_pooling),
+        **clean_counterfactual_experiment_controls(args),
         "freeze_ue_mobility": bool(args.freeze_ue_mobility),
         "offloading_counterfactual_coef": 0.0,
         "offloading_action_value_loss_coef": 0.0,
@@ -2759,6 +2924,10 @@ def _finish_collect_clean_slot(
             selected_uav_id=int(record.selected_uav_id),
             old_log_probability=float(record.old_log_prob),
             entropy=float(record.entropy),
+            old_masked_probabilities=_immutable_numpy_copy(
+                record.old_masked_probabilities,
+                dtype=np.float32,
+            ),
             dag_id=str(record.dag_id) if lagged_q_enabled else None,
             assignment_time_seconds=assignment_time_seconds if lagged_q_enabled else None,
             candidate_features=(
@@ -2948,6 +3117,7 @@ def _build_process_worker_modules(
     task_embedding_dim: int,
     hidden_dim: int,
     task_encoder: str,
+    critic_task_pooling: str,
     device: Any,
 ) -> CleanTrainingModules:
     from marl_models.hgnn import build_clean_task_encoder
@@ -2958,7 +3128,11 @@ def _build_process_worker_modules(
         clean_critic_input_dim,
     )
 
-    critic_input_dim = clean_critic_input_dim(int(task_embedding_dim), config.NUM_UAVS)
+    critic_input_dim = clean_critic_input_dim(
+        int(task_embedding_dim),
+        config.NUM_UAVS,
+        task_pooling=critic_task_pooling,
+    )
     encoder = build_clean_task_encoder(
         encoder_type=str(task_encoder),
         task_feature_dim=int(task_feature_dim),
@@ -2978,6 +3152,7 @@ def _build_process_worker_modules(
         critic=CleanCentralizedCritic(
             input_dim=int(critic_input_dim),
             hidden_dim=int(hidden_dim),
+            task_pooling=critic_task_pooling,
         ),
     )
     _move_modules_to_device(modules, device)

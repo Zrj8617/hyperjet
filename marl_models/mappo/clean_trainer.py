@@ -14,7 +14,7 @@ from marl_models.mappo.clean_eft_auxiliary import (
     eft_auxiliary_lambda,
     summarize_historical_eft_items,
 )
-from marl_models.mappo.clean_ppo import CleanDecisionCritic
+from marl_models.mappo.clean_ppo import CleanDecisionCritic, pool_clean_critic_task_embeddings
 from marl_models.mappo.clean_slot_orchestrator import (
     CleanEncodedSlotState,
     CleanSlotRolloutBuffer,
@@ -36,6 +36,12 @@ except ModuleNotFoundError:
     normalize_counterfactual_values = None
 
 
+CLEAN_COUNTERFACTUAL_CREDIT_MODE = "action_conditioned_v1"
+CLEAN_COUNTERFACTUAL_BETA = 0.25
+CLEAN_COUNTERFACTUAL_Q_LOSS_COEF = 0.5
+CLEAN_COUNTERFACTUAL_GRADIENT_CLIPPING = "base_and_q_separate"
+
+
 @dataclass(slots=True)
 class CleanPPOUpdateConfig:
     gamma: float = 0.99
@@ -55,6 +61,9 @@ class CleanPPOUpdateConfig:
     # Experimental boundary: the critic head still trains, but its value loss
     # cannot update the shared HGNN when this is enabled.
     detach_critic_hgnn: bool = False
+    # Phase3-B: independent clean action-conditioned credit mode. Its beta and
+    # Q regression weight are fixed constants, not training hyperparameters.
+    clean_counterfactual_credit: bool = False
     offloading_counterfactual_coef: float = 0.0
     offloading_action_value_loss_coef: float = 0.0
     offloading_lagged_q_coef: float = 0.0
@@ -492,19 +501,53 @@ class CleanPPOUpdater:
                     self.modules.offloading_lagged_q_critic
                 ),
             }
-            grad_norm = torch.nn.utils.clip_grad_norm_(
-                _unique_parameters(
+            if bool(self.config.clean_counterfactual_credit):
+                base_parameters = _unique_parameters(
                     [
                         self.modules.hgnn,
                         self.modules.movement_actor,
                         self.modules.offloading_actor,
                         self.modules.critic,
-                        self.modules.offloading_action_value_critic,
-                        self.modules.offloading_lagged_q_critic,
                     ]
-                ),
-                float(self.config.max_grad_norm),
-            )
+                )
+                q_parameters = _unique_parameters(
+                    [self.modules.offloading_action_value_critic]
+                )
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    base_parameters,
+                    float(self.config.max_grad_norm),
+                )
+                q_grad_norm = torch.nn.utils.clip_grad_norm_(
+                    q_parameters,
+                    float(self.config.max_grad_norm),
+                )
+                diagnostics["grad_pre_clip_clean_counterfactual_q"] = float(
+                    q_grad_norm
+                )
+                diagnostics["grad_clip_scale_clean_counterfactual_q"] = float(
+                    min(
+                        1.0,
+                        float(self.config.max_grad_norm)
+                        / max(float(q_grad_norm), 1e-12),
+                    )
+                )
+                diagnostics["gradient_clipping"] = (
+                    CLEAN_COUNTERFACTUAL_GRADIENT_CLIPPING
+                )
+            else:
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    _unique_parameters(
+                        [
+                            self.modules.hgnn,
+                            self.modules.movement_actor,
+                            self.modules.offloading_actor,
+                            self.modules.critic,
+                            self.modules.offloading_action_value_critic,
+                            self.modules.offloading_lagged_q_critic,
+                        ]
+                    ),
+                    float(self.config.max_grad_norm),
+                )
             post_clip = {
                 "grad_post_clip_movement": _module_grad_norm(self.modules.movement_actor),
                 "grad_post_clip_offloading": _module_grad_norm(self.modules.offloading_actor),
@@ -527,6 +570,10 @@ class CleanPPOUpdater:
                 min(1.0, float(self.config.max_grad_norm) / max(float(grad_norm), 1e-12))
             )
             self.optimizer.step()
+            if bool(self.config.clean_counterfactual_credit):
+                diagnostics.update(
+                    self._offloading_probability_update_diagnostics(records)
+                )
             latest_stats = self._stats_from_loss_parts(records, loss_parts, float(grad_norm))
             for key, value in scale_diags.items():
                 setattr(latest_stats, key, float(value))
@@ -656,6 +703,9 @@ class CleanPPOUpdater:
         legal_q_spreads: list[Any] = []
         raw_counterfactual_values: list[Any] = []
         action_value_enabled = self.modules.offloading_action_value_critic is not None
+        counterfactual_beta, action_value_loss_coef = (
+            _resolved_action_value_coefficients(self.config)
+        )
         lagged_q_enabled = self.modules.offloading_lagged_q_critic is not None
         lagged_corrections = list(frozen_lagged_corrections or [])
 
@@ -672,7 +722,17 @@ class CleanPPOUpdater:
                 if bool(self.config.detach_critic_hgnn)
                 else task_embeddings
             )
-            critic_input = _critic_input_tensor(critic_embeddings, record.critic_non_graph_input)
+            critic_input = _critic_input_tensor(
+                critic_embeddings,
+                record.critic_non_graph_input,
+                task_pooling=str(getattr(self.modules.critic, "task_pooling", "mean")),
+            )
+            expected_critic_input_dim = int(self.modules.critic.net[0].in_features)
+            if int(critic_input.numel()) != expected_critic_input_dim:
+                raise ValueError(
+                    "recomputed critic input dimension does not match critic first layer: "
+                    f"{int(critic_input.numel())} != {expected_critic_input_dim}"
+                )
             value = self.modules.critic(critic_input).reshape(-1)[0]
             value_loss, was_clipped = _normalized_clipped_value_loss(
                 value=value,
@@ -1176,7 +1236,7 @@ class CleanPPOUpdater:
                 offloading_advantage = item["per_decision_eft_advantage"]
             if action_value_enabled:
                 offloading_advantage = offloading_advantage + float(
-                    self.config.offloading_counterfactual_coef
+                    counterfactual_beta
                 ) * normalized_counterfactual[item_index]
             if lagged_q_enabled:
                 offloading_advantage = offloading_advantage + float(
@@ -1279,7 +1339,7 @@ class CleanPPOUpdater:
             movement_loss
             + offloading_loss
             + float(self.config.value_coef) * value_loss
-            + float(self.config.offloading_action_value_loss_coef) * offloading_action_value_loss
+            + float(action_value_loss_coef) * offloading_action_value_loss
             + float(self.config.offloading_lagged_q_loss_coef) * offloading_lagged_q_loss
             + weighted_eft_auxiliary_loss
             + decision_critic_loss
@@ -1337,6 +1397,126 @@ class CleanPPOUpdater:
             },
         }
 
+    def _offloading_probability_update_diagnostics(
+        self,
+        records: list[CleanSlotRolloutRecord],
+    ) -> dict[str, Any]:
+        """Compare rollout probabilities with the post-update offloading policy."""
+
+        l1_deltas: list[float] = []
+        kls: list[float] = []
+        selected_deltas: list[float] = []
+        with torch.no_grad():
+            for record in records:
+                if not record.offloading_records:
+                    continue
+                snapshot = record.graph_snapshot
+                task_features = torch.as_tensor(
+                    np.asarray(snapshot.task_features, dtype=np.float32),
+                    dtype=torch.float32,
+                    device=self.device,
+                )
+                incidence = torch.as_tensor(
+                    np.asarray(snapshot.incidence_matrix, dtype=np.float32),
+                    dtype=torch.float32,
+                    device=self.device,
+                )
+                hyperedge_type_ids = torch.as_tensor(
+                    np.asarray(snapshot.hyperedge_type_ids, dtype=np.int64),
+                    dtype=torch.long,
+                    device=self.device,
+                )
+                task_embeddings = self.modules.hgnn(
+                    task_features,
+                    incidence,
+                    hyperedge_type_ids,
+                )
+                for offloading_record in record.offloading_records:
+                    old_probabilities_np = offloading_record.old_masked_probabilities
+                    if old_probabilities_np is None:
+                        continue
+                    task_index = int(offloading_record.task_local_index)
+                    dynamic_features = torch.as_tensor(
+                        offloading_record.dynamic_uav_features,
+                        dtype=torch.float32,
+                        device=self.device,
+                    )
+                    pair_features = torch.as_tensor(
+                        offloading_record.pair_features,
+                        dtype=torch.float32,
+                        device=self.device,
+                    )
+                    candidate_count = int(dynamic_features.shape[0])
+                    task_embedding = task_embeddings[task_index].reshape(1, -1)
+                    features = torch.cat(
+                        [
+                            task_embedding.expand(candidate_count, -1),
+                            dynamic_features,
+                            pair_features,
+                        ],
+                        dim=1,
+                    )
+                    mask = torch.as_tensor(
+                        offloading_record.candidate_mask,
+                        dtype=torch.bool,
+                        device=self.device,
+                    )
+                    logits = self.modules.offloading_actor.scorer(features).masked_fill(
+                        ~mask,
+                        torch.finfo(torch.float32).min,
+                    )
+                    new_probabilities = torch.softmax(logits, dim=0)
+                    old_probabilities = torch.as_tensor(
+                        np.asarray(old_probabilities_np, dtype=np.float32),
+                        dtype=torch.float32,
+                        device=self.device,
+                    )
+                    if old_probabilities.shape != new_probabilities.shape:
+                        raise ValueError(
+                            "stored offloading probabilities do not match candidate count"
+                        )
+                    legal_old = old_probabilities[mask]
+                    legal_new = new_probabilities[mask]
+                    if not bool(torch.isfinite(legal_old).all().item()):
+                        raise FloatingPointError(
+                            "stored offloading probabilities contain non-finite values"
+                        )
+                    l1_deltas.append(
+                        float(torch.abs(legal_new - legal_old).sum().cpu().item())
+                    )
+                    positive_old = legal_old > 0.0
+                    kl = torch.sum(
+                        legal_old[positive_old]
+                        * (
+                            torch.log(legal_old[positive_old])
+                            - torch.log(legal_new[positive_old].clamp_min(1e-12))
+                        )
+                    )
+                    kls.append(float(kl.cpu().item()))
+                    selected_action = int(offloading_record.selected_action)
+                    selected_deltas.append(
+                        float(
+                            (
+                                new_probabilities[selected_action]
+                                - old_probabilities[selected_action]
+                            )
+                            .cpu()
+                            .item()
+                        )
+                    )
+        return {
+            "clean_counterfactual_probability_action_count": len(l1_deltas),
+            "clean_counterfactual_probability_l1_delta_mean": (
+                float(np.mean(l1_deltas)) if l1_deltas else 0.0
+            ),
+            "clean_counterfactual_probability_kl_mean": (
+                float(np.mean(kls)) if kls else 0.0
+            ),
+            "clean_counterfactual_selected_probability_delta_mean": (
+                float(np.mean(selected_deltas)) if selected_deltas else 0.0
+            ),
+        }
+
     def _stats_from_loss_parts(
         self,
         records: list[CleanSlotRolloutRecord],
@@ -1377,15 +1557,23 @@ def _validate_action_value_configuration(
     config: CleanPPOUpdateConfig,
     modules: CleanTrainingModules,
 ) -> None:
+    if not isinstance(config.clean_counterfactual_credit, bool):
+        raise ValueError("clean_counterfactual_credit must be boolean")
     beta = float(config.offloading_counterfactual_coef)
     eta = float(config.offloading_action_value_loss_coef)
     if not np.isfinite(beta) or beta < 0.0:
         raise ValueError("offloading counterfactual coefficient must be finite and non-negative")
     if not np.isfinite(eta) or eta < 0.0:
         raise ValueError("offloading action-value loss coefficient must be finite and non-negative")
-    coefficient_enabled = beta > 0.0 and eta > 0.0
+    legacy_enabled = beta > 0.0 and eta > 0.0
     if (beta > 0.0) != (eta > 0.0):
         raise ValueError("offloading counterfactual and action-value loss coefficients must be enabled together")
+    clean_enabled = bool(config.clean_counterfactual_credit)
+    if clean_enabled and legacy_enabled:
+        raise ValueError(
+            "clean counterfactual credit cannot combine with the legacy counterfactual path"
+        )
+    coefficient_enabled = clean_enabled or legacy_enabled
     module_enabled = modules.offloading_action_value_critic is not None
     if coefficient_enabled != module_enabled:
         raise ValueError(
@@ -1405,7 +1593,25 @@ def _validate_action_value_configuration(
     if lagged_coefficients_enabled != lagged_module_enabled:
         raise ValueError("lagged residual-Q module presence must match its enabled coefficient pair")
     if coefficient_enabled and lagged_coefficients_enabled:
-        raise ValueError("offloading counterfactual v1 and lagged-Q v2 are mutually exclusive")
+        raise ValueError("counterfactual credit and lagged-Q are mutually exclusive")
+    if clean_enabled:
+        if bool(config.decision_critic_enabled):
+            raise ValueError("clean counterfactual credit cannot combine with decision critic")
+        if bool(config.offloading_eft_advantage):
+            raise ValueError("clean counterfactual credit cannot combine with EFT advantage")
+        if float(config.eft_auxiliary_lambda_initial) > 0.0:
+            raise ValueError("clean counterfactual credit cannot combine with EFT auxiliary loss")
+
+
+def _resolved_action_value_coefficients(
+    config: CleanPPOUpdateConfig,
+) -> tuple[float, float]:
+    if bool(config.clean_counterfactual_credit):
+        return CLEAN_COUNTERFACTUAL_BETA, CLEAN_COUNTERFACTUAL_Q_LOSS_COEF
+    return (
+        float(config.offloading_counterfactual_coef),
+        float(config.offloading_action_value_loss_coef),
+    )
 
 
 def _validate_value_configuration(config: CleanPPOUpdateConfig) -> None:
@@ -1558,9 +1764,16 @@ def _action_value_diagnostics(
     counterfactual: dict[str, Any],
     config: CleanPPOUpdateConfig,
 ) -> dict[str, Any]:
+    beta, q_loss_coef = _resolved_action_value_coefficients(config)
     diagnostics = {
-        "offloading_counterfactual_coef": float(config.offloading_counterfactual_coef),
-        "offloading_action_value_loss_coef": float(config.offloading_action_value_loss_coef),
+        "clean_counterfactual_credit": bool(config.clean_counterfactual_credit),
+        "clean_counterfactual_credit_mode": (
+            CLEAN_COUNTERFACTUAL_CREDIT_MODE
+            if bool(config.clean_counterfactual_credit)
+            else "disabled"
+        ),
+        "offloading_counterfactual_coef": float(beta),
+        "offloading_action_value_loss_coef": float(q_loss_coef),
         "offloading_action_value_target_mean": 0.0,
         "offloading_action_value_target_std": 0.0,
         "offloading_action_value_selected_mean": 0.0,
@@ -1873,13 +2086,15 @@ def _ppo_action_loss(*, new_log_prob: Any, old_log_prob: Any, advantage: Any, cl
     return -torch.minimum(unclipped, clipped)
 
 
-def _critic_input_tensor(task_embeddings: Any, critic_non_graph_input: np.ndarray) -> Any:
-    if task_embeddings.shape[0] > 0:
-        active_mean = task_embeddings.mean(dim=0)
-    else:
-        active_mean = task_embeddings.new_zeros((task_embeddings.shape[1],))
+def _critic_input_tensor(
+    task_embeddings: Any,
+    critic_non_graph_input: np.ndarray,
+    *,
+    task_pooling: str = "mean",
+) -> Any:
+    task_pool = pool_clean_critic_task_embeddings(task_embeddings, task_pooling)
     non_graph = torch.as_tensor(critic_non_graph_input, dtype=task_embeddings.dtype, device=task_embeddings.device)
-    return torch.cat([active_mean, non_graph], dim=0)
+    return torch.cat([task_pool, non_graph], dim=0)
 
 
 def _unique_parameters(modules: Iterable[Any]) -> list[Any]:

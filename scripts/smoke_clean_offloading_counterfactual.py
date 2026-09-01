@@ -146,6 +146,7 @@ def main() -> int:
     snapshot = SimpleNamespace(
         task_features=np.asarray([[1.0, 0.2, 0.4, 0.8], [0.3, 1.0, 0.7, 0.1]], dtype=np.float32),
         incidence_matrix=np.eye(2, dtype=np.float32),
+        hyperedge_type_ids=np.zeros(2, dtype=np.int64),
     )
 
     def _slot(slot_index: int, reward: float, selected_action: int, terminated: bool):
@@ -198,6 +199,9 @@ def main() -> int:
     direct_loss = updater._loss(
         records=records,
         returns=torch.tensor([-1.0, 2.0]),
+        old_values=torch.zeros(2),
+        value_target_mean=torch.zeros(()),
+        value_target_scale=torch.ones(()),
         advantages=torch.tensor([-1.0, 1.0]),
     )
     q_parameters = list(action_value_critic.parameters())
@@ -274,6 +278,9 @@ def main() -> int:
     legacy_loss = legacy_updater._loss(
         records=records,
         returns=torch.tensor([-1.0, 2.0]),
+        old_values=torch.zeros(2),
+        value_target_mean=torch.zeros(()),
+        value_target_scale=torch.ones(()),
         advantages=legacy_advantages,
     )
     reference_terms = []

@@ -106,6 +106,11 @@ def build_eval_config(
 ) -> dict[str, Any]:
     if experiment_controls is None:
         controls = {
+            "clean_counterfactual_credit": False,
+            "clean_counterfactual_credit_mode": "disabled",
+            "counterfactual_beta": 0.0,
+            "counterfactual_q_loss_coef": 0.0,
+            "gradient_clipping": "legacy_global",
             "completed_dag_weight": float(config.REWARD_COMPLETED_DAG_WEIGHT),
             "detach_critic_hgnn": False,
             "freeze_ue_mobility": False,
@@ -116,6 +121,7 @@ def build_eval_config(
             "offloading_lagged_q_scale_seconds": 200.0,
             "offloading_lagged_q_censor_weight": 0.25,
             "task_encoder": "hgnn",
+            "critic_task_pooling": "mean",
         }
         requested = getattr(args, "freeze_ue_mobility", None)
         freeze_ue_mobility = False if requested is None else bool(requested)
@@ -177,6 +183,11 @@ def initialize_eval_files(
 ) -> None:
     if experiment_controls is None:
         controls = {
+            "clean_counterfactual_credit": False,
+            "clean_counterfactual_credit_mode": "disabled",
+            "counterfactual_beta": 0.0,
+            "counterfactual_q_loss_coef": 0.0,
+            "gradient_clipping": "legacy_global",
             "completed_dag_weight": float(config.REWARD_COMPLETED_DAG_WEIGHT),
             "detach_critic_hgnn": False,
             "freeze_ue_mobility": False,
@@ -186,6 +197,7 @@ def initialize_eval_files(
             "offloading_lagged_q_loss_coef": 0.0,
             "offloading_lagged_q_scale_seconds": 200.0,
             "offloading_lagged_q_censor_weight": 0.25,
+            "critic_task_pooling": "mean",
         }
         requested = getattr(args, "freeze_ue_mobility", None)
         freeze_ue_mobility = False if requested is None else bool(requested)
@@ -207,6 +219,13 @@ def initialize_eval_files(
             "enable_kahypar": bool(getattr(args, "enable_kahypar", False)),
             "completed_dag_weight": float(controls["completed_dag_weight"]),
             "detach_critic_hgnn": bool(controls["detach_critic_hgnn"]),
+            "critic_task_pooling": str(controls.get("critic_task_pooling", "mean")),
+            "clean_counterfactual_credit": bool(
+                controls.get("clean_counterfactual_credit", False)
+            ),
+            "clean_counterfactual_credit_mode": str(
+                controls.get("clean_counterfactual_credit_mode", "disabled")
+            ),
             "freeze_ue_mobility": freeze_ue_mobility,
             "offloading_counterfactual_coef": float(controls["offloading_counterfactual_coef"]),
             "offloading_action_value_loss_coef": float(controls["offloading_action_value_loss_coef"]),
@@ -309,6 +328,7 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
             "movement_frozen": bool(args.freeze_movement),
             "completed_dag_weight": float(experiment_controls["completed_dag_weight"]),
             "detach_critic_hgnn": bool(experiment_controls["detach_critic_hgnn"]),
+            "critic_task_pooling": str(experiment_controls.get("critic_task_pooling", "mean")),
             "freeze_ue_mobility": freeze_ue_mobility,
             "offloading_counterfactual_coef": float(
                 experiment_controls["offloading_counterfactual_coef"]
@@ -622,18 +642,31 @@ def _build_modules(
     from marl_models.hgnn import build_clean_task_encoder
     from marl_models.mappo.clean_movement_actor import CleanMovementActor
     from marl_models.mappo.clean_offloading_actor import CleanOffloadingActor
-    from marl_models.mappo.clean_offloading_action_value import CleanOffloadingActionValueCritic
+    from marl_models.mappo.clean_offloading_action_value import (
+        CleanOffloadingActionValueCritic,
+        build_rng_neutral_clean_counterfactual_q,
+    )
     from marl_models.mappo.clean_lagged_residual_q import (
         build_rng_neutral_lagged_residual_q_critic,
     )
     from marl_models.mappo.clean_ppo import CleanCentralizedCritic, clean_critic_input_dim
 
-    critic_input_dim = clean_critic_input_dim(int(dims["task_embedding_dim"]), config.NUM_UAVS)
+    critic_task_pooling = str(experiment_controls.get("critic_task_pooling", "mean"))
+    critic_input_dim = clean_critic_input_dim(
+        int(dims["task_embedding_dim"]),
+        config.NUM_UAVS,
+        task_pooling=critic_task_pooling,
+    )
     offloading_actor = CleanOffloadingActor(
         task_embedding_dim=int(dims["task_embedding_dim"]),
         hidden_dim=int(dims["hidden_dim"]),
     ).to(device)
-    action_value_enabled = float(experiment_controls.get("offloading_counterfactual_coef", 0.0)) > 0.0
+    clean_counterfactual_enabled = bool(
+        experiment_controls.get("clean_counterfactual_credit", False)
+    )
+    legacy_action_value_enabled = float(
+        experiment_controls.get("offloading_counterfactual_coef", 0.0)
+    ) > 0.0
     lagged_q_enabled = float(experiment_controls.get("offloading_lagged_q_coef", 0.0)) > 0.0
     encoder_type = str(experiment_controls.get("task_encoder", "hgnn"))
     modules = CleanTrainingModules(
@@ -651,13 +684,19 @@ def _build_modules(
         critic=CleanCentralizedCritic(
             input_dim=critic_input_dim,
             hidden_dim=int(dims["hidden_dim"]),
+            task_pooling=critic_task_pooling,
         ).to(device),
         offloading_action_value_critic=(
-            CleanOffloadingActionValueCritic(
+            build_rng_neutral_clean_counterfactual_q(
                 input_dim=int(offloading_actor.candidate_feature_dim) + int(critic_input_dim),
                 hidden_dim=int(dims["hidden_dim"]),
             ).to(device)
-            if action_value_enabled
+            if clean_counterfactual_enabled
+            else CleanOffloadingActionValueCritic(
+                input_dim=int(offloading_actor.candidate_feature_dim) + int(critic_input_dim),
+                hidden_dim=int(dims["hidden_dim"]),
+            ).to(device)
+            if legacy_action_value_enabled
             else None
         ),
         offloading_lagged_q_critic=(
