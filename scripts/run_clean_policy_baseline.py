@@ -27,7 +27,13 @@ from marl_models.mappo.clean_slot_orchestrator import prepare_slot_state
 from scripts.offloading_policy_gate import RANDOM_HASH_VERSION, stable_random_hash_index
 
 
-BASELINE_POLICIES = ("random_hash", "greedy_eft")
+BASELINE_POLICIES = (
+    "random_hash",
+    "greedy_eft",
+    "random",
+    "eft_greedy",
+    "eft_worst",
+)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -61,6 +67,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         _set_seed(int(args.seed))
         env = Env(completed_dag_weight=float(args.completed_dag_weight))
+        policy_rng = random.Random(int(args.seed))
 
         # Match the clean training entrypoint's feature-dimension prelude so the
         # first real episode starts from the same NumPy RNG position.
@@ -99,6 +106,7 @@ def main(argv: list[str] | None = None) -> int:
                     uav_service_positions=env.uav_service_positions,
                     ue_service_positions=env.ue_service_positions,
                     ues=env.ues,
+                    policy_rng=policy_rng,
                 )
                 _, _, done, latest_info = env.commit_and_advance(
                     assignment_buffer=assignments,
@@ -163,6 +171,7 @@ def select_baseline_assignments(
     uav_service_positions: dict[int, Any] | None = None,
     ue_service_positions: dict[int, Any] | None = None,
     ues: list[Any] | None = None,
+    policy_rng: random.Random | None = None,
 ) -> tuple[CleanAssignmentBuffer, int]:
     if policy not in BASELINE_POLICIES:
         raise ValueError(f"unsupported baseline policy: {policy}")
@@ -185,7 +194,7 @@ def select_baseline_assignments(
         if not legal_indices:
             skipped += 1
             continue
-        if policy == "greedy_eft":
+        if policy in {"greedy_eft", "eft_greedy"}:
             selected_idx = min(
                 legal_indices,
                 key=lambda idx: (
@@ -193,6 +202,18 @@ def select_baseline_assignments(
                     int(candidate_uav_ids[idx]),
                 ),
             )
+        elif policy == "eft_worst":
+            selected_idx = max(
+                legal_indices,
+                key=lambda idx: (
+                    float(estimates[idx].estimated_finish_time),
+                    -int(candidate_uav_ids[idx]),
+                ),
+            )
+        elif policy == "random":
+            if policy_rng is None:
+                raise ValueError("random policy requires an independent policy_rng")
+            selected_idx = legal_indices[policy_rng.randrange(len(legal_indices))]
         else:
             selected_idx = legal_indices[
                 stable_random_hash_index(
@@ -258,6 +279,13 @@ def _build_config(args: argparse.Namespace, run_dir: Path) -> dict[str, Any]:
         "random_hash_version": (
             RANDOM_HASH_VERSION if str(args.policy) == "random_hash" else None
         ),
+        "random_policy_rng": (
+            "independent_python_random_seeded_by_environment_seed"
+            if str(args.policy) == "random"
+            else None
+        ),
+        "optimizer_step_count": 0,
+        "model_parameter_tensor_count": 0,
         "git_commit": _git_commit(),
     }
 
@@ -268,8 +296,10 @@ def _episode_metric_subset(info: dict[str, Any]) -> dict[str, Any]:
         "completed_dag_count",
         "dag_completion_rate",
         "average_dag_flowtime",
+        "dag_throughput",
         "avg_uav_queue_length",
         "energy_per_completed_dag",
+        "load_balance",
         "total_task_energy",
         "uav_movement_energy_total",
         "active_dags",
@@ -301,7 +331,10 @@ def _write_scalars(writer: "_ScalarEventWriter", row: dict[str, Any], step: int)
         "episode/completed_dag_count": "completed_dag_count",
         "episode/dag_completion_rate": "dag_completion_rate",
         "episode/average_dag_flowtime": "average_dag_flowtime",
+        "episode/dag_throughput": "dag_throughput",
         "episode/avg_uav_queue_length": "avg_uav_queue_length",
+        "episode/energy_per_completed_dag": "energy_per_completed_dag",
+        "episode/load_balance": "load_balance",
         "episode/frozen_ready_task_count": "frozen_ready_task_count",
         "episode/accepted_assignments": "accepted_assignments",
         "episode/offloading_skipped_no_candidate": "offloading_skipped_no_candidate",
