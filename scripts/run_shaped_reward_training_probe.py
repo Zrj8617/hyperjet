@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -22,6 +24,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-steps-per-episode", type=int, default=500)
     parser.add_argument("--rollout-horizon", type=int, default=128)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument(
+        "--gpus",
+        type=int,
+        nargs="+",
+        help="Run the six probe cells concurrently, one per listed GPU.",
+    )
     return parser
 
 
@@ -49,6 +57,7 @@ def _run_cell(
     max_steps: int,
     rollout_horizon: int,
     device: str,
+    gpu: int | None = None,
 ) -> tuple[Path, list[str]]:
     parent = output_root / "runs" / arm / f"seed{seed}"
     parent.mkdir(parents=True, exist_ok=True)
@@ -72,15 +81,21 @@ def _run_cell(
     ]
     log_path = output_root / "logs" / f"{arm}_seed{seed}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    process_env = os.environ.copy()
+    recorded_command = command
+    if gpu is not None:
+        process_env["CUDA_VISIBLE_DEVICES"] = str(gpu)
+        recorded_command = [f"CUDA_VISIBLE_DEVICES={gpu}", *command]
     with log_path.open("w", encoding="utf-8") as handle:
         subprocess.run(
             command,
             cwd=ROOT,
+            env=process_env,
             stdout=handle,
             stderr=subprocess.STDOUT,
             check=True,
         )
-    return _single_run_dir(parent), command
+    return _single_run_dir(parent), recorded_command
 
 
 def _metric(row: dict[str, Any], name: str) -> float | None:
@@ -230,8 +245,40 @@ def main() -> int:
     args.output_root.mkdir(parents=True, exist_ok=True)
     runs: dict[str, dict[str, str]] = {"off": {}, "on": {}}
     commands: list[list[str]] = []
-    for seed in (0, 1, 2):
-        for arm in ("off", "on"):
+    cells = [(seed, arm) for seed in (0, 1, 2) for arm in ("off", "on")]
+
+    def record_completed(arm: str, seed: int, run_dir: Path, command: list[str]) -> None:
+        runs[arm][str(seed)] = str(run_dir)
+        commands.append(command)
+        (args.output_root / "progress.json").write_text(
+            json.dumps({"runs": runs, "commands": commands}, indent=2),
+            encoding="utf-8",
+        )
+
+    if args.gpus:
+        if len(args.gpus) != len(cells):
+            raise ValueError(f"--gpus requires exactly {len(cells)} device indices")
+        with ThreadPoolExecutor(max_workers=len(cells)) as executor:
+            futures = {
+                executor.submit(
+                    _run_cell,
+                    output_root=args.output_root,
+                    arm=arm,
+                    seed=seed,
+                    episodes=int(args.episodes),
+                    max_steps=int(args.max_steps_per_episode),
+                    rollout_horizon=int(args.rollout_horizon),
+                    device=str(args.device),
+                    gpu=gpu,
+                ): (arm, seed)
+                for (seed, arm), gpu in zip(cells, args.gpus)
+            }
+            for future in as_completed(futures):
+                arm, seed = futures[future]
+                run_dir, command = future.result()
+                record_completed(arm, seed, run_dir, command)
+    else:
+        for seed, arm in cells:
             run_dir, command = _run_cell(
                 output_root=args.output_root,
                 arm=arm,
@@ -241,12 +288,7 @@ def main() -> int:
                 rollout_horizon=int(args.rollout_horizon),
                 device=str(args.device),
             )
-            runs[arm][str(seed)] = str(run_dir)
-            commands.append(command)
-            (args.output_root / "progress.json").write_text(
-                json.dumps({"runs": runs, "commands": commands}, indent=2),
-                encoding="utf-8",
-            )
+            record_completed(arm, seed, run_dir, command)
     result = _summarize(args.output_root, runs, commands)
     result_path = args.output_root / "result.json"
     result_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
