@@ -131,6 +131,8 @@ class CleanPPOUpdateStats:
     value_pred_mean: float = 0.0
     value_pred_std: float = 0.0
     explained_variance: float = 0.0
+    shaped_explained_variance: float = 0.0
+    de_shaped_explained_variance: float = 0.0
     # Rollout-level environment reward statistics: sum and mean of the slot
     # rewards in the consumed rollout. The JSONL "reward" field only reflects
     # the LAST slot of the rollout; these fields are the correct per-update
@@ -403,12 +405,28 @@ class CleanPPOUpdater:
         explained_variance = (
             1.0 - float(np.var(advantages_np)) / returns_var if returns_var > 1e-12 else 0.0
         )
+        de_shaped_returns_np, de_shaped_advantages_np = (
+            compute_de_shaped_multi_trajectory_gae(
+                rollout_buffers,
+                gamma=self.config.gamma,
+                gae_lambda=self.config.gae_lambda,
+            )
+        )
+        de_shaped_returns_var = float(np.var(de_shaped_returns_np))
+        de_shaped_explained_variance = (
+            1.0
+            - float(np.var(de_shaped_advantages_np)) / de_shaped_returns_var
+            if de_shaped_returns_var > 1e-12
+            else 0.0
+        )
         scale_diags = {
             "returns_mean": float(np.mean(returns_np)),
             "returns_std": float(np.std(returns_np)),
             "value_pred_mean": float(np.mean(values_np)),
             "value_pred_std": float(np.std(values_np)),
             "explained_variance": float(explained_variance),
+            "shaped_explained_variance": float(explained_variance),
+            "de_shaped_explained_variance": float(de_shaped_explained_variance),
         }
         returns = torch.as_tensor(returns_np, dtype=torch.float32, device=self.device)
         old_values = torch.as_tensor(values_np, dtype=torch.float32, device=self.device)
@@ -2096,6 +2114,48 @@ def compute_multi_trajectory_gae(
     )
 
 
+def compute_de_shaped_multi_trajectory_gae(
+    buffers: list[CleanSlotRolloutBuffer],
+    *,
+    gamma: float = 0.99,
+    gae_lambda: float = 0.95,
+) -> tuple[np.ndarray, np.ndarray]:
+    """GAE diagnostic on original rewards and V_original=V_shaped+Phi."""
+    trajectory_results: list[tuple[np.ndarray, np.ndarray]] = []
+    for buffer in buffers:
+        records = list(buffer.records)
+        if not buffer.closed or not records:
+            raise ValueError("de-shaped GAE requires a non-empty closed rollout buffer")
+        advantages = np.zeros((len(records),), dtype=np.float32)
+        returns = np.zeros((len(records),), dtype=np.float32)
+        last = records[-1]
+        next_value = (
+            0.0
+            if bool(last.terminated)
+            else _buffer_bootstrap_value(records)
+            + float(last.next_progress_potential)
+        )
+        gae = 0.0
+        for idx in range(len(records) - 1, -1, -1):
+            record = records[idx]
+            value = float(record.value) + float(record.progress_potential)
+            mask = 0.0 if bool(record.terminated) else 1.0
+            delta = (
+                float(record.original_reward)
+                + float(gamma) * mask * next_value
+                - value
+            )
+            gae = delta + float(gamma) * float(gae_lambda) * mask * gae
+            advantages[idx] = float(gae)
+            returns[idx] = float(gae + value)
+            next_value = value
+        trajectory_results.append((returns, advantages))
+    return (
+        np.concatenate([returns for returns, _ in trajectory_results], axis=0),
+        np.concatenate([advantages for _, advantages in trajectory_results], axis=0),
+    )
+
+
 def write_clean_training_log(
     logger: CleanJSONLLogger,
     *,
@@ -2110,6 +2170,21 @@ def write_clean_training_log(
         "episode": int(episode),
         "global_slot": int(global_slot),
         "reward": float(info.get("step_reward", 0.0)),
+        "reward_original": float(
+            info.get("step_original_reward", info.get("step_reward", 0.0))
+        ),
+        "reward_dag_progress_shaping": float(
+            info.get("step_dag_progress_potential_shaping", 0.0)
+        ),
+        "dag_progress_potential_before": float(
+            info.get("dag_progress_potential_before", 0.0)
+        ),
+        "dag_progress_potential_after": float(
+            info.get("dag_progress_potential_after", 0.0)
+        ),
+        "dag_progress_potential_shaping_enabled": bool(
+            info.get("dag_progress_potential_shaping_enabled", False)
+        ),
         "reward_time_penalty": float(info.get("step_time_penalty", 0.0)),
         "reward_energy_penalty": float(info.get("step_energy_penalty", 0.0)),
         "reward_task_energy_penalty": float(info.get("step_task_energy_penalty", 0.0)),

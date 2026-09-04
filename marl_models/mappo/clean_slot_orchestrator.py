@@ -106,6 +106,10 @@ class CleanSlotRolloutRecord:
     critic_non_graph_input: np.ndarray
     value: float
     reward: float = 0.0
+    original_reward: float = 0.0
+    progress_potential: float = 0.0
+    next_progress_potential: float = 0.0
+    progress_shaping_enabled: bool = False
     terminated: bool = False
     truncated: bool = False
     next_value: float | None = None

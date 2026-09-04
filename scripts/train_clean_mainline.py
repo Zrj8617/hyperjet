@@ -36,6 +36,10 @@ from marl_models.mappo.clean_decision_td_dataset import (
     PHASE4_RHO_ZERO_TOLERANCE,
     CleanDecisionTDRawCapture,
 )
+from marl_models.mappo.clean_dag_progress_shaping import (
+    cumulative_dag_progress_potential,
+    shape_transition_reward,
+)
 from marl_models.mappo.clean_offloading_decision_credit import (
     CleanOffloadingDecisionCredit,
 )
@@ -870,6 +874,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--gamma", type=float, default=0.99)
+    parser.add_argument(
+        "--dag-progress-potential-shaping",
+        action=argparse.BooleanOptionalAction,
+        default=bool(config.USE_DAG_PROGRESS_POTENTIAL_SHAPING),
+        help="Enable the approved cumulative DAG-progress PBRS training probe.",
+    )
     parser.add_argument("--gae-lambda", type=float, default=0.95)
     parser.add_argument("--clip-ratio", type=float, default=0.2)
     parser.add_argument("--entropy-coef", type=float, default=0.01)
@@ -1178,6 +1188,9 @@ def build_config_snapshot(args: argparse.Namespace) -> dict[str, Any]:
                 getattr(args, "record_decision_transitions", False)
             ),
             "completed_dag_weight": completed_dag_weight,
+            "use_dag_progress_potential_shaping": bool(
+                getattr(args, "dag_progress_potential_shaping", False)
+            ),
             "enable_kahypar": bool(getattr(args, "enable_kahypar", False)),
             "detach_critic_hgnn": bool(getattr(args, "detach_critic_hgnn", False)),
             "critic_task_pooling": normalize_clean_critic_task_pooling(
@@ -1788,6 +1801,8 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             episode_reward = 0.0
             episode_component_totals: dict[str, float] = {
                 "reward": 0.0,
+                "original_reward": 0.0,
+                "dag_progress_shaping": 0.0,
                 "time_penalty": 0.0,
                 "dag_bonus": 0.0,
                 "task_energy_penalty": 0.0,
@@ -1806,10 +1821,19 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                     freeze_movement=bool(args.freeze_movement),
                     lagged_q_enabled=bool(lagged_q_enabled),
                     decision_transition_tracker=decision_transition_tracker,
+                    dag_progress_shaping=bool(args.dag_progress_potential_shaping),
+                    training_gamma=float(args.gamma),
+                    completed_dag_weight=float(args.completed_dag_weight),
                 )
                 global_slot += 1
                 episode_reward += float(slot_record.reward)
                 episode_component_totals["reward"] += float(info.get("step_reward", 0.0))
+                episode_component_totals["original_reward"] += float(
+                    info.get("step_original_reward", info.get("step_reward", 0.0))
+                )
+                episode_component_totals["dag_progress_shaping"] += float(
+                    info.get("step_dag_progress_potential_shaping", 0.0)
+                )
                 episode_component_totals["time_penalty"] += float(info.get("step_time_penalty", 0.0))
                 episode_component_totals["dag_bonus"] += float(info.get("step_completed_dag_bonus", 0.0))
                 episode_component_totals["task_energy_penalty"] += float(info.get("step_task_energy_penalty", 0.0))
@@ -2164,6 +2188,8 @@ def _activate_lane_rng(lane: _SamplerLane):
 def _new_episode_component_totals() -> dict[str, float]:
     return {
         "reward": 0.0,
+        "original_reward": 0.0,
+        "dag_progress_shaping": 0.0,
         "time_penalty": 0.0,
         "dag_bonus": 0.0,
         "task_energy_penalty": 0.0,
@@ -2291,6 +2317,9 @@ def _collect_sampler_lane_step(
             freeze_movement=bool(args.freeze_movement),
             lagged_q_enabled=bool(lagged_q_enabled),
             decision_transition_tracker=lane.decision_transition_tracker,
+            dag_progress_shaping=bool(args.dag_progress_potential_shaping),
+            training_gamma=float(args.gamma),
+            completed_dag_weight=float(args.completed_dag_weight),
         )
         if lane.lagged_q_tracker is not None:
             lane.lagged_q_tracker.register_rollout_actions(
@@ -2319,6 +2348,12 @@ def _collect_sampler_lane_step(
     lane.episode_step += 1
     lane.episode_reward += float(slot_record.reward)
     lane.episode_component_totals["reward"] += float(info.get("step_reward", 0.0))
+    lane.episode_component_totals["original_reward"] += float(
+        info.get("step_original_reward", info.get("step_reward", 0.0))
+    )
+    lane.episode_component_totals["dag_progress_shaping"] += float(
+        info.get("step_dag_progress_potential_shaping", 0.0)
+    )
     lane.episode_component_totals["time_penalty"] += float(
         info.get("step_time_penalty", 0.0)
     )
@@ -2909,10 +2944,21 @@ def _process_sampler_worker(
                     task_state_ready=str(worker_config["task_state_ready"]),
                     freeze_movement=bool(worker_config["freeze_movement"]),
                     lagged_q_enabled=False,
+                    dag_progress_shaping=bool(
+                        worker_config["dag_progress_potential_shaping"]
+                    ),
+                    training_gamma=float(worker_config["gamma"]),
+                    completed_dag_weight=float(worker_config["completed_dag_weight"]),
                 )
                 episode_step += 1
                 episode_reward += float(slot_record.reward)
                 component_totals["reward"] += float(info.get("step_reward", 0.0))
+                component_totals["original_reward"] += float(
+                    info.get("step_original_reward", info.get("step_reward", 0.0))
+                )
+                component_totals["dag_progress_shaping"] += float(
+                    info.get("step_dag_progress_potential_shaping", 0.0)
+                )
                 component_totals["time_penalty"] += float(
                     info.get("step_time_penalty", 0.0)
                 )
@@ -3064,6 +3110,10 @@ def _run_process_sampler_training_loop(
     workers: list[dict[str, Any]] = []
     worker_config = {
         "completed_dag_weight": float(args.completed_dag_weight),
+        "dag_progress_potential_shaping": bool(
+            args.dag_progress_potential_shaping
+        ),
+        "gamma": float(args.gamma),
         "freeze_ue_mobility": bool(args.freeze_ue_mobility),
         "freeze_movement": bool(args.freeze_movement),
         "detach_critic_hgnn": bool(args.detach_critic_hgnn),
@@ -3356,6 +3406,9 @@ def _collect_clean_slot(
     freeze_movement: bool = False,
     lagged_q_enabled: bool = False,
     decision_transition_tracker: CleanDecisionTransitionTracker | None = None,
+    dag_progress_shaping: bool = False,
+    training_gamma: float = 0.99,
+    completed_dag_weight: float = float(config.REWARD_COMPLETED_DAG_WEIGHT),
 ) -> tuple[Any, bool, dict[str, Any]]:
     import torch
 
@@ -3389,6 +3442,9 @@ def _collect_clean_slot(
             movement_frozen=True,
             lagged_q_enabled=bool(lagged_q_enabled),
             decision_transition_tracker=decision_transition_tracker,
+            dag_progress_shaping=bool(dag_progress_shaping),
+            training_gamma=float(training_gamma),
+            completed_dag_weight=float(completed_dag_weight),
         )
 
     movement_dist = categorical_cls(logits=encoded_state.movement_logits)
@@ -3424,6 +3480,9 @@ def _collect_clean_slot(
         movement_frozen=False,
         lagged_q_enabled=bool(lagged_q_enabled),
         decision_transition_tracker=decision_transition_tracker,
+        dag_progress_shaping=bool(dag_progress_shaping),
+        training_gamma=float(training_gamma),
+        completed_dag_weight=float(completed_dag_weight),
     )
 
 
@@ -3438,7 +3497,18 @@ def _finish_collect_clean_slot(
     movement_frozen: bool,
     lagged_q_enabled: bool = False,
     decision_transition_tracker: CleanDecisionTransitionTracker | None = None,
+    dag_progress_shaping: bool = False,
+    training_gamma: float = 0.99,
+    completed_dag_weight: float = float(config.REWARD_COMPLETED_DAG_WEIGHT),
 ) -> tuple[Any, bool, dict[str, Any]]:
+    potential_before = (
+        cumulative_dag_progress_potential(
+            env.task_manager,
+            completed_dag_weight=float(completed_dag_weight),
+        )
+        if bool(dag_progress_shaping)
+        else 0.0
+    )
     assignment_time_seconds = float(env.current_time_seconds)
     if movement_records:
         ready_task_ids_for_movement = list(
@@ -3578,10 +3648,39 @@ def _finish_collect_clean_slot(
         )
 
     _, _, done, info = env.commit_and_advance(assignment_buffer=assignment_buffer)
+    original_reward = float(info["step_reward"])
+    potential_after = (
+        cumulative_dag_progress_potential(
+            env.task_manager,
+            completed_dag_weight=float(completed_dag_weight),
+        )
+        if bool(dag_progress_shaping)
+        else 0.0
+    )
+    if bool(dag_progress_shaping):
+        training_reward, shaping_increment = shape_transition_reward(
+            original_reward,
+            potential_before=potential_before,
+            potential_after=potential_after,
+            gamma=float(training_gamma),
+            done=bool(done),
+        )
+    else:
+        training_reward, shaping_increment = original_reward, 0.0
+    info["step_original_reward"] = float(original_reward)
+    info["step_dag_progress_potential_shaping"] = float(shaping_increment)
+    info["dag_progress_potential_before"] = float(potential_before)
+    info["dag_progress_potential_after"] = float(potential_after)
+    info["dag_progress_potential_shaping_enabled"] = bool(dag_progress_shaping)
+    info["step_reward"] = float(training_reward)
     slot_record = make_slot_rollout_record(encoded_state=encoded_state)
     slot_record.movement_records = movement_records
     slot_record.offloading_records = offloading_records
-    slot_record.reward = float(info["step_reward"])
+    slot_record.reward = float(training_reward)
+    slot_record.original_reward = float(original_reward)
+    slot_record.progress_potential = float(potential_before)
+    slot_record.next_progress_potential = float(potential_after)
+    slot_record.progress_shaping_enabled = bool(dag_progress_shaping)
     if decision_transition_tracker is not None:
         decision_transition_tracker.record_slot_reward(slot_record.reward)
     if movement_frozen:

@@ -115,6 +115,8 @@ REWARD_TIME_WEIGHT: float = 0.5
 REWARD_ENERGY_WEIGHT: float = 0.05
 REWARD_MOVEMENT_ENERGY_WEIGHT: float = 0.08  # 中高惩罚，抑制无效横跳但允许必要移动
 REWARD_COMPLETED_DAG_WEIGHT: float = 8.0   # 大幅提高完成奖励，让任务信号主导
+# Diagnostic training probe only. False is the exact clean-mainline baseline.
+USE_DAG_PROGRESS_POTENTIAL_SHAPING: bool = False
 CRITICAL_TASK_WEIGHT: float = 1.0
 NONCRITICAL_TASK_WEIGHT: float = 0.5
 # 时间参考值和截断上限只用于奖励归一化，避免长队列产生的极端时延压过 DAG 完成奖励。
