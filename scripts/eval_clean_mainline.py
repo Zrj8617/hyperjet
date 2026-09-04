@@ -64,6 +64,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "Use this when evaluating checkpoints trained with --freeze-movement.",
     )
     parser.add_argument(
+        "--clean-training-rng-prelude",
+        action="store_true",
+        default=False,
+        help=(
+            "Before a single evaluation episode, reproduce the clean training/"
+            "baseline feature-dimension reset+prepare prelude. This is required "
+            "for exact seed alignment with run_clean_policy_baseline.py."
+        ),
+    )
+    parser.add_argument(
         "--freeze-ue-mobility",
         action=argparse.BooleanOptionalAction,
         default=None,
@@ -154,6 +164,9 @@ def build_eval_config(
                 "later arrivals, queues, movement observations, and trajectories"
             ),
             "movement_mode": "forced_hover" if bool(args.freeze_movement) else "masked_argmax_deterministic",
+            "clean_training_rng_prelude": bool(
+                getattr(args, "clean_training_rng_prelude", False)
+            ),
             "ue_mobility_mode": "fixed" if freeze_ue_mobility else "moving",
         },
         "clean_scene": {
@@ -216,6 +229,9 @@ def initialize_eval_files(
             "deterministic": bool(args.deterministic),
             "arrival_steps": int(args.arrival_steps),
             "max_drain_steps": int(args.max_drain_steps),
+            "clean_training_rng_prelude": bool(
+                getattr(args, "clean_training_rng_prelude", False)
+            ),
             "enable_kahypar": bool(getattr(args, "enable_kahypar", False)),
             "completed_dag_weight": float(controls["completed_dag_weight"]),
             "detach_critic_hgnn": bool(controls["detach_critic_hgnn"]),
@@ -253,6 +269,8 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
         raise FileNotFoundError(f"checkpoint not found: {args.checkpoint}")
     if not bool(args.deterministic):
         raise ValueError("Clean evaluation defaults to deterministic masked argmax; stochastic eval is not implemented in T15.")
+    if bool(getattr(args, "clean_training_rng_prelude", False)) and int(args.episodes) != 1:
+        raise ValueError("--clean-training-rng-prelude requires --episodes 1")
 
     _set_seed(int(args.seed), torch=torch)
     device = torch.device(str(args.device))
@@ -277,6 +295,10 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
                 completed_dag_weight=float(experiment_controls["completed_dag_weight"]),
                 freeze_ue_mobility=freeze_ue_mobility,
             )
+            if bool(getattr(args, "clean_training_rng_prelude", False)):
+                env.reset()
+                graph_builder.reset()
+                prepare_slot_state(env=env, graph_builder=graph_builder)
             env.reset()
             graph_builder.reset()
             episode_result = _run_eval_episode(
@@ -326,6 +348,9 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
             "offloading_gate_schema_version": int(OFFLOADING_GATE_SCHEMA_VERSION),
             "git_commit": _git_commit(),
             "movement_frozen": bool(args.freeze_movement),
+            "clean_training_rng_prelude": bool(
+                getattr(args, "clean_training_rng_prelude", False)
+            ),
             "completed_dag_weight": float(experiment_controls["completed_dag_weight"]),
             "detach_critic_hgnn": bool(experiment_controls["detach_critic_hgnn"]),
             "critic_task_pooling": str(experiment_controls.get("critic_task_pooling", "mean")),
