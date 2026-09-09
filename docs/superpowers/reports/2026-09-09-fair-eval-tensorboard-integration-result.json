@@ -3,13 +3,22 @@
   "generated_at_utc": "2026-09-09T07:15:31.8661114Z",
   "status": "pass",
   "url": "http://127.0.0.1:16008/",
-  "total_tensorboard_runs": 39,
-  "existing_training_runs_preserved": 30,
+  "total_tensorboard_runs": 42,
+  "existing_training_runs_preserved": 33,
   "formal_eval": {
     "run_count": 9,
     "run_pattern": "FormalEval/{C1,B2,C2}/seed{0,1,2}",
-    "scalar_tags_per_run": 80,
-    "points_per_tag": 50,
+    "fixed_tape_scalar_tags_per_run": 80,
+    "fixed_tape_points_per_tag": 50,
+    "training_context": {
+      "train/episode_reward": {
+        "C1": 500,
+        "B2": 2000,
+        "C2": 500,
+        "B2_semantic_caveat": "legacy B2 event records rollout/update values under this tag"
+      },
+      "train/critic_loss": 2000
+    },
     "steps": [200, 249],
     "primary_prefix": "forced_hover/budget_selected",
     "secondary_prefix": "joint",
@@ -25,6 +34,7 @@
   "server_view_root": "/data2/zrj2025/uav-results/tensorboard_views/reward_redesign/FormalEval",
   "scripts": [
     "scripts/export_fair_eval_tensorboard.py",
+    "scripts/append_fair_eval_training_tags.py",
     "scripts/check_fair_eval_tensorboard.py"
   ],
   "design_commit": "a6142a76e98ce5432436067ecfdd5298612c0856"

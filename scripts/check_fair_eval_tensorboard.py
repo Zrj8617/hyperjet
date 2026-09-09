@@ -8,6 +8,7 @@ from pathlib import Path
 
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
+from append_fair_eval_training_tags import EXPECTED_COUNTS, TRAIN_TAGS
 from export_fair_eval_tensorboard import ARMS, CHECKPOINT_LABELS, METRICS, PROTOCOLS
 
 
@@ -16,12 +17,13 @@ def main() -> int:
     parser.add_argument("--root", type=Path, required=True)
     args = parser.parse_args()
 
-    expected_tags = {
+    expected_eval_tags = {
         f"{protocol}/{checkpoint}/{metric}"
         for protocol in PROTOCOLS
         for checkpoint in CHECKPOINT_LABELS
         for metric in METRICS
     }
+    expected_tags = expected_eval_tags | set(TRAIN_TAGS)
     failures = []
     runs = []
     for arm in ARMS:
@@ -42,7 +44,12 @@ def main() -> int:
             bad_series = []
             for tag in actual_tags:
                 events = accumulator.Scalars(tag)
-                if len(events) != 50 or [event.step for event in events] != list(range(200, 250)):
+                if tag in expected_eval_tags and (
+                    len(events) != 50
+                    or [event.step for event in events] != list(range(200, 250))
+                ):
+                    bad_series.append(tag)
+                if tag in TRAIN_TAGS and len(events) != EXPECTED_COUNTS[arm][tag]:
                     bad_series.append(tag)
             if bad_series:
                 failures.append({"run": run_name, "bad_series": sorted(bad_series)})
@@ -50,7 +57,8 @@ def main() -> int:
                 {
                     "run": run_name,
                     "scalar_tag_count": len(actual_tags),
-                    "points_per_tag": 50,
+                    "fixed_tape_points_per_tag": 50,
+                    "training_tag_point_counts": EXPECTED_COUNTS[arm],
                 }
             )
 

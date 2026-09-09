@@ -15,6 +15,7 @@
   - `forced_hover/final_ep0500/*` 是最终 checkpoint 敏感性分析；
   - `joint/budget_selected/*` 和 `joint/final_ep0500/*` 是完整 deterministic joint-policy 次协议。
 - 导出统一成本、实际成本分量、offer/admission/completion 计数与比例，以及已有的流时、吞吐和能耗辅助指标。
+- 每个 `FormalEval` run 额外保留相同模型 seed 的两个原始训练上下文 tag：`train/episode_reward` 和 `train/critic_loss`。直接复制原始 event 值与 step，不平滑、不重算；不复制训练 run 的其它 tag。C1/C2 的 `episode_reward` 各有 500 个 episode 点；旧 B2 event 的这个标签按当时实现记录了 2000 个 rollout/update 点，保留其原生语义并明确标注，不伪装成 500 个 episode 点。`critic_loss` 均为 2000 个 PPO update 点。
 - Track B 多峰值 epoch 诊断不接入 `FormalEval`，防止辅助诊断替代正式评估。
 
 ## 部署
@@ -25,6 +26,6 @@
 
 ## 验证
 
-- EventAccumulator 必须读到恰好 9 个新 run，每个 run 恰好包含 4 个协议/checkpoint 组合、50 个 test-tape 点/标量 tag。
+- EventAccumulator 必须读到恰好 9 个新 run，每个 run 包含 80 个固定-tape tag 和 2 个训练上下文 tag；固定-tape tag 各有 50 点，训练 tag 点数与上述各 arm 原始事件语义一致。
 - TensorBoard API 必须列出 9 个 `FormalEval` run，且主协议核心 tag 可见。
 - 本机 `http://127.0.0.1:16008/` 页面可打开、无前端控制台错误，并能看到正式评估分组。
