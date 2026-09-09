@@ -1,0 +1,31 @@
+{
+  "schema": "fair_eval_tensorboard_integration_result_v1",
+  "generated_at_utc": "2026-09-09T07:15:31.8661114Z",
+  "status": "pass",
+  "url": "http://127.0.0.1:16008/",
+  "total_tensorboard_runs": 39,
+  "existing_training_runs_preserved": 30,
+  "formal_eval": {
+    "run_count": 9,
+    "run_pattern": "FormalEval/{C1,B2,C2}/seed{0,1,2}",
+    "scalar_tags_per_run": 80,
+    "points_per_tag": 50,
+    "steps": [200, 249],
+    "primary_prefix": "forced_hover/budget_selected",
+    "secondary_prefix": "joint",
+    "excluded": "Track B peak-epoch diagnostics"
+  },
+  "verification": {
+    "event_accumulator": "pass",
+    "tensorboard_api": "pass",
+    "page_render": "pass",
+    "local_tunnel": "listening"
+  },
+  "server_event_root": "/data2/zrj2025/uav-results/audits/20260908_C1_B2_C2_fair_eval/tensorboard_formal_eval",
+  "server_view_root": "/data2/zrj2025/uav-results/tensorboard_views/reward_redesign/FormalEval",
+  "scripts": [
+    "scripts/export_fair_eval_tensorboard.py",
+    "scripts/check_fair_eval_tensorboard.py"
+  ],
+  "design_commit": "a6142a76e98ce5432436067ecfdd5298612c0856"
+}
