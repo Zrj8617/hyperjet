@@ -1,0 +1,41 @@
+{
+  "schema": "unified_train_tensorboard_result_v1",
+  "generated_at_utc": "2026-09-10T02:42:53.1915804Z",
+  "status": "pass",
+  "url": "http://127.0.0.1:16008/#timeseries",
+  "run_pattern": "UnifiedTrain/<original-run-name>",
+  "run_count": 33,
+  "coverage": {
+    "20260906": {"arms": ["N0", "A2", "B1", "B2", "B2D", "D1", "D2"], "runs": 21},
+    "20260907": {"arms": ["A1", "C1", "N0-local"], "runs": 9},
+    "20260908": {"arms": ["C2"], "runs": 3}
+  },
+  "tags": {
+    "train/episode_reward": {
+      "source": "episode-terminal episode_reward_total",
+      "points_per_run": 500,
+      "first_step": 500,
+      "last_step": 250000
+    },
+    "train/critic_loss": {
+      "source": "per-update ppo_value_loss",
+      "points_per_run": 2000,
+      "last_step": 250000
+    }
+  },
+  "verification": {
+    "event_accumulator": "33/33 pass",
+    "tensorboard_api": "33/33 pass",
+    "bad_runs": 0,
+    "total_tensorboard_runs": 75
+  },
+  "comparability_boundary": "episode aggregation is uniform, but reward formulas still differ across arms",
+  "server_event_root": "/data2/zrj2025/uav-results/audits/20260910_unified_train_tensorboard",
+  "server_view_root": "/data2/zrj2025/uav-results/tensorboard_views/reward_redesign/UnifiedTrain",
+  "scripts": [
+    "scripts/export_unified_train_tensorboard.py",
+    "scripts/check_unified_train_tensorboard.py"
+  ],
+  "design_commit": "f15b8f97857585a43be037e62d5f96fa992b8d03",
+  "dirty_entry_count_at_execution": 76
+}
