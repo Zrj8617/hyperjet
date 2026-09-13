@@ -83,11 +83,22 @@ class CleanPPOUpdateConfig:
     # regret advantage (batch-standardized) instead of the shared slot-level
     # GAE advantage. Off preserves the clean MAPPO baseline.
     offloading_eft_advantage: bool = False
+    # Analytic forecast credit at the same actor-loss injection point as the
+    # historical EFT regret.  It is mutually exclusive with EFT credit.
+    offloading_forecast_advantage: bool = False
+    forecast_scale_seconds: float = 500.0
+    forecast_advantage_eta: float = 1.0
     # Per-UAV movement PPO advantage gate. When enabled, each UAV's movement
     # PPO loss uses its own detached post-move ready-task coverage signal
     # (batch-standardized) instead of the shared slot-level GAE advantage. Off
     # preserves the clean MAPPO baseline.
     movement_position_advantage: bool = False
+    # C1 reuses the two existing teacher injection points and continuously
+    # blends their standardized advantages back into slot GAE. Zero keeps the
+    # historical static-gate behavior byte-for-byte at the loss selection.
+    teacher_anneal_total_updates: int = 0
+    teacher_anneal_hold_fraction: float = 0.50
+    teacher_anneal_end_fraction: float = 0.60
     # Decision-level critic gate. When enabled, a per-decision value baseline
     # V(s_decision) is trained and used in every offloading/movement decision's
     # advantage (A = r + gamma*V(s_next) - V(s)) instead of raw batch-
@@ -131,6 +142,7 @@ class CleanPPOUpdateStats:
     value_pred_mean: float = 0.0
     value_pred_std: float = 0.0
     explained_variance: float = 0.0
+    approx_kl: float = 0.0
     shaped_explained_variance: float = 0.0
     de_shaped_explained_variance: float = 0.0
     # Rollout-level environment reward statistics: sum and mean of the slot
@@ -139,6 +151,8 @@ class CleanPPOUpdateStats:
     # aggregate and make the raw reward curve converge visually.
     rollout_reward_total: float = 0.0
     rollout_reward_mean: float = 0.0
+    forecast_wall_seconds: float = 0.0
+    collection_wall_seconds: float = 0.0
     # Pure diagnostics (Phase 4 Commit 1): per-module pre/post-clip grad norms,
     # actual clip scale, HGNN actor/value grad decomposition (+cosine), and
     # rollout-time normalized entropies. Never used by the update itself.
@@ -323,6 +337,19 @@ class CleanPPOUpdater:
         _validate_value_configuration(self.config)
         _validate_eft_auxiliary_configuration(self.config)
 
+    def _teacher_weight(self) -> float:
+        total = int(self.config.teacher_anneal_total_updates)
+        if total <= 0:
+            return 1.0
+        progress = float(self.update_step + 1) / float(total)
+        hold = float(self.config.teacher_anneal_hold_fraction)
+        end = float(self.config.teacher_anneal_end_fraction)
+        if progress <= hold:
+            return 1.0
+        if progress >= end:
+            return 0.0
+        return float((end - progress) / (end - hold))
+
     def update(
         self,
         buffer: CleanSlotRolloutBuffer,
@@ -451,6 +478,15 @@ class CleanPPOUpdater:
 
         latest_stats: CleanPPOUpdateStats | None = None
         diagnostics: dict = _rollout_entropy_diagnostics(records)
+        teacher_weight = self._teacher_weight()
+        diagnostics["teacher_weight"] = float(teacher_weight)
+        diagnostics["teacher_phase"] = (
+            "pre_anneal"
+            if teacher_weight >= 1.0
+            else "post_anneal"
+            if teacher_weight <= 0.0
+            else "annealing"
+        )
         diagnostics.update(lagged_correction_diagnostics)
         diagnostics["rollout_environment_count"] = int(len(rollout_buffers))
         diagnostics["rollout_records_per_environment"] = [
@@ -938,6 +974,16 @@ class CleanPPOUpdater:
                     "old_log_prob": old_log_prob,
                     "entropy": dist.entropy(),
                 }
+                if bool(self.config.offloading_forecast_advantage):
+                    forecast_delta = float(offloading_record.forecast_target_dag_delta) + float(
+                        self.config.forecast_advantage_eta
+                    ) * float(offloading_record.forecast_cross_dag_delta)
+                    item["per_decision_eft_advantage"] = torch.as_tensor(
+                        -forecast_delta
+                        / max(float(self.config.forecast_scale_seconds), 1e-8),
+                        dtype=torch.float32,
+                        device=self.device,
+                    ).detach()
                 if bool(
                     self.config.offloading_decision_gae
                     or self.config.offloading_decision_q_credit
@@ -1251,6 +1297,15 @@ class CleanPPOUpdater:
                 self.config.decision_critic_enabled
             ):
                 movement_advantage = item["per_uav_movement_advantage"]
+                if (
+                    bool(self.config.movement_position_advantage)
+                    and int(self.config.teacher_anneal_total_updates) > 0
+                ):
+                    weight = float(self._teacher_weight())
+                    movement_advantage = (
+                        (1.0 - weight) * advantages[slot_idx]
+                        + weight * movement_advantage
+                    )
             move_losses_by_slot.setdefault(slot_idx, []).append(
                 _ppo_action_loss(
                     new_log_prob=item["dist"].log_prob(item["action"]),
@@ -1294,6 +1349,8 @@ class CleanPPOUpdater:
             "offloading_eft_advantage_decision_count": 0,
         }
         if bool(self.config.offloading_eft_advantage) or bool(
+            self.config.offloading_forecast_advantage
+        ) or bool(
             self.config.decision_critic_enabled
         ):
             per_decision_advantages: list[Any] = []
@@ -1344,9 +1401,20 @@ class CleanPPOUpdater:
                     # is censored and intentionally excluded from actor/critic loss.
                     continue
             elif bool(self.config.offloading_eft_advantage) or bool(
+                self.config.offloading_forecast_advantage
+            ) or bool(
                 self.config.decision_critic_enabled
             ):
                 offloading_advantage = item["per_decision_eft_advantage"]
+                if (
+                    bool(self.config.offloading_eft_advantage)
+                    and int(self.config.teacher_anneal_total_updates) > 0
+                ):
+                    weight = float(self._teacher_weight())
+                    offloading_advantage = (
+                        (1.0 - weight) * advantages[slot_idx]
+                        + weight * offloading_advantage
+                    )
             if action_value_enabled:
                 offloading_advantage = offloading_advantage + float(
                     counterfactual_beta
@@ -1430,6 +1498,15 @@ class CleanPPOUpdater:
                 "eft_aux_entropy_mean": 0.0,
             }
         weighted_eft_auxiliary_loss = float(eft_lambda) * eft_auxiliary_loss
+        selected_log_ratios = [
+            item["old_log_prob"] - item["dist"].log_prob(item["action"])
+            for item in movement_items + offloading_items
+        ]
+        approx_kl = (
+            torch.stack(selected_log_ratios).mean().detach()
+            if selected_log_ratios
+            else zero.detach()
+        )
         eft_auxiliary_diagnostics.update(eft_rollout_diagnostics)
         eft_auxiliary_diagnostics.update(
             {
@@ -1489,6 +1566,7 @@ class CleanPPOUpdater:
             "offloading_lagged_q_loss": offloading_lagged_q_loss,
             "eft_auxiliary_loss": eft_auxiliary_loss,
             "weighted_eft_auxiliary_loss": weighted_eft_auxiliary_loss,
+            "approx_kl": approx_kl,
             "total_loss": total_loss,
             "action_value_diagnostics": action_value_diagnostics,
             "lagged_q_diagnostics": lagged_q_diagnostics,
@@ -1663,6 +1741,13 @@ class CleanPPOUpdater:
             ),
             rollout_reward_total=rollout_reward_total,
             rollout_reward_mean=rollout_reward_mean,
+            forecast_wall_seconds=float(
+                sum(float(record.forecast_wall_seconds) for record in records)
+            ),
+            collection_wall_seconds=float(
+                sum(float(record.collection_wall_seconds) for record in records)
+            ),
+            approx_kl=float(loss_parts["approx_kl"].cpu().item()),
         )
 
 
@@ -2221,6 +2306,9 @@ def write_clean_training_log(
         "frozen_ready_task_count": info.get("frozen_ready_task_count"),
         "offloading_skipped_no_candidate": info.get("offloading_skipped_no_candidate"),
         "mean_uav_displacement_per_slot": info.get("mean_uav_displacement_per_slot"),
+        "forecast_wall_seconds": info.get("forecast_wall_seconds", 0.0),
+        "collection_wall_seconds": info.get("collection_wall_seconds", 0.0),
+        "forecast_wall_time_frac": info.get("forecast_wall_time_frac", 0.0),
         "terminated": bool(info.get("terminated", False)),
         "truncated": bool(info.get("truncated", False)),
         "torch_model_checks_skipped": bool(torch_skipped),

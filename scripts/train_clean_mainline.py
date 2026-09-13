@@ -24,6 +24,7 @@ if str(ROOT) not in sys.path:
 import config
 from environment.env import Env
 from environment.graph_builder import CleanGraphBuilder
+from environment.reward_redesign import REWARD_REDENOMINATION_ARMS, RewardRedesignLedger
 from marl_models.mappo.clean_decision_transitions import (
     CleanDecisionTransitionTracker,
 )
@@ -239,6 +240,20 @@ def _initialize_offloading_policy(
 def _resolved_completed_dag_weight(args: argparse.Namespace) -> float:
     return _validated_completed_dag_weight(
         getattr(args, "completed_dag_weight", config.REWARD_COMPLETED_DAG_WEIGHT)
+    )
+
+
+def _resolved_teacher_anneal_total_updates(args: argparse.Namespace) -> int:
+    """Resolve the original teacher clock independently of a replay stop cap."""
+    if args.reward_redesign_arm not in {"C1", "C2"}:
+        if getattr(args, "teacher_anneal_total_updates", None) is not None:
+            raise ValueError("--teacher-anneal-total-updates requires reward arm C1 or C2")
+        return 0
+    override = getattr(args, "teacher_anneal_total_updates", None)
+    if override is not None:
+        return int(override)
+    return int(args.episodes) * int(
+        math.ceil(float(args.max_steps_per_episode) / float(args.rollout_horizon))
     )
 
 
@@ -860,6 +875,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-steps-per-episode", type=int, default=int(config.EPISODE_LENGTH))
     parser.add_argument("--rollout-horizon", type=int, default=128)
     parser.add_argument(
+        "--rollout-cost-diagnostics",
+        action="store_true",
+        default=False,
+        help="Record RNG-neutral full-rollout actual delay and energy aggregates.",
+    )
+    parser.add_argument(
         "--num-envs",
         type=_positive_int,
         default=1,
@@ -872,6 +893,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Sampling backend. 'process' uses persistent independent worker processes.",
     )
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--reward-redesign-arm",
+        choices=REWARD_REDENOMINATION_ARMS,
+        default=None,
+        help="Frozen 2026-09-06 seven-arm reward/credit treatment.",
+    )
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument(
@@ -1022,6 +1049,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=_nonnegative_int,
         default=None,
         help="Optional exact outer PPO update limit for short diagnostics.",
+    )
+    parser.add_argument(
+        "--teacher-anneal-total-updates",
+        type=_positive_int,
+        default=None,
+        help=(
+            "Optional original training-budget clock for C1/C2 teacher annealing; "
+            "independent of the diagnostic --max-updates stop cap."
+        ),
     )
     parser.add_argument(
         "--checkpoint-update-counts",
@@ -1369,6 +1405,7 @@ def initialize_run_files(run_dir: Path, args: argparse.Namespace) -> None:
 
 def run_training(args: argparse.Namespace) -> dict[str, Any]:
     args = apply_smoke_overrides(args)
+    args.reward_redesign_arm = getattr(args, "reward_redesign_arm", None)
     args.critic_task_pooling = normalize_clean_critic_task_pooling(
         getattr(args, "critic_task_pooling", "mean")
     )
@@ -1388,6 +1425,19 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     validate_phase4_decision_td_controls(args)
     validate_offloading_decision_gae_controls(args)
     validate_offloading_decision_q_controls(args)
+    if args.reward_redesign_arm is not None:
+        args.reward_redesign_arm = str(args.reward_redesign_arm).upper()
+        if args.reward_redesign_arm not in REWARD_REDENOMINATION_ARMS:
+            raise ValueError(f"unknown reward-redesign arm: {args.reward_redesign_arm}")
+        if bool(args.dag_progress_potential_shaping):
+            raise ValueError("reward-redesign arms cannot combine with DAG-progress shaping")
+        if args.reward_redesign_arm in {"C1", "C2"}:
+            args.offloading_eft_advantage = True
+            args.movement_position_advantage = True
+        elif bool(args.offloading_eft_advantage):
+            raise ValueError("reward-redesign arms cannot combine with EFT advantage")
+        if int(args.num_envs) != 1 or str(args.sampler_backend) != "synchronous":
+            raise ValueError("reward-redesign arms require one synchronous environment per process")
     if bool(args.offloading_decision_gae or args.offloading_decision_q_credit) and str(args.sampler_backend) == "process":
         raise ValueError("environment-return offloading decision credit requires the synchronous sampler")
     if bool(args.record_decision_transitions) and str(args.sampler_backend) == "process":
@@ -1554,9 +1604,17 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             detach_critic_hgnn=bool(args.detach_critic_hgnn),
             clean_counterfactual_credit=clean_counterfactual_enabled,
             offloading_eft_advantage=bool(args.offloading_eft_advantage),
+            offloading_forecast_advantage=(
+                args.reward_redesign_arm in {"N0", "N0-LOCAL", "B2D"}
+            ),
+            forecast_scale_seconds=500.0,
+            forecast_advantage_eta=(
+                0.0 if args.reward_redesign_arm == "N0-LOCAL" else 1.0
+            ),
             offloading_decision_gae=bool(args.offloading_decision_gae),
             offloading_decision_q_credit=bool(args.offloading_decision_q_credit),
             movement_position_advantage=bool(args.movement_position_advantage),
+            teacher_anneal_total_updates=_resolved_teacher_anneal_total_updates(args),
             decision_critic_enabled=bool(args.decision_critic),
             decision_critic_coef=float(args.decision_critic_coef),
             decision_critic_discount=float(args.decision_critic_discount),
@@ -1629,6 +1687,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             hidden_dim=int(args.hidden_dim),
             learning_rate=float(args.lr),
             gamma=float(args.gamma),
+            gae_lambda=float(args.gae_lambda),
             max_grad_norm=float(args.max_grad_norm),
             ppo_epochs=int(args.ppo_epochs),
             value_clip_epsilon=float(args.value_clip_epsilon),
@@ -1782,6 +1841,11 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     try:
         for episode in range(start_episode, int(args.episodes)):
             env.reset()
+            reward_redesign_ledger = (
+                RewardRedesignLedger(str(args.reward_redesign_arm))
+                if args.reward_redesign_arm is not None
+                else None
+            )
             if lagged_q_tracker is not None:
                 lagged_q_tracker.start_episode(episode)
             if decision_transition_tracker is not None:
@@ -1824,6 +1888,8 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                     dag_progress_shaping=bool(args.dag_progress_potential_shaping),
                     training_gamma=float(args.gamma),
                     completed_dag_weight=float(args.completed_dag_weight),
+                    reward_redesign_ledger=reward_redesign_ledger,
+                    rollout_cost_diagnostics=bool(args.rollout_cost_diagnostics),
                 )
                 global_slot += 1
                 episode_reward += float(slot_record.reward)
@@ -1931,6 +1997,12 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                             else None
                         ),
                     )
+                    if bool(args.rollout_cost_diagnostics):
+                        latest_update_stats.diagnostics.update(
+                            _rollout_cost_diagnostics(
+                                buffer.records, env=env, global_slot=global_slot
+                            )
+                        )
                     if decision_credit_diagnostics:
                         latest_update_stats.diagnostics.update(
                             decision_credit_diagnostics
@@ -3409,6 +3481,8 @@ def _collect_clean_slot(
     dag_progress_shaping: bool = False,
     training_gamma: float = 0.99,
     completed_dag_weight: float = float(config.REWARD_COMPLETED_DAG_WEIGHT),
+    reward_redesign_ledger: RewardRedesignLedger | None = None,
+    rollout_cost_diagnostics: bool = False,
 ) -> tuple[Any, bool, dict[str, Any]]:
     import torch
 
@@ -3445,6 +3519,8 @@ def _collect_clean_slot(
             dag_progress_shaping=bool(dag_progress_shaping),
             training_gamma=float(training_gamma),
             completed_dag_weight=float(completed_dag_weight),
+            reward_redesign_ledger=reward_redesign_ledger,
+            rollout_cost_diagnostics=bool(rollout_cost_diagnostics),
         )
 
     movement_dist = categorical_cls(logits=encoded_state.movement_logits)
@@ -3483,6 +3559,8 @@ def _collect_clean_slot(
         dag_progress_shaping=bool(dag_progress_shaping),
         training_gamma=float(training_gamma),
         completed_dag_weight=float(completed_dag_weight),
+        reward_redesign_ledger=reward_redesign_ledger,
+        rollout_cost_diagnostics=bool(rollout_cost_diagnostics),
     )
 
 
@@ -3500,7 +3578,18 @@ def _finish_collect_clean_slot(
     dag_progress_shaping: bool = False,
     training_gamma: float = 0.99,
     completed_dag_weight: float = float(config.REWARD_COMPLETED_DAG_WEIGHT),
+    reward_redesign_ledger: RewardRedesignLedger | None = None,
+    rollout_cost_diagnostics: bool = False,
 ) -> tuple[Any, bool, dict[str, Any]]:
+    collection_started = time.perf_counter()
+    probe_start_active_dag_ids = [
+        str(dag_id)
+        for dag_id, job in env.task_manager.jobs.items()
+        if not bool(job.completed)
+    ]
+    probe_start_seconds = float(encoded_state.prepared_state.slot_index) * float(
+        config.TIME_SLOT_DURATION
+    )
     potential_before = (
         cumulative_dag_progress_potential(
             env.task_manager,
@@ -3584,6 +3673,10 @@ def _finish_collect_clean_slot(
         ue_service_positions=env.ue_service_positions,
         ues=env.ues,
         deterministic=False,
+        forecast_enabled=bool(
+            reward_redesign_ledger is not None
+            and reward_redesign_ledger.forecast_enabled
+        ),
     )
     store_decision_value_inputs = bool(
         lagged_q_enabled or decision_transition_tracker is not None
@@ -3637,6 +3730,10 @@ def _finish_collect_clean_slot(
             selected_estimated_incremental_delay=(
                 float(record.selected_estimated_incremental_delay) if lagged_q_enabled else None
             ),
+            forecast_delta_phi=float(record.forecast_delta_phi),
+            forecast_target_dag_delta=float(record.forecast_target_dag_delta),
+            forecast_cross_dag_delta=float(record.forecast_cross_dag_delta),
+            forecast_affected_dag_count=int(record.forecast_affected_dag_count),
         )
         for record in modules.offloading_actor.latest_records
     ]
@@ -3649,6 +3746,16 @@ def _finish_collect_clean_slot(
 
     _, _, done, info = env.commit_and_advance(assignment_buffer=assignment_buffer)
     original_reward = float(info["step_reward"])
+    training_reward = original_reward
+    if reward_redesign_ledger is not None:
+        training_reward = reward_redesign_ledger.apply(
+            env=env,
+            info=info,
+            offloading_records=offloading_records,
+            initial_forecast=modules.offloading_actor.latest_forecast_initial_times,
+            final_forecast=modules.offloading_actor.latest_forecast_times,
+            done=bool(done),
+        )
     potential_after = (
         cumulative_dag_progress_potential(
             env.task_manager,
@@ -3666,7 +3773,7 @@ def _finish_collect_clean_slot(
             done=bool(done),
         )
     else:
-        training_reward, shaping_increment = original_reward, 0.0
+        shaping_increment = 0.0
     info["step_original_reward"] = float(original_reward)
     info["step_dag_progress_potential_shaping"] = float(shaping_increment)
     info["dag_progress_potential_before"] = float(potential_before)
@@ -3681,6 +3788,39 @@ def _finish_collect_clean_slot(
     slot_record.progress_potential = float(potential_before)
     slot_record.next_progress_potential = float(potential_after)
     slot_record.progress_shaping_enabled = bool(dag_progress_shaping)
+    if bool(rollout_cost_diagnostics):
+        slot_record.cost_diagnostics = {
+            "probe_start_episode_seconds": probe_start_seconds,
+            "active_dag_ids_at_probe_start": probe_start_active_dag_ids,
+            "incremental_delay_seconds": float(info.get("step_incremental_delay_seconds", 0.0)),
+            "weighted_incremental_delay_seconds": float(
+                info.get("step_weighted_incremental_delay_seconds", 0.0)
+            ),
+            "incremental_delay_truncated_count": int(
+                info.get("step_incremental_delay_truncated_count", 0)
+            ),
+            "reward_settled_task_energy_joules": float(
+                info.get("step_reward_settled_task_energy_joules", 0.0)
+            ),
+            "actual_task_energy_joules": float(info.get("step_task_energy", 0.0)),
+            "movement_energy_joules": float(info.get("step_movement_energy", 0.0)),
+            "original_time_penalty": float(info.get("step_time_penalty", 0.0)),
+            "original_task_energy_penalty": float(info.get("step_task_energy_penalty", 0.0)),
+            "original_movement_energy_penalty": float(
+                info.get("step_movement_energy_penalty", 0.0)
+            ),
+            "completed_task_count": int(info.get("completed_tasks", 0)),
+            "completed_dag_count": int(info.get("completed_dags", 0)),
+            "completed_dag_bonus": float(info.get("step_completed_dag_bonus", 0.0)),
+            "coverage_bonus": float(info.get("step_movement_position_bonus", 0.0)),
+            "b2_initial_cost_seconds": float(info.get("reward_redesign_initial_cost_seconds", 0.0)),
+            "b2_assignment_cost_seconds": float(
+                info.get("reward_redesign_assignment_cost_seconds", 0.0)
+            ),
+            "b2_correction_cost_seconds": float(
+                info.get("reward_redesign_correction_cost_seconds", 0.0)
+            ),
+        }
     if decision_transition_tracker is not None:
         decision_transition_tracker.record_slot_reward(slot_record.reward)
     if movement_frozen:
@@ -3692,6 +3832,13 @@ def _finish_collect_clean_slot(
         info["movement_action_distribution"] = _movement_action_distribution(movement_records)
     info["movement_frozen"] = bool(movement_frozen)
     info["offloading_action_count"] = len(offloading_records)
+    collection_wall = max(float(time.perf_counter() - collection_started), 1e-12)
+    forecast_wall = float(modules.offloading_actor.latest_forecast_wall_seconds)
+    info["forecast_wall_seconds"] = forecast_wall
+    info["collection_wall_seconds"] = collection_wall
+    info["forecast_wall_time_frac"] = forecast_wall / collection_wall
+    slot_record.forecast_wall_seconds = forecast_wall
+    slot_record.collection_wall_seconds = collection_wall
     graph_snapshot = encoded_state.prepared_state.graph_snapshot
     partition_status = str(getattr(graph_snapshot, "partition_status", "disabled"))
     info["kahypar_partition_status"] = partition_status
@@ -3707,6 +3854,80 @@ def _immutable_numpy_copy(value: Any, *, dtype: Any) -> np.ndarray:
     copied = np.asarray(value, dtype=dtype).copy()
     copied.setflags(write=False)
     return copied
+
+
+def _rollout_cost_diagnostics(
+    records: list[Any], *, env: Env, global_slot: int
+) -> dict[str, Any]:
+    """Aggregate one complete PPO rollout without touching policy or RNG state."""
+    rows = [dict(getattr(record, "cost_diagnostics", {})) for record in records]
+    if not rows or any(not row for row in rows):
+        raise RuntimeError("rollout cost diagnostics requested without complete slot payloads")
+
+    def total(key: str) -> float:
+        return float(sum(float(row.get(key, 0.0)) for row in rows))
+
+    first = rows[0]
+    start_seconds = float(first["probe_start_episode_seconds"])
+    end_seconds = float(env.current_time_seconds)
+    start_dag_ids = [str(value) for value in first["active_dag_ids_at_probe_start"]]
+    backlog_area_seconds = 0.0
+    for dag_id in start_dag_ids:
+        job = env.task_manager.get_job(dag_id)
+        if job is None:
+            raise RuntimeError(f"probe-start DAG disappeared: {dag_id}")
+        exposure_start = max(start_seconds, float(job.arrival_time))
+        exposure_end = end_seconds
+        if bool(job.completed) and job.return_complete_time is not None:
+            exposure_end = min(float(job.return_complete_time), end_seconds)
+        backlog_area_seconds += max(exposure_end - exposure_start, 0.0)
+
+    orig_delay = -total("original_time_penalty")
+    orig_task_energy = -total("original_task_energy_penalty")
+    orig_move_energy = -total("original_movement_energy_penalty")
+    actual_delay = total("incremental_delay_seconds")
+    actual_task_energy = total("actual_task_energy_joules")
+    movement_energy = total("movement_energy_joules")
+    c_sec_incremental = actual_delay + actual_task_energy + 0.10 * movement_energy
+    c_sec_backlog_area = backlog_area_seconds + actual_task_energy + 0.10 * movement_energy
+    slot_count = int(len(rows))
+    return {
+        "rollout_cost_schema": "complete_ppo_rollout_actual_cost_v1",
+        "rollout_start_global_slot": int(global_slot) - slot_count,
+        "rollout_end_global_slot": int(global_slot),
+        "rollout_slot_count": slot_count,
+        "rollout_incremental_delay_seconds": actual_delay,
+        "rollout_weighted_incremental_delay_seconds": total(
+            "weighted_incremental_delay_seconds"
+        ),
+        "rollout_incremental_delay_truncated_count": int(
+            round(total("incremental_delay_truncated_count"))
+        ),
+        "rollout_reward_settled_task_energy_joules": total(
+            "reward_settled_task_energy_joules"
+        ),
+        "rollout_actual_task_energy_joules": actual_task_energy,
+        "rollout_movement_energy_joules": movement_energy,
+        "rollout_completed_task_count": int(round(total("completed_task_count"))),
+        "rollout_completed_dag_count": int(round(total("completed_dag_count"))),
+        "rollout_completed_dag_bonus": total("completed_dag_bonus"),
+        "rollout_coverage_bonus": total("coverage_bonus"),
+        "rollout_b2_initial_cost_seconds": total("b2_initial_cost_seconds"),
+        "rollout_b2_assignment_cost_seconds": total("b2_assignment_cost_seconds"),
+        "rollout_b2_correction_cost_seconds": total("b2_correction_cost_seconds"),
+        "rollout_probe_start_active_dag_count": int(len(start_dag_ids)),
+        "rollout_censored_backlog_area_seconds": float(backlog_area_seconds),
+        "C_orig_epoch_delay": orig_delay,
+        "C_orig_epoch_task_energy": orig_task_energy,
+        "C_orig_epoch_move_energy": orig_move_energy,
+        "C_orig_epoch": orig_delay + orig_task_energy + orig_move_energy,
+        "C_orig_epoch_per_slot": (orig_delay + orig_task_energy + orig_move_energy)
+        / float(max(slot_count, 1)),
+        "C_sec_epoch_incremental": c_sec_incremental,
+        "C_sec_epoch_incremental_per_slot": c_sec_incremental / float(max(slot_count, 1)),
+        "C_sec_epoch_backlog_area": c_sec_backlog_area,
+        "C_sec_epoch_backlog_area_per_slot": c_sec_backlog_area / float(max(slot_count, 1)),
+    }
 
 
 def _episode_diagnostics_payload(

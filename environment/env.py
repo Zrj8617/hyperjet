@@ -35,6 +35,7 @@ class Env:
         completed_dag_weight: float | None = None,
         freeze_ue_mobility: bool = False,
         max_active_dags_per_ue: int = 1,
+        exogenous_tape: Any | None = None,
     ) -> None:
         """初始化环境状态、任务管理器和指标组件。"""
         self._time_step: int = 0
@@ -43,6 +44,7 @@ class Env:
         if not isinstance(freeze_ue_mobility, bool):
             raise ValueError("freeze_ue_mobility must be boolean")
         self.freeze_ue_mobility: bool = freeze_ue_mobility
+        self._exogenous_tape = exogenous_tape
         self._initial_hotspot_ue_count: int = 0
         self._ues: list[UE] = []
         self._uavs: list[UAV] = []
@@ -180,6 +182,8 @@ class Env:
         # 重新创建本回合的无人机和用户，并同步重置任务、执行器与指标组件。
         self._uavs = self._init_uavs_uniform()
         self._ues = self._init_ues_uniform()
+        if self._exogenous_tape is not None:
+            self._exogenous_tape.reset_env(self)
         self._initial_hotspot_ue_count = sum(
             int(ue.is_inside_hotspot(self.hotspot_center, self.hotspot_radius))
             for ue in self._ues
@@ -256,8 +260,11 @@ class Env:
         slot_index = self._time_step
         previous_internal_state = f"x_{slot_index}^-"
         self._time_step += 1
-        for ue in self._ues:
-            ue.update_position(commit_position=not self.freeze_ue_mobility)
+        if self._exogenous_tape is None:
+            for ue in self._ues:
+                ue.update_position(commit_position=not self.freeze_ue_mobility)
+        else:
+            self._exogenous_tape.apply_mobility(self)
         self._ue_service_positions = {int(ue.id): ue.pos[:2].copy() for ue in self._ues}
         self._slot_service_positions_frozen = True
 
@@ -405,6 +412,7 @@ class Env:
             "invalid_assignment_reasons": dict(execution_stats.invalid_assignment_reasons),
             "completed_tasks": execution_stats.completed_tasks,
             "completed_dags": execution_stats.completed_dags,
+            "completed_dag_ids": list(execution_stats.completed_dag_ids),
             "step_reward": step_reward.reward_total,
             "step_time_penalty": step_reward.time_penalty,
             "step_energy_penalty": step_reward.energy_penalty,
@@ -412,6 +420,10 @@ class Env:
             "step_movement_energy_penalty": step_reward.movement_energy_penalty,
             "step_completed_dag_bonus": step_reward.completed_dag_bonus,
             "step_movement_position_bonus": step_reward.movement_position_bonus,
+            "step_incremental_delay_seconds": step_reward.incremental_delay_seconds,
+            "step_weighted_incremental_delay_seconds": step_reward.weighted_incremental_delay_seconds,
+            "step_incremental_delay_truncated_count": step_reward.incremental_delay_truncated_count,
+            "step_reward_settled_task_energy_joules": step_reward.reward_settled_task_energy_joules,
             "movement_position_signal": movement_position_signal,
             "step_task_energy": execution_stats.step_task_energy,
             "step_movement_energy": self._last_movement_energy_total,
@@ -477,6 +489,8 @@ class Env:
 
         已有活动 DAG 的用户会被跳过；返回本时隙新建的 DAG 数量，并同步更新到达版本。
         """
+        if self._exogenous_tape is not None:
+            return int(self._exogenous_tape.process_offers(self))
         if not self._slot_service_positions_frozen:
             self._ue_service_positions = {int(ue.id): ue.pos[:2].copy() for ue in self._ues}
         version_before = self._task_manager.dag_arrival_version

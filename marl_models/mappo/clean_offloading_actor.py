@@ -15,6 +15,7 @@ from environment.assignment import (
     TemporaryReservationState,
     build_offloading_candidate_components,
 )
+from environment.forecast import ForecastContext
 
 
 @dataclass(slots=True)
@@ -36,6 +37,11 @@ class CleanOffloadingActionRecord:
     entropy: float
     selected_estimated_finish_time: float
     selected_estimated_incremental_delay: float
+    forecast_delta_phi: float = 0.0
+    forecast_target_dag_delta: float = 0.0
+    forecast_cross_dag_delta: float = 0.0
+    forecast_affected_dag_count: int = 0
+    forecast_wall_seconds: float = 0.0
 
 
 @dataclass(slots=True)
@@ -84,6 +90,9 @@ class CleanOffloadingActor(nn.Module):
         self.scorer = SharedOffloadingCandidateScorer(self.candidate_feature_dim, hidden_dim=hidden_dim)
         self.latest_records: list[CleanOffloadingActionRecord] = []
         self.latest_skip_events: list[CleanOffloadingSkipEvent] = []
+        self.latest_forecast_wall_seconds: float = 0.0
+        self.latest_forecast_initial_times: dict[str, float] = {}
+        self.latest_forecast_times: dict[str, float] = {}
 
     @torch.no_grad()
     def act(
@@ -100,6 +109,7 @@ class CleanOffloadingActor(nn.Module):
         ue_service_positions: dict[int, Any] | None = None,
         ues: list[Any] | None = None,
         deterministic: bool = False,
+        forecast_enabled: bool = False,
     ) -> CleanAssignmentBuffer:
         device = next(self.parameters()).device
         task_embeddings_tensor = torch.as_tensor(task_embeddings, dtype=torch.float32, device=device)
@@ -107,6 +117,25 @@ class CleanOffloadingActor(nn.Module):
             raise ValueError("task_embeddings shape does not match task_embedding_dim.")
 
         reservation = TemporaryReservationState.from_executor(uavs, executor)
+        forecast = None
+        forecast_wall = 0.0
+        if bool(forecast_enabled):
+            from time import perf_counter
+
+            forecast_started = perf_counter()
+            forecast = ForecastContext(
+                task_manager=task_manager,
+                executor=executor,
+                uavs=uavs,
+                ues=[] if ues is None else ues,
+                current_time_seconds=float(current_time_seconds),
+                uav_service_positions=uav_service_positions,
+                ue_service_positions=ue_service_positions,
+            )
+            forecast_wall += float(perf_counter() - forecast_started)
+        forecast_initial_times = (
+            {} if forecast is None else dict(forecast.last_times)
+        )
         assignments = CleanAssignmentBuffer()
         records: list[CleanOffloadingActionRecord] = []
         skip_events: list[CleanOffloadingSkipEvent] = []
@@ -187,6 +216,16 @@ class CleanOffloadingActor(nn.Module):
             selected_action = int(selected.item())
             selected_uav_id = int(candidate_uav_ids[selected_action])
             selected_estimate = estimates[selected_action]
+            forecast_delta = None
+            if forecast is not None:
+                forecast_delta = forecast.delta_for_reservation(
+                    dag_id=str(task.dag_id),
+                    uav_id=selected_uav_id,
+                    compute_finish_time=float(
+                        selected_estimate.estimated_compute_finish_time
+                    ),
+                )
+                forecast_wall += float(forecast_delta.wall_seconds)
             assignments.append(task.task_id, selected_uav_id, decision_order)
             reservation.reserve(
                 task.task_id,
@@ -219,9 +258,29 @@ class CleanOffloadingActor(nn.Module):
                         - float(current_time_seconds),
                         0.0,
                     ),
+                    forecast_delta_phi=(
+                        0.0 if forecast_delta is None else float(forecast_delta.total)
+                    ),
+                    forecast_target_dag_delta=(
+                        0.0 if forecast_delta is None else float(forecast_delta.target)
+                    ),
+                    forecast_cross_dag_delta=(
+                        0.0 if forecast_delta is None else float(forecast_delta.cross)
+                    ),
+                    forecast_affected_dag_count=(
+                        0 if forecast_delta is None else int(forecast_delta.affected_dags)
+                    ),
+                    forecast_wall_seconds=(
+                        0.0 if forecast_delta is None else float(forecast_delta.wall_seconds)
+                    ),
                 )
             )
 
         self.latest_records = records
         self.latest_skip_events = skip_events
+        self.latest_forecast_wall_seconds = float(forecast_wall)
+        self.latest_forecast_initial_times = forecast_initial_times
+        self.latest_forecast_times = (
+            {} if forecast is None else dict(forecast.last_times)
+        )
         return assignments

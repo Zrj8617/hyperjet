@@ -23,6 +23,10 @@ class CleanStepReward:
     movement_position_bonus: float = 0.0
     completed_tasks: int = 0
     completed_dags: int = 0
+    incremental_delay_seconds: float = 0.0
+    weighted_incremental_delay_seconds: float = 0.0
+    incremental_delay_truncated_count: int = 0
+    reward_settled_task_energy_joules: float = 0.0
 
 
 @dataclass(slots=True)
@@ -91,6 +95,10 @@ class CleanMetricsTracker:
         """
         time_cost = 0.0
         task_energy_cost = 0.0
+        incremental_delay_seconds = 0.0
+        weighted_incremental_delay_seconds = 0.0
+        incremental_delay_truncated_count = 0
+        reward_settled_task_energy_joules = 0.0
         reward_completed_task_count = 0
         # 只对本时隙首次进入奖励完成状态的任务结算，避免重复扣时延和能耗。
         for task_id in getattr(execution_stats, "reward_completed_task_ids", getattr(execution_stats, "completed_task_ids", [])):
@@ -103,8 +111,15 @@ class CleanMetricsTracker:
                 if task.is_critical_path
                 else float(config.NONCRITICAL_TASK_WEIGHT)
             )
+            incremental_delay_seconds += float(delay)
+            weighted_incremental_delay_seconds += float(weight) * float(delay)
+            incremental_delay_truncated_count += int(
+                float(delay) / max(float(config.CLEAN_REWARD_TIME_REF), 1.0)
+                > float(getattr(config, "CLEAN_REWARD_TIME_CLIP", float("inf")))
+            )
             time_cost += weight * self._norm_time(delay)
             task_energy = float(task.compute_energy + task.communication_energy + task.return_energy)
+            reward_settled_task_energy_joules += task_energy
             task_energy_cost += self._norm_task_energy(task_energy)
             task.reward_settled = True
             reward_completed_task_count += 1
@@ -148,6 +163,10 @@ class CleanMetricsTracker:
             movement_position_bonus=movement_position_bonus,
             completed_tasks=reward_completed_task_count,
             completed_dags=completed_dags,
+            incremental_delay_seconds=float(incremental_delay_seconds),
+            weighted_incremental_delay_seconds=float(weighted_incremental_delay_seconds),
+            incremental_delay_truncated_count=int(incremental_delay_truncated_count),
+            reward_settled_task_energy_joules=float(reward_settled_task_energy_joules),
         )
 
     def update(

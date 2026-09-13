@@ -97,6 +97,10 @@ class CleanOffloadingRolloutRecord:
     selected_estimated_finish_time: float | None = None
     selected_estimated_incremental_delay: float | None = None
     candidate_estimated_finish_times: np.ndarray | None = None
+    forecast_delta_phi: float = 0.0
+    forecast_target_dag_delta: float = 0.0
+    forecast_cross_dag_delta: float = 0.0
+    forecast_affected_dag_count: int = 0
 
 
 @dataclass(slots=True)
@@ -110,6 +114,8 @@ class CleanSlotRolloutRecord:
     progress_potential: float = 0.0
     next_progress_potential: float = 0.0
     progress_shaping_enabled: bool = False
+    forecast_wall_seconds: float = 0.0
+    collection_wall_seconds: float = 0.0
     terminated: bool = False
     truncated: bool = False
     next_value: float | None = None
@@ -117,6 +123,7 @@ class CleanSlotRolloutRecord:
     next_prepared_state: CleanPreparedSlotState | None = None
     movement_records: list[CleanMovementRolloutRecord] = field(default_factory=list)
     offloading_records: list[CleanOffloadingRolloutRecord] = field(default_factory=list)
+    cost_diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
 class CleanSlotRolloutBuffer:

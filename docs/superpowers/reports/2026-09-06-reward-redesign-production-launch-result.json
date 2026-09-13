@@ -1,0 +1,57 @@
+{
+  "schema": "reward_redesign_production_launch_summary_v1",
+  "status": "launched_unmonitored",
+  "timing_gate": {
+    "forecast_over_training_total": 0.17299082287639142,
+    "threshold": 0.3,
+    "passed": true,
+    "server_result": "/data2/zrj2025/uav-results/audits/reward-redesign-training-timing-gate-20260906-v3/result.json"
+  },
+  "smoke": {
+    "episodes_per_arm": 5,
+    "arms": ["N0", "A2", "B1", "B2", "B2D", "D1", "D2"],
+    "passed": true
+  },
+  "capacity": {
+    "measured_mib_per_process": 610,
+    "processes_per_gpu": 3,
+    "free_mib_by_gpu": [17188, 19922, 24199, 22188, 24199, 24199, 23582]
+  },
+  "launch": {
+    "launched_at_utc": "2026-09-06T12:32:08.233651+00:00",
+    "estimated_all_complete_asia_shanghai": "2026-09-07T06:46:57.276456+08:00",
+    "server_manifest": "/data2/zrj2025/uav-results/audits/reward-redesign-production-launch-20260906.json",
+    "runs": [
+      {"run":"20260906_B1_seed0","gpu":0,"pid":78204},
+      {"run":"20260906_B1_seed1","gpu":0,"pid":78205},
+      {"run":"20260906_B1_seed2","gpu":0,"pid":78206},
+      {"run":"20260906_D2_seed0","gpu":1,"pid":78207},
+      {"run":"20260906_D2_seed1","gpu":1,"pid":78208},
+      {"run":"20260906_D2_seed2","gpu":1,"pid":78209},
+      {"run":"20260906_N0_seed0","gpu":2,"pid":78210},
+      {"run":"20260906_N0_seed1","gpu":2,"pid":78211},
+      {"run":"20260906_N0_seed2","gpu":2,"pid":78212},
+      {"run":"20260906_A2_seed0","gpu":3,"pid":78213},
+      {"run":"20260906_A2_seed1","gpu":3,"pid":78214},
+      {"run":"20260906_A2_seed2","gpu":3,"pid":78215},
+      {"run":"20260906_B2_seed0","gpu":4,"pid":78216},
+      {"run":"20260906_B2_seed1","gpu":4,"pid":78217},
+      {"run":"20260906_B2_seed2","gpu":4,"pid":78218},
+      {"run":"20260906_B2D_seed0","gpu":5,"pid":78219},
+      {"run":"20260906_B2D_seed1","gpu":5,"pid":78220},
+      {"run":"20260906_B2D_seed2","gpu":5,"pid":78221},
+      {"run":"20260906_D1_seed0","gpu":6,"pid":78222},
+      {"run":"20260906_D1_seed1","gpu":6,"pid":78223},
+      {"run":"20260906_D1_seed2","gpu":6,"pid":78224}
+    ]
+  },
+  "version": {
+    "head": "644227bb90cd5eb87b89e8cafb66af305f56bd4d",
+    "dirty_file_count": 12,
+    "launcher_git_object": "dad6b11641af6b7cc44ced4e6f044c0c8c0098e4",
+    "runner_git_object": "cdb72c9495415f947224b2e32fca0d16a6fa48e6",
+    "trainer_git_object": "1df8731efb383451a91b0cc7a795e3a1794e5077",
+    "forecast_git_object": "4f91002bd4ba3bb0a643e157587e717a4f64f634",
+    "reward_ledger_git_object": "de5873bba7865cbf2f570c4dbacea54cf03c8ce7"
+  }
+}

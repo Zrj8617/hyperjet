@@ -1,0 +1,40 @@
+{
+  "schema": "missing_arms_resource_probe_v1",
+  "status": "passed",
+  "smoke": {
+    "arms": ["A1", "C1", "N0-local"],
+    "episodes_per_arm": 5,
+    "evaluation_environment_seeds": 20,
+    "all_completed": true
+  },
+  "memory": {
+    "measured_process_mib": [590, 580],
+    "post_probe_free_mib": {
+      "0": 17184,
+      "1": 19888,
+      "2": 22290,
+      "3": 22188,
+      "4": 22247,
+      "5": 19220,
+      "6": 19060
+    },
+    "gpu_count_verified_separately": 7,
+    "allocation_process_counts": {
+      "0": 1,
+      "1": 2,
+      "2": 2,
+      "3": 1,
+      "4": 1,
+      "5": 1,
+      "6": 1
+    }
+  },
+  "density_probe": {
+    "processes_on_one_gpu": 2,
+    "episodes_per_process": 5,
+    "training_wall_seconds": [264.7735309712589, 330.6405898798257],
+    "evaluation_wall_seconds": [333.3340850081295, 326.8423832692206]
+  },
+  "conservative_training_seconds_per_episode": 66.12811797596514,
+  "conservative_evaluation_seconds": 333.3340850081295
+}

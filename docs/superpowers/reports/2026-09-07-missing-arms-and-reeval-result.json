@@ -1,0 +1,40 @@
+{
+  "schema": "missing_arms_analysis_summary_v1",
+  "status": "completed",
+  "raw_analysis": "/data2/zrj2025/uav-results/audits/20260907_missing_arms_unified_analysis.json",
+  "sample": {
+    "configuration_count": 9,
+    "checkpoint_count": 27,
+    "environment_seeds_per_checkpoint": 20,
+    "evaluation_cells": 540,
+    "bootstrap_resamples": 20000
+  },
+  "system_means": {
+    "C1": {"completion_rate": 0.918054, "flowtime_seconds": 182.384, "throughput": 0.128627, "agreement_eft_greedy": 0.774578},
+    "A2": {"completion_rate": 0.867732, "flowtime_seconds": 304.663, "throughput": 0.105533, "agreement_eft_greedy": 0.497896},
+    "A1": {"completion_rate": 0.847816, "flowtime_seconds": 367.173, "throughput": 0.092247, "agreement_eft_greedy": 0.598275},
+    "B2": {"completion_rate": 0.813100, "flowtime_seconds": 487.588, "throughput": 0.070033, "agreement_eft_greedy": 0.467105},
+    "B2D": {"completion_rate": 0.785000, "flowtime_seconds": 559.903, "throughput": 0.062607, "agreement_eft_greedy": 0.420140},
+    "N0-local": {"completion_rate": 0.783510, "flowtime_seconds": 578.441, "throughput": 0.061013, "agreement_eft_greedy": 0.420289},
+    "N0": {"completion_rate": 0.781811, "flowtime_seconds": 573.396, "throughput": 0.061400, "agreement_eft_greedy": 0.425877},
+    "B1": {"completion_rate": 0.768841, "flowtime_seconds": 598.510, "throughput": 0.059060, "agreement_eft_greedy": 0.524241},
+    "D2": {"completion_rate": 0.752301, "flowtime_seconds": 662.812, "throughput": 0.054540, "agreement_eft_greedy": 0.544913}
+  },
+  "references": {
+    "random": {"completion_rate": 0.770195, "flowtime_seconds": 624.210, "throughput": 0.058580},
+    "eft_greedy": {"completion_rate": 0.841262, "flowtime_seconds": 331.664, "throughput": 0.097140},
+    "stage1_eft_anchored": {"completion_rate": 0.891094, "flowtime_seconds": 246.451, "throughput": 0.115220, "agreement_eft_greedy": 0.775698}
+  },
+  "verdicts": {
+    "A1_vs_A2": "A2 is better on the three system metrics on average, but reverses on model seed 0; incremental timing helps but is seed-sensitive.",
+    "C1": "Teacher annealing is the clear winner. Preference survives teacher removal and all three model seeds are stable.",
+    "N0_local_vs_N0": "No detectable difference; target-only Delta-Phi does not rescue analytic forecast credit.",
+    "delta_phi_route": "Close for training: both global and local analytic Delta-Phi collapse entropy without improving system outcomes.",
+    "best_arm": "C1"
+  },
+  "version": {
+    "head": "644227bb90cd5eb87b89e8cafb66af305f56bd4d",
+    "dirty_entry_count": 58,
+    "analysis_script_git_object": "96344bae19c03ec6394ac0e676461a3719f7d388"
+  }
+}

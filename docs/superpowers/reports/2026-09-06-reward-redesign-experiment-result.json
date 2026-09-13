@@ -1,0 +1,45 @@
+{
+  "schema": "reward_redesign_checkpoint_v1",
+  "status": "stopped_at_forecast_cost_gate",
+  "checkpoint_scope": {
+    "seeds": [0],
+    "slots": 20,
+    "training": false,
+    "policy": "eft_greedy",
+    "movement": "forced_hover",
+    "note": "Preflight stopped early because the cost gate was exceeded; formal 20-seed M2 was not run."
+  },
+  "gate_off_exact": true,
+  "metrics": {
+    "decision_count": 91,
+    "zero_fraction": 0.2087912087912088,
+    "delta_phi_seconds": {
+      "p25": 0.02508374770422961,
+      "p50": 1.4226431013889282,
+      "p75": 5.57310105429292,
+      "p90": 8.202949434396714,
+      "p95": 10.318573195943713,
+      "p99": 34.185182266575666,
+      "mean_positive": 4.746193091145457
+    },
+    "target_dag_delta_mean_seconds": 1.1387094427080315,
+    "cross_dag_delta_mean_seconds": 2.616520255780682,
+    "affected_dag_count_mean": 2.197802197802198,
+    "forecast_wall_seconds": 0.07767542079091072,
+    "collection_wall_seconds": 0.15928537212312222,
+    "forecast_wall_time_frac": 0.48764942916961795
+  },
+  "stop_reasons": ["forecast_wall_time_frac_gt_0.10"],
+  "not_run": ["formal_20_seed_calibration", "seven_arm_smoke", "twenty_one_formal_runs"],
+  "artifacts": {
+    "server_raw_result": "/data2/zrj2025/uav-results/audits/reward-redesign-20260906-calibration-smoke.json",
+    "server_worktree": "/data2/zrj2025/HyperUAV-reward-redesign"
+  },
+  "executed_version": {
+    "head": "644227bb90cd5eb87b89e8cafb66af305f56bd4d",
+    "forecast_script_git_object": "e2332afee417154abe9a3a25f2bfa0e70760b546",
+    "arm_runner_git_object": "cdb72c9495415f947224b2e32fca0d16a6fa48e6",
+    "trainer_git_object": "b97283bb094f2d7f8835031e9e4422636110f8bd",
+    "forecast_module_git_object": "be8ee622a6f2224f49bbfe37a3175b7d7278d335"
+  }
+}

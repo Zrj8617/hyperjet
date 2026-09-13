@@ -112,6 +112,11 @@ class OffloadingCandidateEstimate:
     dynamic_uav_features: np.ndarray
     pair_features: np.ndarray
     estimated_finish_time: float = 0.0
+    # Incremental observability fields.  The legacy estimated_finish_time is
+    # intentionally retained as the policy reservation clock and remains the
+    # return-inclusive value used before this split.
+    estimated_compute_finish_time: float = 0.0
+    estimated_return_finish_time: float = 0.0
     estimated_queued_workload: float = 0.0
 
 
@@ -386,6 +391,8 @@ def estimate_offloading_candidate(
         dynamic_uav_features=dynamic_features,
         pair_features=pair_features,
         estimated_finish_time=estimated_finish_time,
+        estimated_compute_finish_time=compute_finish_time,
+        estimated_return_finish_time=estimated_finish_time,
         estimated_queued_workload=float(task.num_operation),
     )
 

@@ -1,0 +1,38 @@
+{
+  "schema": "missing_arms_production_handoff_v1",
+  "status": "launched_unmonitored",
+  "server": "10.12.54.24",
+  "server_worktree": "/data2/zrj2025/HyperUAV-reward-redesign",
+  "result_root": "/data2/zrj2025/uav-results/audits",
+  "launched_at_utc": "2026-09-07T04:11:21.840067+00:00",
+  "estimated_all_complete_asia_shanghai": "2026-09-07T21:27:59.233140+08:00",
+  "training_runs": [
+    {"run_name": "20260907_A1_seed0", "gpu": 0, "pid": 791866, "log": "/data2/zrj2025/uav-results/audits/20260907_A1_seed0.log", "result": "/data2/zrj2025/uav-results/audits/20260907_A1_seed0/result.json"},
+    {"run_name": "20260907_A1_seed1", "gpu": 1, "pid": 791867, "log": "/data2/zrj2025/uav-results/audits/20260907_A1_seed1.log", "result": "/data2/zrj2025/uav-results/audits/20260907_A1_seed1/result.json"},
+    {"run_name": "20260907_A1_seed2", "gpu": 2, "pid": 791868, "log": "/data2/zrj2025/uav-results/audits/20260907_A1_seed2.log", "result": "/data2/zrj2025/uav-results/audits/20260907_A1_seed2/result.json"},
+    {"run_name": "20260907_C1_seed0", "gpu": 3, "pid": 791869, "log": "/data2/zrj2025/uav-results/audits/20260907_C1_seed0.log", "result": "/data2/zrj2025/uav-results/audits/20260907_C1_seed0/result.json"},
+    {"run_name": "20260907_C1_seed1", "gpu": 4, "pid": 791870, "log": "/data2/zrj2025/uav-results/audits/20260907_C1_seed1.log", "result": "/data2/zrj2025/uav-results/audits/20260907_C1_seed1/result.json"},
+    {"run_name": "20260907_C1_seed2", "gpu": 5, "pid": 791871, "log": "/data2/zrj2025/uav-results/audits/20260907_C1_seed2.log", "result": "/data2/zrj2025/uav-results/audits/20260907_C1_seed2/result.json"},
+    {"run_name": "20260907_N0-local_seed0", "gpu": 6, "pid": 791872, "log": "/data2/zrj2025/uav-results/audits/20260907_N0-local_seed0.log", "result": "/data2/zrj2025/uav-results/audits/20260907_N0-local_seed0/result.json"},
+    {"run_name": "20260907_N0-local_seed1", "gpu": 1, "pid": 791873, "log": "/data2/zrj2025/uav-results/audits/20260907_N0-local_seed1.log", "result": "/data2/zrj2025/uav-results/audits/20260907_N0-local_seed1/result.json"},
+    {"run_name": "20260907_N0-local_seed2", "gpu": 2, "pid": 791874, "log": "/data2/zrj2025/uav-results/audits/20260907_N0-local_seed2.log", "result": "/data2/zrj2025/uav-results/audits/20260907_N0-local_seed2/result.json"}
+  ],
+  "old_checkpoint_reevaluation": {
+    "pid": 792799,
+    "configuration_count": 6,
+    "checkpoint_count": 18,
+    "environment_seeds_per_checkpoint": 20,
+    "log": "/data2/zrj2025/uav-results/audits/20260907_old_reevaluation_batch.log",
+    "manifest": "/data2/zrj2025/uav-results/audits/20260907_old_reevaluation_manifest.json"
+  },
+  "production_manifest": "/data2/zrj2025/uav-results/audits/20260907_missing_arms_launch_manifest.json",
+  "probe_result": "docs/superpowers/reports/2026-09-07-missing-arms-probe-result.json",
+  "version": {
+    "head": "644227bb90cd5eb87b89e8cafb66af305f56bd4d",
+    "server_dirty_entry_count_at_launch": 19,
+    "runner_git_object": "af9f7aa6689cf540fb830940ea89368481816d6d",
+    "trainer_git_object": "5ef2054d2c61c8070f2948d5a1d86d126c6f4c9e",
+    "reward_ledger_git_object": "e6b4f1bff0154f5e46c2f6aaad3f771e3587d16f",
+    "launcher_git_object": "6ecdfca3973993be0143c9550fe45c27c705e474"
+  }
+}

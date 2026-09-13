@@ -1,0 +1,67 @@
+{
+  "schema": "reward_redesign_forecast_timing_followup_v1",
+  "status": "stopped_after_revised_timing_gate_and_profile",
+  "timing_gate": {
+    "arm": "B2",
+    "seed": 0,
+    "updates": 20,
+    "environment_slots": 2500,
+    "rollout_horizon": 128,
+    "ppo_epochs": 1,
+    "forecast_wall_seconds": 27.56360357441008,
+    "collection_wall_seconds": 43.380189683288336,
+    "training_total_wall_seconds": 136.78550363518298,
+    "forecast_over_collection": 0.6353961053570175,
+    "forecast_over_training_total": 0.2015096837156388,
+    "threshold": 0.1,
+    "passed": false
+  },
+  "profile": {
+    "policy": "eft_greedy",
+    "movement": "forced_hover",
+    "seed": 0,
+    "full_episode_slots": 500,
+    "calibration_gate_off_slots": 100,
+    "calibration_gate_on_slots": 100,
+    "total_profiled_calls": 24542827,
+    "total_profiled_seconds": 20.247,
+    "forecast_context_calls": 600,
+    "reservation_delta_calls": 3108,
+    "forecast_measured_seconds": 10.059019291773438,
+    "hotspots": [
+      {"function": "ForecastContext._build_arrays", "calls": 600, "self_seconds": 0.447, "cumulative_seconds": 5.647},
+      {"function": "ForecastContext._forecast_dag", "calls": 64686, "self_seconds": 2.873, "cumulative_seconds": 5.43},
+      {"function": "ForecastContext._tx_vector", "calls": 103566, "self_seconds": 0.228, "cumulative_seconds": 4.801},
+      {"function": "numpy.fromiter", "calls": 103566, "self_seconds": 0.393, "cumulative_seconds": 4.425},
+      {"function": "clean_transmission_time_seconds", "calls": 2127375, "self_seconds": 0.89, "cumulative_seconds": 3.067},
+      {"function": "numpy.min", "calls": 355621, "self_seconds": 0.25, "cumulative_seconds": 1.322}
+    ],
+    "interpretation": [
+      "Per-slot transfer-matrix construction and all-DAG reforecasting contribute comparable cumulative cost.",
+      "The _forecast_dag self time is 52.9% of that function and contains the per-task/per-parent Python control flow.",
+      "The numpy.min reductions are about 24.3% of _forecast_dag cumulative time.",
+      "Cumulative profile rows overlap and are not additive wall times."
+    ]
+  },
+  "decision": {
+    "formal_20_seed_calibration_run": false,
+    "approximate_fallback_used": false,
+    "production_started": false,
+    "next_gate": "Optimize the exact implementation, then rerun 20 real-training updates; require forecast_over_training_total <= 0.10."
+  },
+  "artifacts": {
+    "server_timing_result": "/data2/zrj2025/uav-results/audits/reward-redesign-training-timing-gate-20260906-v2/result.json",
+    "server_training_run_dir": "/data2/zrj2025/uav-results/audits/reward-redesign-training-timing-gate-20260906-v2/train/20260906_173939_20260906_forecast_training_timing_seed0_seed0",
+    "server_profile": "/data2/zrj2025/uav-results/audits/reward-redesign-forecast-profile-20260906-v1/forecast.prof",
+    "server_profile_side_result": "/data2/zrj2025/uav-results/audits/reward-redesign-forecast-profile-20260906-v1/calibration-seed0.json",
+    "server_worktree": "/data2/zrj2025/HyperUAV-reward-redesign"
+  },
+  "executed_version": {
+    "head": "644227bb90cd5eb87b89e8cafb66af305f56bd4d",
+    "dirty_file_count": 11,
+    "timing_script_git_object": "cc2a65635503922becb179bc1c74425ac8423753",
+    "calibration_script_git_object": "e2332afee417154abe9a3a25f2bfa0e70760b546",
+    "trainer_git_object": "1df8731efb383451a91b0cc7a795e3a1794e5077",
+    "forecast_module_git_object": "be8ee622a6f2224f49bbfe37a3175b7d7278d335"
+  }
+}
