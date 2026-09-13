@@ -269,9 +269,6 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
         raise FileNotFoundError(f"checkpoint not found: {args.checkpoint}")
     if not bool(args.deterministic):
         raise ValueError("Clean evaluation defaults to deterministic masked argmax; stochastic eval is not implemented in T15.")
-    if bool(getattr(args, "clean_training_rng_prelude", False)) and int(args.episodes) != 1:
-        raise ValueError("--clean-training-rng-prelude requires --episodes 1")
-
     _set_seed(int(args.seed), torch=torch)
     device = torch.device(str(args.device))
     checkpoint_payload = _load_trusted_checkpoint(torch, Path(args.checkpoint))
