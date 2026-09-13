@@ -15,6 +15,7 @@ from marl_models.mappo.clean_decision_transitions import (
 )
 from marl_models.mappo.clean_offloading_decision_credit import (
     DecisionKey,
+    compute_smdp_decision_gae,
     decision_state_key,
 )
 from marl_models.mappo.clean_ppo import (
@@ -98,10 +99,12 @@ class CleanOffloadingDecisionQCredit:
         ppo_epochs: int,
         value_clip_epsilon: float,
         device: Any,
+        gae_lambda: float = 0.95,
     ) -> None:
         self.critic = critic.to(device)
         self.optimizer = optimizer
         self.gamma = float(gamma)
+        self.gae_lambda = float(gae_lambda)
         self.max_grad_norm = float(max_grad_norm)
         self.ppo_epochs = max(int(ppo_epochs), 1)
         self.value_clip_epsilon = float(value_clip_epsilon)
@@ -123,6 +126,7 @@ class CleanOffloadingDecisionQCredit:
         ppo_epochs: int,
         value_clip_epsilon: float,
         device: Any,
+        gae_lambda: float = 0.95,
     ) -> "CleanOffloadingDecisionQCredit":
         python_state = random.getstate()
         numpy_state = np.random.get_state()
@@ -146,6 +150,7 @@ class CleanOffloadingDecisionQCredit:
             ppo_epochs=ppo_epochs,
             value_clip_epsilon=value_clip_epsilon,
             device=device,
+            gae_lambda=gae_lambda,
         )
 
     def _old_state_values(
@@ -180,6 +185,12 @@ class CleanOffloadingDecisionQCredit:
             if row.next_state is not None:
                 states[decision_state_key(row.next_state)] = row.next_state
         old = self._old_state_values(states)
+        _, _, gae_targets = compute_smdp_decision_gae(
+            rows,
+            values={key: value[3] for key, value in old.items()},
+            gamma=self.gamma,
+            gae_lambda=self.gae_lambda,
+        )
         raw_advantages: dict[DecisionKey, float] = {}
         targets: dict[DecisionKey, float] = {}
         selected_inputs: dict[DecisionKey, np.ndarray] = {}
@@ -193,17 +204,8 @@ class CleanOffloadingDecisionQCredit:
             legal_indices, inputs, q_values, expected_current = old[key]
             selected_row = selected_legal_row(row.state, legal_indices)
             q_selected = float(q_values[selected_row])
-            if row.terminated:
-                bootstrap = 0.0
-            else:
-                if row.next_state is None:
-                    raise ValueError("eligible nonterminal Q transition lacks next state")
-                bootstrap = (self.gamma ** int(row.delta)) * old[
-                    decision_state_key(row.next_state)
-                ][3]
-            target = float(row.rho) + float(bootstrap)
             raw_advantages[key] = q_selected - float(expected_current)
-            targets[key] = target
+            targets[key] = gae_targets[key]
             selected_inputs[key] = inputs[selected_row]
             selected_predictions[key] = q_selected
             spreads.append(float(np.max(q_values) - np.min(q_values)))

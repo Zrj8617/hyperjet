@@ -140,9 +140,11 @@ def _target_and_advantage_checks() -> None:
     assert np_before[2:] == np_after[2:]
     assert torch.equal(torch.get_rng_state(), torch_before)
     assert batch.critic_targets.shape == (3,)
+    terminal_target = 1.0 + 0.9 * 2.0 + 0.9**2 * 3.0
+    next_slot_target = 5.0 + 0.9 * 6.2 + (0.9 * 0.95) * (terminal_target - 6.2)
     assert np.allclose(
         batch.critic_targets,
-        [3.2, 5.0 + 0.9 * 6.2, 1.0 + 0.9 * 2.0 + 0.9**2 * 3.0],
+        [next_slot_target, next_slot_target, terminal_target],
     )
     raw_advantages = np.asarray([-1.2, 0.8, -1.2], dtype=np.float32)
     target_scale = max(float(batch.critic_targets.std(ddof=0)), 1e-8)
@@ -167,7 +169,8 @@ def _target_and_advantage_checks() -> None:
     assert batch.actor_advantages == frozen_actor_advantages
     print(
         "target/advantage PASS: Delta=0/1/N, terminal, censor, "
-        "Q-V credit scaled by frozen target std, frozen across critic epochs, RNG neutral"
+        "SMDP GAE return targets, Q-V credit scaled by frozen target std, "
+        "frozen across critic epochs, RNG neutral"
     )
 
 
