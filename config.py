@@ -41,9 +41,13 @@ BASE_UNIT_BYTES: int = 10 * 1024
 
 # ===================== zrj_3 clean 主线：任务属性 =====================
 # 每个任务会在这些范围内随机采样输入、输出、常数和复杂度类型。
-INPUT_DATA_SIZE_MB_RANGE: tuple[float, float] = (0.75, 14.0)
-OUTPUT_DATA_SIZE_MB_RANGE: tuple[float, float] = (0.6, 10.5)
-TASK_CONSTANT_RANGE: tuple[int, int] = (6, 60)
+# 2026-09-14 口径对齐：数据量对齐 Deng et al., IEEE TMC 24(6), 2025 (DVTP) 的节点属性
+#   D_i 输入 50~500 KB、边数据 100~500 KB；TASK_CONSTANT 的量纲是“每个 BASE_UNIT_BYTES
+#   基本算子的 CPU cycles”，标定后单任务 cycles 中位数 2.5e8、cycles/bit 中位数 62
+#   （DVTP 的 C_i/D_i 落在 2.5~250 cycles/bit）。
+INPUT_DATA_SIZE_MB_RANGE: tuple[float, float] = (0.1, 1.0)
+OUTPUT_DATA_SIZE_MB_RANGE: tuple[float, float] = (0.15, 0.75)
+TASK_CONSTANT_RANGE: tuple[int, int] = (500_000, 1_500_000)
 TASK_COMPLEXITY_PROBS: dict[str, float] = {
     "n": 0.2,
     "nlogn": 0.7,
@@ -52,17 +56,23 @@ TASK_COMPLEXITY_PROBS: dict[str, float] = {
 
 # ===================== zrj_3 clean 主线：链路带宽 =====================
 # 创建 DAG 时按 BANDWIDTH_LEVEL_PROBS 选一档基础上下行带宽，单位为 Mbps。
-BASE_UPLOAD_BANDWIDTH_MBPS: list[float] = [20.0, 50.0, 100.0]
-BASE_DOWNLOAD_BANDWIDTH_MBPS: list[float] = [50.0, 100.0, 200.0]
+# 2026-09-14 口径对齐：数据量缩小后同步降档，锚点是 DVTP 的 VE<->VES 2 Mbps；
+#   取值由负载标定反解，使 greedy/random 基线与旧场景等难度（见 docs/clean_load_calibration.md）。
+BASE_UPLOAD_BANDWIDTH_MBPS: list[float] = [1.75, 3.5, 7.0]
+BASE_DOWNLOAD_BANDWIDTH_MBPS: list[float] = [3.5, 7.0, 14.0]
 BANDWIDTH_LEVEL_PROBS: list[float] = [0.3, 0.5, 0.2]
 
 # ===================== zrj_3 clean 主线：算力、能耗与队列 =====================
-# 功率单位为瓦特，计算速率单位为每秒运算次数；这些值直接影响完成时间和能耗奖励。
+# 功率单位为瓦特；这些值直接影响完成时间和能耗奖励。
+# 2026-09-14 口径对齐：UAV_COMPUTE_RATE_OPS_PER_SEC 现在的量纲是 CPU cycles/s，
+#   取 1 GHz，对应 DVTP 的 VE 档（1~2 GHz）。变量名保留以免波及 5 处引用。
+#   能耗仍用常功率近似 E = P_UAV_COMPUTE * t；若要改成 Xu et al., IEEE TCOM 72(7), 2024
+#   的 E = kappa * f^2 * C，注意 kappa=1e-28 是配 22 GHz 的，配 1 GHz 需 kappa≈5e-26。
 P_UAV_COMPUTE: float = 50.0
 P_UE_TX: float = 0.5
 P_UAV_TX: float = 0.5
 CLEAN_POWER_MOVE: float = 100.0
-UAV_COMPUTE_RATE_OPS_PER_SEC: float = 1_000_000.0
+UAV_COMPUTE_RATE_OPS_PER_SEC: float = 1_000_000_000.0
 CLEAN_MAX_QUEUE_PER_UAV: int = 16
 
 # ===================== zrj_3 clean 主线：UAV 移动 =====================

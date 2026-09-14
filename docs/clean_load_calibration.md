@@ -120,3 +120,48 @@ TASK_CONSTANT_RANGE = (6, 60)
 - 新增 `CLEAN_REWARD_TIME_CLIP = 10.0`(仅作用于 reward 的 norm_time,不影响 metrics 原始 delay/flowtime)
 
 预期:step reward 收敛到 O(1) 量级,|V| 从 ~4e3 降至 O(1e2),pre-clip grad norm 下降 3-4 个数量级,actor 梯度不再被全局 clip 吞没。验证字段:`ppo_returns_mean/std`、`ppo_value_pred_mean`、`ppo_explained_variance`。
+
+## 参数口径对齐重标定（2026-09-14，分支 `param-realign-20260914`）
+
+背景：任务属性与算力属性要对齐两篇参考文献——Deng et al., *Task Offloading in Internet of
+Vehicles: A DRL-Based Approach With Representation Learning for DAG Scheduling*, IEEE TMC
+24(6), 2025（DVTP，DAG 结构/节点属性口径）与 Xu et al., *Trajectory Planning and Resource
+Allocation for Multi-UAV Cooperative Computation*, IEEE TCOM 72(7), 2024（cycles 与能耗口径）。
+
+**只改参数，不改模型结构与调度内核。**
+
+改前的问题：`num_operation` 的量纲是自造的“运算次数”，与数据量之比只有 **0.006 cycles/bit**，
+而 DVTP 是 2.5~250 cycles/bit、Xu 等是 1000 cycles/bit，差 4~5 个数量级。
+
+### 改动（config.py，6 行）
+
+| 参数 | 旧值 | 新值 | 依据 |
+|---|---|---|---|
+| `INPUT_DATA_SIZE_MB_RANGE` | (0.75, 14.0) | (0.1, 1.0) | DVTP `D_i` 50~500 KB |
+| `OUTPUT_DATA_SIZE_MB_RANGE` | (0.6, 10.5) | (0.15, 0.75) | DVTP 边数据 100~500 KB |
+| `TASK_CONSTANT_RANGE` | (6, 60) | (500_000, 1_500_000) | 量纲改为每基本算子 cycles |
+| `BASE_UPLOAD_BANDWIDTH_MBPS` | [20, 50, 100] | [1.75, 3.5, 7.0] | 锚 DVTP VE↔VES 2 Mbps |
+| `BASE_DOWNLOAD_BANDWIDTH_MBPS` | [50, 100, 200] | [3.5, 7.0, 14.0] | 同上，下行取 2 倍 |
+| `UAV_COMPUTE_RATE_OPS_PER_SEC` | 1e6 | 1e9 | DVTP VE 档 1~2 GHz（量纲现为 cycles/s） |
+
+改后任务量纲（30 万次采样）：单任务 cycles p5/p50/p95 = 2.8e7 / 2.5e8 / 1.8e9，
+**cycles/bit p50 = 62、mean = 90**，落入 DVTP 的 2.5~250 区间。
+
+### Gate 复核（`scripts/diag_clean_load.py`，300 slots × 14 seeds，与 2026-07-11 同协议）
+
+| 指标 | 旧场景 | 新场景 | Gate | 结论 |
+|---|---:|---:|---|---|
+| greedy completion | 0.8128 | 0.8044 | 0.80~0.90 | PASS |
+| random completion | 0.6441 | 0.6569 | 0.50~0.70 | PASS |
+| random queue pressure | 0.8527 | 0.8653 | < 0.90 | PASS |
+| p95 compute (greedy) | 1.759 s | 1.685 s | 1~2 s | PASS |
+| greedy flowtime | 196.53 | 196.48 | — | 等难度 |
+| random flowtime | 524.69 | 523.84 | — | 等难度 |
+
+结论：场景难度、策略区分度、计算/通信配比全部保持不变，改动是纯量纲对齐。
+旧 checkpoint 与旧固定 tape 在新场景下**全部作废**，需重新生成 tape 并重训。
+
+### 未做（需师兄另行确认）
+
+- 能耗仍是常功率 `E = P_UAV_COMPUTE * t`，未改成 Xu 等的 `E = kappa * f^2 * C`（属模型改动）。
+- UAV 仍是单处理器 FIFO（等同 DVTP 的 VE 档），未实现 DVTP 的 VES 多处理器 FAT 队列（属调度内核改动）。
