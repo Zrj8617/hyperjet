@@ -46,6 +46,14 @@
 8. 长实验服务器后台运行，启动后返回 PID / log path / result path，不做 tail 循环。
 9. deterministic evaluation 优先于直接比较 training trajectory。
 10. Stage 1（可靠的 MLP clean baseline offloading credit）未完成前，**不进入 HGNN vs MLP 最终结论**。
+11. **文档声明不是已验证事实。** 任何来自 docs/（交接文档、roadmap、旧 spec/report）或他人报告的
+    **定量断言**，在被用作推论前提、写进新 spec、或作为 gate/断言条件之前，**必须先读代码或读日志
+    验证**。验证不了的，必须在使用处显式标注为「假设，未坐实」，并且不得据此推出结论。
+    本条对 Claude、Codex 和用户同等适用。
+    起因：2026-09-15 门禁 G9 失败——「B2 三段账与 B1 实际 flowtime 数学上相等」这一写在交接文档
+    §4.4 的声明被当作事实沿用，据此推出过「B1/B2 优化同一目标函数」的结论，并被写成硬停止断言；
+    实测相对误差 0.489，该恒等式从未成立。详见
+    `docs/superpowers/reports/2026-09-15-six-arm-realign-gating-results.md`。
 
 ## 5. 禁止重复的实验（已完成对应证伪，除非有新证据不得重开）
 

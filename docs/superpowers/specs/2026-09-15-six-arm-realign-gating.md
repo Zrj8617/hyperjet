@@ -173,9 +173,18 @@ J/offer 与臂间排名。
 2. **回归保护**：`C1` 与 `C2` 解析出的 `offloading_eft_advantage`、
    `movement_position_advantage`、`teacher_anneal_total_updates`、`forecast_enabled`、
    `offloading_forecast_advantage` 与本次改动**前**逐字节相同
-3. **账本闭合**：固定一条轨迹，断言 B2 的
-   `initial_cost + assignment_cost + correction_cost` 与 B1 记录的整回合真实 flowtime
-   相对误差 < 1e-6
+3. **账本关系测量**（2026-09-15 修订，见 §10）：固定一条轨迹，**测量并分解** B2 的
+   `initial_cost + assignment_cost + correction_cost` 与 B1 记录的整回合实际 flowtime 之间的
+   关系。必报三项：
+   - 每 episode 的 `b1_total`、`b2_total`（**带符号**）与相对误差
+   - 两侧记账 DAG 集合的大小与差集
+   - 缺口分解：`Σ_G (anchor_G − T̂⁰_G)` 与 `Σ ΔΦ` 之差，即**未被记账的预测漂移**
+
+   **PASS**：差集为空或只含最后一个时隙到达的 DAG，且缺口能被"未记账漂移"解释 ≥95%。
+   **FAIL**：差集异常，或缺口无法被漂移解释——那才是真 bug。
+
+   > 原条目为"断言相对误差 < 1e-6"。该断言建立在"B2 三段账与 B1 实际 flowtime 恒等"
+   > 这一前提上，该前提已于 2026-09-15 证伪（实测 0.4891791541）。保留原文见 §10。
 4. 六臂均能正常完成 5 个 episode 并写出 `train_metrics.jsonl`
 
 ## 5. Resolved flag 验收表（必须实测填写，不得从代码推断）
@@ -202,7 +211,7 @@ J/offer 与臂间排名。
 
 1. §5 任一格实测值与表中不符
 2. G9 的回归断言失败（C1/C2 行为发生任何变化）
-3. 账本闭合相对误差 ≥ 1e-6
+3. G9-3 的账本关系测量判定为 FAIL（差集异常，或缺口无法被未记账漂移解释到 95%）
 4. 需要修改 §3 中任何一项决定
 5. 需要改动 `environment/` 下除 `reward_redesign.py` 以外的任何文件
    （本 spec 不允许改变环境行为）
@@ -260,3 +269,39 @@ docs/superpowers/reports/2026-09-15-six-arm-realign-gating-result.json
 固定 tape 必须按新场景**重新生成**，目录另起，绝不复用旧场景的 100–119 / 200–249 文件；
 manifest 记录实际实验 commit 与完整场景参数；replay 前校验 UAV/UE 数、时隙、
 任务属性、带宽与算力配置。
+
+## 10. 修订记录
+
+### 2026-09-15 —— G9 第 3 条与 §6.3 修订
+
+**起因**：本 spec 的第一次执行（实现 commit `e7056da`，报告 commit `3aa4b93`）在
+G9 账本闭合断言上触发硬停止，最大相对误差 `0.4891791541`。
+
+**定性**：**不是代码 bug，是本 spec 原断言的前提错误。**
+
+原断言直接沿用交接文档 §4.4 的声明"三段加起来恰好等于真实 flowtime，与 B1 的 episode
+总回报数学上相等"。该声明从未被验证，且经代码推导与实测已证伪：
+
+- 闭合要求 `Σ ΔΦ_G = anchor_G − T̂⁰_G`，即预测值的**全部**漂移都由分配决策造成
+- 但预测还会因 UE 移动、新 DAG 到达改变排队、以及影子 DP 的**贪心 + 乐观**假设而移动
+  （`environment/forecast.py`，影子时钟故意不含 return time），这部分漂移没有被任何一项记账
+- 因此**闭合缺口 = 未被记账的预测漂移**；`b2_total ≈ 0.51 × b1_total`
+- 已排除替代解释"两侧记账的 DAG 集合不同"：`environment/forecast.py:198` 覆盖全部未完成 job
+
+**为什么不"修"账本**：把外生漂移也记进去等于换一个新的奖励定义，那是新臂，不是修 bug；
+且会与已冻结的 B2 及其历史结果脱节。B2 的奖励定义保持不变。
+
+**连带更正**（已同步执行）：
+
+- `docs/research/HyperUAV_context_handoff_20260912.md` §4.4、
+  `docs/research/HyperUAV_context_handoff_20260908.md` §4.4：错误声明划除并加更正块
+- `docs/research/HyperUAV_research_master_roadmap.md`：追加本次结论
+- `AGENTS.md` §4 新增第 11 条工程原则：文档里的定量断言在被用作推论前提、写进 spec、
+  或作为 gate 条件之前必须先验证
+
+**对实验口径的影响**：`B2 − B1` 是**两个不同目标函数**的对比，不得表述为
+"同一实际代价的分期记账效应"（G7 中该措辞相应作废）。同时本次实测**坐实了**
+交接文档中原标注"仍未坐实"的 B2 失败机制假说，且证据强于原假说。
+
+**下一步**：按修订后的 G9-3 给 smoke 探针补三项诊断字段，只重跑 B2 一个臂的 smoke；
+判定 PASS 后本 spec 即验收通过，可进入第二阶段训练 spec。
