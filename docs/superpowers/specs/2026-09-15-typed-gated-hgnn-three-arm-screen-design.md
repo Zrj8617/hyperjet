@@ -127,7 +127,11 @@ target，不扩写现有六臂 MLP launcher。launcher 必须：
    - 固定输入：HGNN launch manifest、tape directory、arms `B2,C1,C2`、seeds `5,86,617`、
      run prefix `20260915_TYPED_GATED_HGNN`；
    - 只解析 `20260915_TYPED_GATED_HGNN_<ARM>_seed<SEED>`；
-   - validation 完成后先原子写每 run selection lock，再读取 test tape manifest/payload；
+   - selection 前允许读取共享 `manifest.json` 的 schema、scene、version、splits 元数据与 validation
+     条目，并只打开 validation payload；此时不得校验/解析 test 条目对应的文件，更不得打开 test
+     payload；
+   - validation 完成后先原子写每 run selection lock；所有 locks 落盘后才校验 test split/条目并打开
+     test payload；
    - 输出中央 selection manifest 与每 run validation/test JSON。
 2. `scripts/summarize_20260915_typed_gated_hgnn_three_arm_screen.py`
    - 固定输入：HGNN selection/evaluation manifest、只读 MLP 六臂 evaluation manifest、两组 launch
@@ -149,9 +153,9 @@ target，不扩写现有六臂 MLP launcher。launcher 必须：
   <ARM>/seed<SEED>/test/final_ep0500_forced_hover.json
 ```
 
-orchestrator 必须在 selection locks 全部落盘前保持
-`test_tape_manifest_read=false`、`test_tape_payload_read_count=0`；锁定后才加载并校验 test manifest，
-随后启动 test jobs。任何顺序违例硬停止。
+orchestrator 启动时记录 `shared_tape_manifest_read=true`，但在 selection locks 全部落盘前必须保持
+`test_tape_payload_read_count=0`；锁定后才校验共享 manifest 中的 test split/条目，随后打开 test
+payload 并启动 test jobs。不得声称共享 manifest 在 selection 前未读取；任何 payload 顺序违例硬停止。
 
 ## 5. 结果隔离与命名
 
@@ -195,6 +199,19 @@ orchestrator 必须在 selection locks 全部落盘前保持
 不得另生成一套 HGNN 专属 tape，也不得使用更旧场景的 tape。replay 前必须从实际 tape manifest
 重新校验场景参数。
 
+这批 tape 的 generation HEAD 为 `2450a40`，HGNN execution HEAD 必然是新的 frozen implementation
+commit；两者允许不同，但不得删除版本兼容校验。新 orchestrator 必须执行以下替代门禁：
+
+- tape manifest 的 generation worktree dirty 列表必须为空；
+- manifest schema、scene parameters、validation/test split 和每个已打开 payload 的
+  `generation_context` 必须相互一致并符合本 spec；
+- tape manifest 记录的 `config.py`、`scripts/generate_fair_eval_tapes.py`、
+  `environment/exogenous_tape.py` 三个 git object 必须分别等于 frozen implementation commit 中对应
+  文件的 git object；
+- generation HEAD 只作为 provenance 记录，不要求等于 HGNN execution HEAD；
+- selection 前只对 validation split/条目/payload 执行上述校验；test split/条目/payload 的校验严格
+  延后到所有 selection locks 落盘之后。
+
 每个 HGNN run 独立执行：
 
 1. 只用 joint validation tape 100–119，在 checkpoint 320/360/400/450/500 中最小化
@@ -235,6 +252,16 @@ seed 5 跑一组 MLP KaHyPar OFF/ON 等价性 smoke，只用于验证是否可�
 9. validation/test checkpoint 恢复实测得到 `enable_kahypar=true`，并观察到 partition hyperedge；
 10. 服务器工作树、脚本对象版本和实际启动参数完整记录。
 
+KaHyPar 健康门禁不仅适用于 smoke，也适用于 9 个正式训练 run 及每一个 validation/test batch：
+
+- 分别记录完整 `kahypar_partition_status_counts`、`kahypar_circuit_open` 和观察到 type 3 partition
+  hyperedge 的 slot/episode 数；
+- 任一 `degraded_*` count 大于 0、`kahypar_circuit_open=true`，或整个 run/batch 从未观察到 type 3，
+  该 run/batch 立即标记 FAIL，不得计入技术 PASS；训练 FAIL 后不得进入评估，validation FAIL 后不得
+  selection，test FAIL 后不得汇总；
+- `disabled` 只允许对应活动任务数不足 2 的 slot；`no_base_hyperedges` 与 `cache_interval` 保持现有
+  正常语义，并分别计数，不把它们误判为降级。
+
 出现以下任一情况立即停止，不近似降级：
 
 - 任一冻结参数或 resolved flag 不匹配；
@@ -242,6 +269,7 @@ seed 5 跑一组 MLP KaHyPar OFF/ON 等价性 smoke，只用于验证是否可�
 - 需要修改 `environment/`、奖励定义、教师退火表或固定 tape；
 - tape manifest 场景校验失败，或 test tape 在 selection lock 前被读取；
 - typed-gated 前后向出现 NaN/Inf、正式 run 崩溃或 checkpoint 缺失；
+- 任一正式训练或评估 batch 的 KaHyPar 健康门禁失败；
 - 存在覆盖/混写 MLP 目录的风险；
 - 当前 MLP 训练仍占满 GPU 且安全排队无法建立。
 
