@@ -1,6 +1,6 @@
 # SPEC: 2026-09-15 typed-gated HGNN 三臂配对筛选
 
-**状态：** DRAFT（审查修订中，等待用户书面复核后冻结）
+**状态：** FROZEN（用户 2026-09-15 批准；明确取消 smoke，直接运行 9 个正式 run）
 **提出与批准：** 用户　**设计与执行：** Codex
 **基线协议：** `docs/superpowers/specs/2026-09-15-six-arm-realign-training.md`
 
@@ -45,10 +45,9 @@ HGNN treatment: task_encoder=typed_gated_hgnn, enable_kahypar=true
 partition；四类权重从相同值初始化，并通过现有 typed weight + residual gate 实现学习。本轮不修改
 HGNN 数学定义、不增加层数、不做超边消融。
 
-MLP 前向明确忽略 incidence matrix 和 hyperedge type IDs，因此不重跑正式 MLP control。为避免把
-该代码事实未经运行验证便写成实验前提，正式启动前必须用服务器短 smoke 实测 MLP 在 KaHyPar
-OFF/ON 下的非时间行为、更新结果及全局 Torch RNG 状态一致。若不一致，停止并报告，不得继续复用
-现有 MLP control。
+MLP 前向明确忽略 incidence matrix 和 hyperedge type IDs，因此不重跑正式 MLP control。本轮把
+HGNN 的 encoder、typed weighting、residual gate 与 KaHyPar partition 共同定义为一个完整 treatment，
+不声称“只开启 KaHyPar 对 MLP 的训练轨迹必然逐值无影响”。
 
 ### 3.2 冻结训练参数
 
@@ -183,7 +182,7 @@ payload 并启动 test jobs。不得声称共享 manifest 在 selection 前未�
 ## 6. GPU 调度
 
 - 当前六臂 MLP 正式训练优先；本轮不得与其争抢已占用的 7 张 GPU。
-- 所有 smoke、训练和评估只在服务器执行，本地只做静态检查和编辑。
+- 所有训练和评估只在服务器执行，本地只做静态检查和编辑。
 - 不修改 MLP 正在使用的服务器执行副本；HGNN 使用独立执行 worktree
   `/data2/zrj2025/HyperUAV-typed-gated-hgnn-20260915`。
 - 实施时先做一次服务器 PID/显存检查。
@@ -228,31 +227,21 @@ commit；两者允许不同，但不得删除版本兼容校验。新 orchestrat
 
 ## 8. 门禁与硬停止
 
-正式启动前，服务器执行配置门禁，并分别对 B2/C1/C2 跑 1 episode × 500 slot、horizon 125 的
-typed-gated smoke（每臂 4 次 PPO update，使用独立的 `*_smoke_ep1` 目录，不覆盖正式 run）。另以
-seed 5 跑一组 MLP KaHyPar OFF/ON 等价性 smoke，只用于验证是否可复用现有 MLP control。全部门禁
-由 `scripts/smoke_20260915_typed_gated_hgnn_three_arm_screen.py` 执行并写一个独立 JSON：
+用户明确取消任何 episode smoke。正式启动前只执行不推进环境、不做 PPO update 的静态/构造级
+preflight：
 
-```text
-/data2/zrj2025/uav-results/audits/20260915_typed_gated_hgnn_three_arm_screen_smoke.json
-```
-
-1. `typed_gated_hgnn` 前向、反向和 checkpoint round-trip 通过；
-2. 三个正式 smoke 中均实际出现 type 3 partition hyperedge；至少一次 KaHyPar `success`，允许正常的
-   `cache_interval`、`disabled`（活动任务不足）和 `no_base_hyperedges`，但任何 `degraded_*` 均硬停止；
-3. MLP 默认 runner 的 resolved argv 与改动前基准一致；
-4. 同 seed 的 MLP/typed 构造中，除 task encoder 外的共享模块初始参数逐张量相同；
-5. typed encoder seed 等于 training seed，且完整模型构造后的全局 Torch RNG state 与 MLP 路径相同；
-6. MLP KaHyPar OFF/ON smoke 的 task IDs/features、actor logits/actions、非时间训练指标、更新后所有
-   trainable tensors、environment 轨迹和最终 Torch RNG state 逐值相同；允许 wall-clock 和 partition
-   provenance 字段不同；
-7. B2/C1/C2 的 resolved reward/teacher flag 与已通过的门禁表逐格一致；raw teacher CLI 均为
+1. MLP 默认 runner 的 resolved argv 与改动前基准一致；
+2. 同 seed 的 MLP/typed 构造中，除 task encoder 外的共享模块初始参数逐张量相同；
+3. typed encoder seed 等于 training seed，且完整模型构造后的全局 Torch RNG state 与 MLP 路径相同；
+4. B2/C1/C2 的 resolved reward/teacher flag 与已通过的门禁表逐格一致；raw teacher CLI 均为
    `null`，C1/C2 resolved clock 为 2000，B2 无教师；
-8. 目标目录全部不存在，MLP control 目录只读且完整；
-9. validation/test checkpoint 恢复实测得到 `enable_kahypar=true`，并观察到 partition hyperedge；
-10. 服务器工作树、脚本对象版本和实际启动参数完整记录。
+5. 目标目录全部不存在，MLP control 目录只读且完整；
+6. 服务器工作树、脚本对象版本和实际启动参数完整记录。
 
-KaHyPar 健康门禁不仅适用于 smoke，也适用于 9 个正式训练 run 及每一个 validation/test batch：
+首次实际前向、反向、checkpoint round-trip、type 3 观测与 KaHyPar 健康检查均发生在 9 个正式 run
+中，不另跑 smoke；任一失败按下述硬停止规则处理，不得启动替代 run。
+
+KaHyPar 健康门禁适用于 9 个正式训练 run 及每一个 validation/test batch：
 
 - 分别记录完整 `kahypar_partition_status_counts`、`kahypar_circuit_open` 和观察到 type 3 partition
   hyperedge 的 slot/episode 数；
@@ -273,11 +262,10 @@ KaHyPar 健康门禁不仅适用于 smoke，也适用于 9 个正式训练 run �
 - 存在覆盖/混写 MLP 目录的风险；
 - 当前 MLP 训练仍占满 GPU 且安全排队无法建立。
 
-实现及本地静态检查通过后先提交 candidate implementation commit，并把它同步到上述独立服务器
-worktree 运行 smoke；若 smoke 失败，修复后生成新的 candidate commit 并重跑。首个通过全部 smoke
-且不再发生代码变化的 candidate commit 即标记为 frozen implementation commit。服务器执行副本必须
-满足 `HEAD == frozen implementation commit` 且 `git status --porcelain` 为空，才能启动 9 个正式
-run。正式 manifest 记录该 commit 和所有改动/执行脚本的 git object hash。
+实现及本地静态检查通过后直接提交 frozen implementation commit，并同步到上述独立服务器 worktree。
+服务器只执行同样的静态/构造级 preflight；满足 `HEAD == frozen implementation commit` 且
+`git status --porcelain` 为空后，直接启动 9 个正式 run。正式 manifest 记录该 commit 和所有改动/
+执行脚本的 git object hash。
 
 技术 PASS 定义为：上述门禁全部通过、9/9 正式训练完成且所有规定 checkpoint/评测结果完整。
 科学结果不设置为了“让 HGNN 过关”的单一阈值；根据三个 arm 内的配对 `J_per_offer`、真实系统
@@ -330,7 +318,7 @@ result path、checkpoint 选择、完整评估表、配对效应及本节规定�
 - 不增加 B1、C2A、C2B 的 HGNN 臂；
 - 不跑 `current_mean_hgnn` 或 `standard_weighted_hgnn`；
 - 不改 environment、reward、teacher schedule、PPO 或场景；
-- 不把 KaHyPar 对 MLP 无效当作未经 smoke 验证的事实；
+- 不运行任何额外 episode smoke；
 - 不做超边类型消融、参数量匹配或新增 seeds；
 - 不用 test 选 checkpoint；
 - 不从本轮结果下 HGNN vs MLP 最终论文结论。
