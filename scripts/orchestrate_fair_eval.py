@@ -11,8 +11,12 @@ import subprocess
 import sys
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from environment.exogenous_tape import read_tape
+from scripts.generate_fair_eval_tapes import scene_parameters
 APPROVED_ARMS = ("B1", "B2", "C2A", "C2B", "C2", "C1")
 APPROVED_SEEDS = (5, 86, 617)
 CANDIDATE_EPISODES = (320, 360, 400, 450, 500)
@@ -65,6 +69,11 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError("--run-prefix must be 20260915")
     if args.output_root.exists() or args.manifest.exists():
         raise FileExistsError("fair-evaluation output or manifest already exists")
+    validation_tape_audit = _validate_tapes(
+        tape_dir=args.tape_dir,
+        tape_ids=tuple(range(100, 120)),
+        required_split="validation",
+    )
     args.output_root.mkdir(parents=True)
     state: dict[str, Any] = {
         "schema": "six_arm_fair_eval_orchestrator_v2",
@@ -81,6 +90,9 @@ def main(argv: list[str] | None = None) -> int:
         "candidate_episodes": list(CANDIDATE_EPISODES),
         "selection_protocol": VALIDATION_PROTOCOL,
         "test_protocols": list(TEST_PROTOCOLS),
+        "validation_tape_audit": validation_tape_audit,
+        "test_tape_audit": None,
+        "test_tapes_read_after_selection_locked": None,
         "max_workers": int(args.max_workers),
         "gpus": list(args.gpus),
         "version": _version_record(),
@@ -171,6 +183,14 @@ def _run_all(
     state["status"] = "selection_locked"
     _write(args.manifest, state)
     _write(args.output_root / "selection_six_arm.json", selections)
+
+    state["test_tape_audit"] = _validate_tapes(
+        tape_dir=args.tape_dir,
+        tape_ids=tuple(range(200, 250)),
+        required_split="test",
+    )
+    state["test_tapes_read_after_selection_locked"] = True
+    _write(args.manifest, state)
 
     test_jobs: list[dict[str, Any]] = []
     for arm in arms:
@@ -368,6 +388,93 @@ def _version_record() -> dict[str, Any]:
         ),
         "env_git_object": _git("hash-object", str(ROOT / "environment" / "env.py")),
     }
+
+
+def _validate_tapes(
+    *, tape_dir: Path, tape_ids: tuple[int, ...], required_split: str
+) -> dict[str, Any]:
+    manifest_path = tape_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    expected_scene = scene_parameters()
+    if manifest.get("schema") != "hyperuav_exogenous_tape_manifest_v2":
+        raise ValueError("fixed-tape manifest schema is not v2")
+    if manifest.get("scene_parameters") != expected_scene:
+        raise ValueError("fixed-tape manifest scene parameters do not match runtime")
+    if manifest.get("version", {}).get("head") != _git("rev-parse", "HEAD"):
+        raise ValueError("fixed tapes were not generated from the execution commit")
+    if manifest.get("version", {}).get("dirty"):
+        raise ValueError("fixed tapes were generated from a dirty worktree")
+    if manifest.get("splits", {}).get(required_split) != list(tape_ids):
+        raise ValueError(f"fixed-tape {required_split} split does not match approved IDs")
+    rows = {int(row["tape_id"]): row for row in manifest.get("tapes", [])}
+    offer_count = 0
+    task_count = 0
+    for tape_id in tape_ids:
+        path = (tape_dir / f"tape_{tape_id:04d}.json.gz").resolve()
+        row = rows.get(tape_id)
+        if row is None or Path(row["path"]).resolve() != path:
+            raise ValueError(f"fixed-tape manifest path mismatch for tape {tape_id}")
+        payload = read_tape(path)
+        _validate_tape_payload(payload=payload, tape_id=tape_id, expected_scene=expected_scene)
+        offer_count += int(payload["offer_count"])
+        task_count += sum(len(offer["tasks"]) for slot in payload["slot_rows"] for offer in slot["offers"])
+    return {
+        "status": "pass",
+        "split": required_split,
+        "tape_ids": list(tape_ids),
+        "tape_count": len(tape_ids),
+        "offer_count": offer_count,
+        "task_count": task_count,
+        "scene_parameters": expected_scene,
+        "manifest_path": str(manifest_path.resolve()),
+    }
+
+
+def _validate_tape_payload(
+    *, payload: dict[str, Any], tape_id: int, expected_scene: dict[str, object]
+) -> None:
+    if int(payload["tape_id"]) != tape_id or int(payload["slots"]) != 500:
+        raise ValueError(f"fixed-tape identity or length mismatch for tape {tape_id}")
+    if payload.get("generation_context", {}).get("scene_parameters") != expected_scene:
+        raise ValueError(f"fixed-tape generation context mismatch for tape {tape_id}")
+    scene = payload["scene"]
+    observed_scene = {
+        "area_width": int(scene["area_width"]),
+        "area_height": int(scene["area_height"]),
+        "num_uavs": int(scene["num_uavs"]),
+        "num_ues": int(scene["num_ues"]),
+        "time_slot_duration": float(payload["time_slot_duration"]),
+        "hotspot_radius": float(scene["hotspot_radius"]),
+    }
+    for key, value in observed_scene.items():
+        if value != expected_scene[key]:
+            raise ValueError(f"fixed-tape scene mismatch for {key} in tape {tape_id}")
+    upload_levels = set(expected_scene["upload_bandwidth_mbps"])
+    download_levels = set(expected_scene["download_bandwidth_mbps"])
+    input_low, input_high = expected_scene["input_data_size_mb_range"]
+    output_low, output_high = expected_scene["output_data_size_mb_range"]
+    constant_low, constant_high = expected_scene["task_constant_range"]
+    task_low, task_high = expected_scene["dag_task_count_range"]
+    complexity_names = set(expected_scene["task_complexity_probabilities"])
+    for slot in payload["slot_rows"]:
+        for offer in slot["offers"]:
+            job = offer["job"]
+            tasks = offer["tasks"]
+            if not task_low <= len(tasks) <= task_high:
+                raise ValueError(f"DAG task count mismatch in tape {tape_id}")
+            if float(job["base_upload_bandwidth_mbps"]) not in upload_levels:
+                raise ValueError(f"upload bandwidth mismatch in tape {tape_id}")
+            if float(job["base_download_bandwidth_mbps"]) not in download_levels:
+                raise ValueError(f"download bandwidth mismatch in tape {tape_id}")
+            for task in tasks:
+                if not input_low <= float(task["input_data_size_mb"]) <= input_high:
+                    raise ValueError(f"task input range mismatch in tape {tape_id}")
+                if not output_low <= float(task["output_data_size_mb"]) <= output_high:
+                    raise ValueError(f"task output range mismatch in tape {tape_id}")
+                if not constant_low <= int(task["task_constant"]) <= constant_high:
+                    raise ValueError(f"task constant range mismatch in tape {tape_id}")
+                if str(task["task_complexity"]) not in complexity_names:
+                    raise ValueError(f"task complexity mismatch in tape {tape_id}")
 
 
 def _git(*args: str) -> str:
