@@ -245,9 +245,11 @@ def _resolved_completed_dag_weight(args: argparse.Namespace) -> float:
 
 def _resolved_teacher_anneal_total_updates(args: argparse.Namespace) -> int:
     """Resolve the original teacher clock independently of a replay stop cap."""
-    if args.reward_redesign_arm not in {"C1", "C2"}:
+    if args.reward_redesign_arm not in {"C1", "C2", "C2A", "C2B"}:
         if getattr(args, "teacher_anneal_total_updates", None) is not None:
-            raise ValueError("--teacher-anneal-total-updates requires reward arm C1 or C2")
+            raise ValueError(
+                "--teacher-anneal-total-updates requires reward arm C1, C2, C2A, or C2B"
+            )
         return 0
     override = getattr(args, "teacher_anneal_total_updates", None)
     if override is not None:
@@ -255,6 +257,26 @@ def _resolved_teacher_anneal_total_updates(args: argparse.Namespace) -> int:
     return int(args.episodes) * int(
         math.ceil(float(args.max_steps_per_episode) / float(args.rollout_horizon))
     )
+
+
+def _offloading_forecast_advantage_enabled(arm: str | None) -> bool:
+    return arm in {"N0", "N0-LOCAL", "B2D"}
+
+
+def resolved_reward_redesign_flags(args: argparse.Namespace) -> dict[str, bool | int]:
+    arm = getattr(args, "reward_redesign_arm", None)
+    ledger = RewardRedesignLedger(str(arm)) if arm is not None else None
+    return {
+        "offloading_eft_advantage": bool(
+            getattr(args, "offloading_eft_advantage", False)
+        ),
+        "movement_position_advantage": bool(
+            getattr(args, "movement_position_advantage", False)
+        ),
+        "forecast_enabled": bool(ledger is not None and ledger.forecast_enabled),
+        "offloading_forecast_advantage": _offloading_forecast_advantage_enabled(arm),
+        "teacher_anneal_total_updates": _resolved_teacher_anneal_total_updates(args),
+    }
 
 
 def _validated_offloading_action_value_controls(
@@ -1431,9 +1453,9 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             raise ValueError(f"unknown reward-redesign arm: {args.reward_redesign_arm}")
         if bool(args.dag_progress_potential_shaping):
             raise ValueError("reward-redesign arms cannot combine with DAG-progress shaping")
-        if args.reward_redesign_arm in {"C1", "C2"}:
-            args.offloading_eft_advantage = True
-            args.movement_position_advantage = True
+        if args.reward_redesign_arm in {"C1", "C2", "C2A", "C2B"}:
+            args.offloading_eft_advantage = args.reward_redesign_arm != "C2B"
+            args.movement_position_advantage = args.reward_redesign_arm != "C2A"
         elif bool(args.offloading_eft_advantage):
             raise ValueError("reward-redesign arms cannot combine with EFT advantage")
         if int(args.num_envs) != 1 or str(args.sampler_backend) != "synchronous":
@@ -1604,8 +1626,8 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             detach_critic_hgnn=bool(args.detach_critic_hgnn),
             clean_counterfactual_credit=clean_counterfactual_enabled,
             offloading_eft_advantage=bool(args.offloading_eft_advantage),
-            offloading_forecast_advantage=(
-                args.reward_redesign_arm in {"N0", "N0-LOCAL", "B2D"}
+            offloading_forecast_advantage=_offloading_forecast_advantage_enabled(
+                args.reward_redesign_arm
             ),
             forecast_scale_seconds=500.0,
             forecast_advantage_eta=(

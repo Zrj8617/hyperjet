@@ -15,7 +15,11 @@ if str(ROOT) not in sys.path:
 
 from environment.reward_redesign import REWARD_REDENOMINATION_ARMS
 from scripts.eval_clean_mainline import build_arg_parser as build_eval_parser, run_evaluation
-from scripts.train_clean_mainline import build_arg_parser as build_train_parser, run_training
+from scripts.train_clean_mainline import (
+    build_arg_parser as build_train_parser,
+    resolved_reward_redesign_flags,
+    run_training,
+)
 
 
 TB_TAGS = (
@@ -40,6 +44,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", required=True, type=int)
     parser.add_argument("--episodes", type=int, default=500)
     parser.add_argument("--steps", type=int, default=500)
+    parser.add_argument("--rollout-horizon", type=int, default=125)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--run-name", type=str, required=True)
@@ -129,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
     train_argv = [
             "--episodes", str(int(args.episodes)),
             "--max-steps-per-episode", str(int(args.steps)),
-            "--rollout-horizon", "128",
+            "--rollout-horizon", str(int(args.rollout_horizon)),
             "--seed", str(int(args.seed)),
             "--device", str(args.device),
             "--task-encoder", "mlp",
@@ -215,6 +220,7 @@ def main(argv: list[str] | None = None) -> int:
             "max_drain_steps": 0,
             "clean_training_rng_prelude": True,
         },
+        "resolved_flags": resolved_reward_redesign_flags(train_args),
         "tensorboard": {"directory": str(run_root / "tensorboard"), "tags": list(TB_TAGS)},
         "actual_parameters": vars(train_args),
         "version": {

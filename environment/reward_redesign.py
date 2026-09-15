@@ -13,6 +13,8 @@ REWARD_REDENOMINATION_ARMS = (
     "B2D",
     "C1",
     "C2",
+    "C2A",
+    "C2B",
     "D1",
     "D2",
     "N0-LOCAL",
@@ -39,7 +41,17 @@ class RewardRedesignLedger:
 
     @property
     def forecast_enabled(self) -> bool:
-        return self.arm in {"N0", "N0-LOCAL", "A2", "B2", "B2D", "C2", "D1"}
+        return self.arm in {
+            "N0",
+            "N0-LOCAL",
+            "A2",
+            "B2",
+            "B2D",
+            "C2",
+            "C2A",
+            "C2B",
+            "D1",
+        }
 
     @property
     def analytic_forecast_advantage(self) -> bool:

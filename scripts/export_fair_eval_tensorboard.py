@@ -1,4 +1,4 @@
-"""Export fixed-tape C1/B2/C2 evaluation rows as TensorBoard scalars."""
+"""Export parameterized fixed-tape evaluation rows as TensorBoard scalars."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from collections import defaultdict
 from pathlib import Path
 
 
-ARMS = ("C1", "B2", "C2")
 PROTOCOLS = ("forced_hover", "joint")
 CHECKPOINT_LABELS = ("budget_selected", "final_ep0500")
 METRICS = (
@@ -32,7 +31,25 @@ METRICS = (
     "task_energy_joules_total",
     "move_energy_joules_total",
     "energy_per_completed_DAG",
+    "hover_action_ratio",
 )
+
+
+def _csv_strings(value: str) -> tuple[str, ...]:
+    values = tuple(token.strip().upper() for token in value.split(",") if token.strip())
+    if not values or len(values) != len(set(values)):
+        raise argparse.ArgumentTypeError("values must be non-empty and unique")
+    return values
+
+
+def _csv_ints(value: str) -> tuple[int, ...]:
+    try:
+        values = tuple(int(token.strip()) for token in value.split(",") if token.strip())
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("values must be comma-separated integers") from exc
+    if not values or len(values) != len(set(values)):
+        raise argparse.ArgumentTypeError("values must be non-empty and unique")
+    return values
 
 
 def _summary_writer(log_dir: Path):
@@ -43,15 +60,15 @@ def _summary_writer(log_dir: Path):
     return SummaryWriter(log_dir=str(log_dir))
 
 
-def _load_rows(result_path: Path) -> list[dict]:
+def _load_rows(result_path: Path, *, expected_count: int) -> list[dict]:
     data = json.loads(result_path.read_text(encoding="utf-8"))
-    if data.get("schema") != "c1_b2_c2_fair_reevaluation_result_v1":
+    if data.get("schema") != "six_arm_fair_evaluation_result_v1":
         raise ValueError(f"unexpected result schema: {data.get('schema')!r}")
-    if data.get("status") != "pass" or data.get("track_a", {}).get("status") != "pass":
-        raise ValueError("only a PASS Track A result may be exported")
-    rows = data["track_a"]["test_rows"]
-    if len(rows) != 1800:
-        raise ValueError(f"expected 1800 test rows, got {len(rows)}")
+    if data.get("status") != "pass":
+        raise ValueError("only a PASS six-arm result may be exported")
+    rows = data["test_rows"]
+    if len(rows) != expected_count:
+        raise ValueError(f"expected {expected_count} test rows, got {len(rows)}")
     return rows
 
 
@@ -59,22 +76,29 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--result", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
+    parser.add_argument("--arms", type=_csv_strings, required=True)
+    parser.add_argument("--seeds", type=_csv_ints, required=True)
     args = parser.parse_args()
+    arms = tuple(args.arms)
+    seeds = tuple(args.seeds)
 
     if args.output_root.exists():
         raise FileExistsError(f"output root already exists: {args.output_root}")
 
     grouped: dict[tuple[str, int], list[dict]] = defaultdict(list)
-    for row in _load_rows(args.result):
+    expected_row_count = (
+        len(arms) * len(seeds) * len(PROTOCOLS) * len(CHECKPOINT_LABELS) * 50
+    )
+    for row in _load_rows(args.result, expected_count=expected_row_count):
         grouped[(row["arm"], int(row["model_seed"]))].append(row)
 
-    expected_groups = {(arm, seed) for arm in ARMS for seed in range(3)}
+    expected_groups = {(arm, seed) for arm in arms for seed in seeds}
     if set(grouped) != expected_groups:
         raise ValueError(f"unexpected arm/seed groups: {sorted(grouped)}")
 
     manifest_runs = []
-    for arm in ARMS:
-        for seed in range(3):
+    for arm in arms:
+        for seed in seeds:
             rows = sorted(
                 grouped[(arm, seed)],
                 key=lambda row: (
@@ -127,9 +151,10 @@ def main() -> int:
         "schema": "fair_eval_tensorboard_export_v1",
         "source_result": str(args.result),
         "step_semantics": "independent test tape id (200-249)",
-        "primary_prefix": "forced_hover/budget_selected",
-        "secondary_prefix": "joint",
-        "excluded": "Track B peak-epoch diagnostics",
+        "primary_prefix": "joint/budget_selected",
+        "secondary_prefix": "forced_hover",
+        "arms_order": list(arms),
+        "seeds": list(seeds),
         "metrics": list(METRICS),
         "runs": manifest_runs,
     }

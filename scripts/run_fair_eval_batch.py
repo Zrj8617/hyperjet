@@ -100,6 +100,11 @@ def main() -> None:
             policy_row.pop("last_info", None)
             policy_row.pop("_dag_flowtime_samples", None)
             policy_row.pop("_offloading_decisions", None)
+            hover_action_ratio = policy_row.get("hover_action_ratio")
+            if hover_action_ratio is None:
+                raise ValueError("evaluation did not report hover_action_ratio")
+            if args.protocol == "forced_hover" and float(hover_action_ratio) != 1.0:
+                raise AssertionError("forced_hover protocol must have hover_action_ratio=1")
             rows.append(
                 {
                     "arm": str(args.arm),
@@ -109,13 +114,14 @@ def main() -> None:
                     "tape_id": int(tape_id),
                     "tape_path": str(tape_path),
                     **_unified_cost(env=env, tape=tape),
+                    "hover_action_ratio": float(hover_action_ratio),
                     "policy_metrics": policy_row,
                 }
             )
     finally:
         graph_builder.close()
     result = {
-        "schema": "c1_b2_c2_fixed_tape_evaluation_v1",
+        "schema": "six_arm_fixed_tape_evaluation_v2",
         "status": "completed",
         "completed_at_utc": datetime.now(timezone.utc).isoformat(),
         "arm": str(args.arm),
