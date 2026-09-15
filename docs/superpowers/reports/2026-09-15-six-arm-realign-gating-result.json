@@ -1,0 +1,69 @@
+{
+  "schema": "six_arm_realign_gating_result_v1",
+  "status": "hard_stop",
+  "date": "2026-09-15",
+  "branch": "param-realign-20260914",
+  "implementation_commit": "e7056dada1b0c85057b12967a0525de2a814027c",
+  "server": {
+    "worktree": "/data2/zrj2025/HyperUAV-gating-20260915",
+    "head": "e7056dada1b0c85057b12967a0525de2a814027c",
+    "dirty_count": 0,
+    "device": "CUDA_VISIBLE_DEVICES=0",
+    "formal_runs_started": 0
+  },
+  "hard_stop": {
+    "spec_section": "6.3",
+    "reason": "B1/B2 fixed-trajectory ledger closure relative error is not below 1e-6",
+    "max_relative_error": 0.48917915414021346,
+    "threshold_strictly_less_than": 1e-6,
+    "server_total_result_written": false,
+    "expected_server_total_result_path": "/data2/zrj2025/uav-results/audits/20260915_six_arm_realign_gating_smoke.json"
+  },
+  "resolved_flags": {
+    "B1": {"offloading_eft_advantage": false, "movement_position_advantage": false, "forecast_enabled": false, "offloading_forecast_advantage": false, "teacher_anneal_total_updates": 0},
+    "B2": {"offloading_eft_advantage": false, "movement_position_advantage": false, "forecast_enabled": true, "offloading_forecast_advantage": false, "teacher_anneal_total_updates": 0},
+    "C2A": {"offloading_eft_advantage": true, "movement_position_advantage": false, "forecast_enabled": true, "offloading_forecast_advantage": false, "teacher_anneal_total_updates": 2000},
+    "C2B": {"offloading_eft_advantage": false, "movement_position_advantage": true, "forecast_enabled": true, "offloading_forecast_advantage": false, "teacher_anneal_total_updates": 2000},
+    "C2": {"offloading_eft_advantage": true, "movement_position_advantage": true, "forecast_enabled": true, "offloading_forecast_advantage": false, "teacher_anneal_total_updates": 2000},
+    "C1": {"offloading_eft_advantage": true, "movement_position_advantage": true, "forecast_enabled": false, "offloading_forecast_advantage": false, "teacher_anneal_total_updates": 2000}
+  },
+  "gates": {
+    "G1": "pass",
+    "G2": "pass",
+    "G3": "pass",
+    "G4": "pass_implementation_gate",
+    "G5": "pass_code_path_fixture",
+    "G6": "pass_implementation_gate",
+    "G7": "pass_numeric_fixture",
+    "G8": "pass_numeric_fixture",
+    "G9": "fail_ledger_closure"
+  },
+  "regression": {
+    "resolved_flag_table_matches": true,
+    "c1_c2_prechange_flags_match": true,
+    "six_arms_completed_five_episodes": true,
+    "all_rollouts_125_slots": true,
+    "updates_per_episode": 4,
+    "production_update_count_from_actual_parser": 2000
+  },
+  "arm_results": [
+    {"arm": "B1", "training_wall_seconds": 185.82945564202964, "result_path": "/data2/zrj2025/uav-results/audits/20260915_smoke_B1_seed5/result.json", "train_metrics_path": "/data2/zrj2025/uav-results/audits/20260915_smoke_B1_seed5/train/20260915_152435_20260915_smoke_B1_seed5_seed5/train_metrics.jsonl", "row_count": 20, "terminal_count": 5, "rollout_slot_counts": [125]},
+    {"arm": "B2", "training_wall_seconds": 215.3611980136484, "result_path": "/data2/zrj2025/uav-results/audits/20260915_smoke_B2_seed5/result.json", "train_metrics_path": "/data2/zrj2025/uav-results/audits/20260915_smoke_B2_seed5/train/20260915_152745_20260915_smoke_B2_seed5_seed5/train_metrics.jsonl", "row_count": 20, "terminal_count": 5, "rollout_slot_counts": [125]},
+    {"arm": "C2A", "training_wall_seconds": 213.40575670450926, "result_path": "/data2/zrj2025/uav-results/audits/20260915_smoke_C2A_seed5/result.json", "train_metrics_path": "/data2/zrj2025/uav-results/audits/20260915_smoke_C2A_seed5/train/20260915_153121_20260915_smoke_C2A_seed5_seed5/train_metrics.jsonl", "row_count": 20, "terminal_count": 5, "rollout_slot_counts": [125]},
+    {"arm": "C2B", "training_wall_seconds": 208.58451783657074, "result_path": "/data2/zrj2025/uav-results/audits/20260915_smoke_C2B_seed5/result.json", "train_metrics_path": "/data2/zrj2025/uav-results/audits/20260915_smoke_C2B_seed5/train/20260915_153455_20260915_smoke_C2B_seed5_seed5/train_metrics.jsonl", "row_count": 20, "terminal_count": 5, "rollout_slot_counts": [125]},
+    {"arm": "C2", "training_wall_seconds": 202.53505370765924, "result_path": "/data2/zrj2025/uav-results/audits/20260915_smoke_C2_seed5/result.json", "train_metrics_path": "/data2/zrj2025/uav-results/audits/20260915_smoke_C2_seed5/train/20260915_153823_20260915_smoke_C2_seed5_seed5/train_metrics.jsonl", "row_count": 20, "terminal_count": 5, "rollout_slot_counts": [125]},
+    {"arm": "C1", "training_wall_seconds": 175.88586433418095, "result_path": "/data2/zrj2025/uav-results/audits/20260915_smoke_C1_seed5/result.json", "train_metrics_path": "/data2/zrj2025/uav-results/audits/20260915_smoke_C1_seed5/train/20260915_154146_20260915_smoke_C1_seed5_seed5/train_metrics.jsonl", "row_count": 20, "terminal_count": 5, "rollout_slot_counts": [125]}
+  ],
+  "git_objects": {
+    "environment/reward_redesign.py": "3a2c63b95524244bdbdc96adfc175e6673b6af7b",
+    "scripts/train_clean_mainline.py": "4c77c8e5d470cbe54fa6e3d0ceb27b5076b7654c",
+    "scripts/run_reward_redesign_arm.py": "f2a6f0db4f04859ac7016e651b7c49e181a2daf6",
+    "scripts/orchestrate_fair_eval.py": "f803a033fcf8063fe3cf19858d0e04321c30d04f",
+    "scripts/launch_six_arm_realign_production.py": "db9de5fd845cabfb0f4520729231e96a357dbf08",
+    "scripts/run_fair_eval_batch.py": "21d7a332958ae873dd2dfc0922b13ed828fd74e9",
+    "scripts/summarize_c1_b2_c2_fair_reevaluation.py": "1fe2496a4cd2df54aa9b2dfba9f0a99295cf9b5a",
+    "scripts/export_fair_eval_tensorboard.py": "fd7dba11f4d01b423f974dbf039b28bd1749a2fc",
+    "scripts/export_unified_train_tensorboard.py": "515daabd2bc44ace9bddf0346a003cfdfcfc0c48",
+    "scripts/smoke_six_arm_realign_gating.py": "b9377b6b728f179c50e180a7b4703ef41d4099b6"
+  }
+}
