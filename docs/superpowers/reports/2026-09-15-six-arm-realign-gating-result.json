@@ -1,23 +1,34 @@
 {
-  "schema": "six_arm_realign_gating_result_v1",
-  "status": "hard_stop",
+  "schema": "six_arm_realign_gating_result_v2",
+  "status": "pass",
   "date": "2026-09-15",
   "branch": "param-realign-20260914",
-  "implementation_commit": "e7056dada1b0c85057b12967a0525de2a814027c",
+  "implementation_commit": "70c862a020d72d7faeba8bda06b84890423fbc2c",
   "server": {
     "worktree": "/data2/zrj2025/HyperUAV-gating-20260915",
-    "head": "e7056dada1b0c85057b12967a0525de2a814027c",
+    "head": "70c862a020d72d7faeba8bda06b84890423fbc2c",
     "dirty_count": 0,
-    "device": "CUDA_VISIBLE_DEVICES=0",
+    "device": "cuda:0",
     "formal_runs_started": 0
   },
-  "hard_stop": {
-    "spec_section": "6.3",
-    "reason": "B1/B2 fixed-trajectory ledger closure relative error is not below 1e-6",
+  "retest": {
+    "base_revision_synced_before_change": "8b881c1c45a98306f7c719f428f82cf338e45297",
+    "only_arm_rerun": "B2",
+    "seed": 5,
+    "episodes": 5,
+    "wall_seconds": 203.61405788175762,
+    "result_path": "/data2/zrj2025/uav-results/audits/20260915_g9_3_retest_B2_seed5/result.json",
+    "log_path": "/data2/zrj2025/uav-results/audits/20260915_g9_3_retest_B2_seed5.log",
+    "train_metrics_path": "/data2/zrj2025/uav-results/audits/20260915_g9_3_retest_B2_seed5/train/20260915_162121_20260915_g9_3_retest_B2_seed5_seed5/train_metrics.jsonl",
+    "row_count": 20,
+    "terminal_count": 5,
+    "rollout_slot_counts": [125]
+  },
+  "hard_stop": null,
+  "previous_hard_stop": {
+    "reason": "The original G9-3 ledger-closure premise was invalid and was superseded by spec section 10.",
     "max_relative_error": 0.48917915414021346,
-    "threshold_strictly_less_than": 1e-6,
-    "server_total_result_written": false,
-    "expected_server_total_result_path": "/data2/zrj2025/uav-results/audits/20260915_six_arm_realign_gating_smoke.json"
+    "report_commit": "3aa4b93"
   },
   "resolved_flags": {
     "B1": {"offloading_eft_advantage": false, "movement_position_advantage": false, "forecast_enabled": false, "offloading_forecast_advantage": false, "teacher_anneal_total_updates": 0},
@@ -36,7 +47,90 @@
     "G6": "pass_implementation_gate",
     "G7": "pass_numeric_fixture",
     "G8": "pass_numeric_fixture",
-    "G9": "fail_ledger_closure"
+    "G9": "pass_revised_ledger_relation"
+  },
+  "ledger_relation": {
+    "status": "pass",
+    "criterion": {
+      "dag_difference": "empty, or only DAGs arriving in the final slot",
+      "minimum_drift_explanation_percent": 95.0
+    },
+    "arms_rerun": ["B2"],
+    "arms_reused": ["B1", "C2A", "C2B", "C2", "C1"],
+    "server_result_path": "/data2/zrj2025/uav-results/audits/20260915_g9_3_retest_result.json",
+    "episodes": [
+      {
+        "episode": 0,
+        "b1_total_seconds": 97514.63293935727,
+        "b2_total_seconds": 49812.507281789076,
+        "relative_error": 0.4891791541402135,
+        "dag_set_sizes": {"b1_all_jobs": 190, "b2_admitted": 190, "b1_unfinished_jobs": 46, "b2_last_forecast": 46},
+        "dag_set_differences": {"all_jobs_minus_admitted": [], "admitted_minus_all_jobs": [], "unfinished_minus_last_forecast": [], "last_forecast_minus_unfinished": [], "last_slot_arrivals": []},
+        "sum_anchor_minus_initial_seconds": 83562.7667666416,
+        "sum_delta_phi_seconds": 35860.64110907345,
+        "unbooked_prediction_drift_seconds": 47702.12565756815,
+        "b1_minus_b2_seconds": 47702.12565756819,
+        "residual_seconds": 4.3655745685100555e-11,
+        "drift_explanation_percent": 99.99999999999991
+      },
+      {
+        "episode": 1,
+        "b1_total_seconds": 100991.68081964014,
+        "b2_total_seconds": 54470.443622005056,
+        "relative_error": 0.46064425128953757,
+        "dag_set_sizes": {"b1_all_jobs": 182, "b2_admitted": 182, "b1_unfinished_jobs": 47, "b2_last_forecast": 47},
+        "dag_set_differences": {"all_jobs_minus_admitted": [], "admitted_minus_all_jobs": [], "unfinished_minus_last_forecast": [], "last_forecast_minus_unfinished": [], "last_slot_arrivals": []},
+        "sum_anchor_minus_initial_seconds": 87809.66760736916,
+        "sum_delta_phi_seconds": 41288.43040973412,
+        "unbooked_prediction_drift_seconds": 46521.23719763504,
+        "b1_minus_b2_seconds": 46521.237197635084,
+        "residual_seconds": 4.3655745685100555e-11,
+        "drift_explanation_percent": 99.99999999999991
+      },
+      {
+        "episode": 2,
+        "b1_total_seconds": 103625.51819674757,
+        "b2_total_seconds": 58079.810473769474,
+        "relative_error": 0.43952212269282154,
+        "dag_set_sizes": {"b1_all_jobs": 173, "b2_admitted": 173, "b1_unfinished_jobs": 44, "b2_last_forecast": 44},
+        "dag_set_differences": {"all_jobs_minus_admitted": [], "admitted_minus_all_jobs": [], "unfinished_minus_last_forecast": [], "last_forecast_minus_unfinished": [], "last_slot_arrivals": []},
+        "sum_anchor_minus_initial_seconds": 90447.14215195733,
+        "sum_delta_phi_seconds": 44901.43442897933,
+        "unbooked_prediction_drift_seconds": 45545.707722978004,
+        "b1_minus_b2_seconds": 45545.70772297809,
+        "residual_seconds": 8.731149137020111e-11,
+        "drift_explanation_percent": 99.99999999999982
+      },
+      {
+        "episode": 3,
+        "b1_total_seconds": 105708.23824986327,
+        "b2_total_seconds": 65605.6324393035,
+        "relative_error": 0.37937067606565317,
+        "dag_set_sizes": {"b1_all_jobs": 170, "b2_admitted": 170, "b1_unfinished_jobs": 42, "b2_last_forecast": 42},
+        "dag_set_differences": {"all_jobs_minus_admitted": [], "admitted_minus_all_jobs": [], "unfinished_minus_last_forecast": [], "last_forecast_minus_unfinished": [], "last_slot_arrivals": []},
+        "sum_anchor_minus_initial_seconds": 89641.23762616451,
+        "sum_delta_phi_seconds": 49538.63181560472,
+        "unbooked_prediction_drift_seconds": 40102.60581055979,
+        "b1_minus_b2_seconds": 40102.60581055976,
+        "residual_seconds": -2.9103830456733704e-11,
+        "drift_explanation_percent": 99.99999999999993
+      },
+      {
+        "episode": 4,
+        "b1_total_seconds": 95283.02819948745,
+        "b2_total_seconds": 54546.13082437753,
+        "relative_error": 0.42753571275906466,
+        "dag_set_sizes": {"b1_all_jobs": 188, "b2_admitted": 188, "b1_unfinished_jobs": 46, "b2_last_forecast": 46},
+        "dag_set_differences": {"all_jobs_minus_admitted": [], "admitted_minus_all_jobs": [], "unfinished_minus_last_forecast": [], "last_forecast_minus_unfinished": [], "last_slot_arrivals": []},
+        "sum_anchor_minus_initial_seconds": 81684.2842360026,
+        "sum_delta_phi_seconds": 40947.38686089268,
+        "unbooked_prediction_drift_seconds": 40736.89737510992,
+        "b1_minus_b2_seconds": 40736.897375109926,
+        "residual_seconds": 7.275957614183426e-12,
+        "drift_explanation_percent": 99.99999999999997
+      }
+    ],
+    "maximum_absolute_residual_seconds": 8.731149137020111e-11
   },
   "regression": {
     "resolved_flag_table_matches": true,
@@ -64,6 +158,6 @@
     "scripts/summarize_c1_b2_c2_fair_reevaluation.py": "1fe2496a4cd2df54aa9b2dfba9f0a99295cf9b5a",
     "scripts/export_fair_eval_tensorboard.py": "fd7dba11f4d01b423f974dbf039b28bd1749a2fc",
     "scripts/export_unified_train_tensorboard.py": "515daabd2bc44ace9bddf0346a003cfdfcfc0c48",
-    "scripts/smoke_six_arm_realign_gating.py": "b9377b6b728f179c50e180a7b4703ef41d4099b6"
+    "scripts/smoke_six_arm_realign_gating.py": "d13377a299f14c4e9a6004350e3e3aa36ccbcd04"
   }
 }
