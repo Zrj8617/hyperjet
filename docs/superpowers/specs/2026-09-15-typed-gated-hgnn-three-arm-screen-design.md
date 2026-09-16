@@ -181,13 +181,15 @@ payload 并启动 test jobs。不得声称共享 manifest 在 selection 前未�
 
 ## 6. GPU 调度
 
-- 当前六臂 MLP 正式训练优先；本轮不得与其争抢已占用的 7 张 GPU。
+- 2026-09-16 用户修订调度决定：无需等待全部 MLP 结束；只要卡上有足够空闲显存，就立即并行填入
+  HGNN run。启动前仍须读取每个 MLP run 已落盘的实际 `config.json` 或完成后的 `result.json` 做参数
+  门禁，不得退回从 `config.py` 推断。
 - 所有训练和评估只在服务器执行，本地只做静态检查和编辑。
 - 不修改 MLP 正在使用的服务器执行副本；HGNN 使用独立执行 worktree
   `/data2/zrj2025/HyperUAV-typed-gated-hgnn-20260915`。
 - 实施时先做一次服务器 PID/显存检查。
-- 若 MLP 仍在运行，使用独立 dated queue launcher 等待那些已记录的 MLP PID 结束后再启动，
-  不由 Codex 循环轮询；返回 queue PID、log path、最终 result paths 和基于现有 run 的 ETA。
+- MLP 尚未结束不构成等待条件；launcher 根据启动时 `nvidia-smi` 的实际空闲显存立即排布，并返回
+  launcher PID、log path、最终 result paths 和 ETA，不由 Codex 循环轮询。
 - GPU 释放后用满 7 张卡：前 7 个 run 各占一卡，剩余 2 个放到显存余量最大的卡上；实际分配
   以启动时 `nvidia-smi` 为准并写入 manifest。
 - 9 个正式 run 挂上后停止监控。

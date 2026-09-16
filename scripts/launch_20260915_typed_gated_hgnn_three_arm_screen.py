@@ -64,47 +64,36 @@ def _read_mlp_manifest(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _completed_mlp_results(manifest: dict[str, Any]) -> dict[tuple[str, int], dict[str, Any]] | None:
-    results: dict[tuple[str, int], dict[str, Any]] = {}
+def _mlp_control_records(manifest: dict[str, Any]) -> dict[tuple[str, int], dict[str, Any]]:
+    records: dict[tuple[str, int], dict[str, Any]] = {}
     for row in manifest.get("runs", []):
         arm = str(row["arm"])
         seed = int(row["seed"])
+        if arm not in ARMS or seed not in SEEDS:
+            continue
         result_path = Path(row["result_path"])
-        if not result_path.is_file():
-            try:
-                os.kill(int(row["pid"]), 0)
-            except ProcessLookupError as exc:
-                raise RuntimeError(f"MLP process exited without result: {result_path}") from exc
-            except PermissionError:
-                pass
-            return None
-        result = json.loads(result_path.read_text(encoding="utf-8"))
-        if result.get("status") != "completed":
-            raise RuntimeError(f"MLP control failed: {result_path}")
-        if arm in ARMS and seed in SEEDS:
-            results[(arm, seed)] = result
+        if result_path.is_file():
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            if result.get("status") != "completed":
+                raise RuntimeError(f"MLP control failed: {result_path}")
+            result["control_record_source"] = str(result_path)
+            records[(arm, seed)] = result
+            continue
+        config_paths = sorted((result_path.parent / "train").glob("*/config.json"))
+        if len(config_paths) != 1:
+            raise RuntimeError(f"expected one actual MLP config record for {arm}/{seed}")
+        config_payload = json.loads(config_paths[0].read_text(encoding="utf-8"))
+        cli = dict(config_payload["cli"])
+        records[(arm, seed)] = {
+            "run_name": cli["run_name"],
+            "actual_parameters": cli,
+            "resolved_flags": resolved_reward_redesign_flags(argparse.Namespace(**cli)),
+            "control_record_source": str(config_paths[0]),
+        }
     expected = {(arm, seed) for arm in ARMS for seed in SEEDS}
-    if set(results) != expected:
+    if set(records) != expected:
         raise ValueError("MLP manifest does not contain the required B2/C1/C2 controls")
-    return results
-
-
-def _wait_for_mlp(args: argparse.Namespace) -> dict[tuple[str, int], dict[str, Any]]:
-    manifest = _read_mlp_manifest(args.mlp_manifest)
-    _write(
-        args.queue_status,
-        {
-            "schema": "typed_gated_hgnn_queue_v1",
-            "status": "waiting_for_mlp",
-            "started_at_utc": datetime.now(timezone.utc).isoformat(),
-            "mlp_manifest": str(args.mlp_manifest),
-        },
-    )
-    while True:
-        results = _completed_mlp_results(manifest)
-        if results is not None:
-            return results
-        time.sleep(max(int(args.poll_seconds), 30))
+    return records
 
 
 def _training_args(*, arm: str, seed: int) -> argparse.Namespace:
@@ -204,6 +193,7 @@ def _validate_controls(
                 raise ValueError(f"resolved teacher clock mismatch for {arm}/{seed}")
             audited[f"{arm}/seed{seed}"] = {
                 "mlp_result": str(result.get("run_name")),
+                "control_record_source": str(result["control_record_source"]),
                 "raw_teacher_anneal_total_updates": actual.get("teacher_anneal_total_updates"),
                 "resolved_teacher_updates": resolved_updates if arm in {"C1", "C2"} else None,
                 "resolved_flags": hgnn_flags,
@@ -329,7 +319,7 @@ def main(argv: list[str] | None = None) -> int:
     if len(gpus) != 7 or len(set(gpus)) != 7:
         raise ValueError("exactly seven unique GPU ids are required")
 
-    mlp_results = _wait_for_mlp(args)
+    mlp_results = _mlp_control_records(_read_mlp_manifest(args.mlp_manifest))
     version = _version()
     if version["dirty"]:
         raise RuntimeError("formal launch requires a clean server worktree")
