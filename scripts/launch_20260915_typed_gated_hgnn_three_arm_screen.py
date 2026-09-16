@@ -97,7 +97,7 @@ def _mlp_control_records(manifest: dict[str, Any]) -> dict[tuple[str, int], dict
 
 
 def _training_args(*, arm: str, seed: int) -> argparse.Namespace:
-    return build_train_parser().parse_args(
+    args = build_train_parser().parse_args(
         [
             "--episodes", "500",
             "--max-steps-per-episode", "500",
@@ -111,6 +111,10 @@ def _training_args(*, arm: str, seed: int) -> argparse.Namespace:
             "--no-dag-progress-potential-shaping",
         ]
     )
+    if arm in {"C1", "C2", "C2A", "C2B"}:
+        args.offloading_eft_advantage = arm != "C2B"
+        args.movement_position_advantage = arm != "C2A"
+    return args
 
 
 def _runner_default_preflight() -> dict[str, Any]:
