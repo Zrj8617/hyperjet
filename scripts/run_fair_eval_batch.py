@@ -52,6 +52,8 @@ def main() -> None:
     device = torch.device(str(args.device))
     checkpoint_payload = _load_trusted_checkpoint(torch, args.checkpoint)
     controls = checkpoint_experiment_controls(checkpoint_payload)
+    enable_kahypar = bool(controls["enable_kahypar"])
+    config.ENABLE_KAHYPAR_PARTITION_HYPEREDGES = enable_kahypar
     dims_args = argparse.Namespace(task_embedding_dim=None, hidden_dim=None)
     modules = _build_modules(
         dims=_module_dims_from_checkpoint(checkpoint_payload, dims_args),
@@ -120,15 +122,46 @@ def main() -> None:
             )
     finally:
         graph_builder.close()
+    status_counts: dict[str, int] = {}
+    degraded_count = 0
+    type3_slot_count = 0
+    invalid_disabled_count = 0
+    for row in rows:
+        metrics = dict(row.get("policy_metrics", {}))
+        for status, count in dict(metrics.get("kahypar_partition_status_counts", {})).items():
+            status_counts[str(status)] = status_counts.get(str(status), 0) + int(count)
+        degraded_count += int(metrics.get("kahypar_degraded_slot_count", 0))
+        type3_slot_count += int(metrics.get("kahypar_partition_nonzero_slot_count", 0))
+        invalid_disabled_count += int(metrics.get("kahypar_invalid_disabled_count", 0))
+    kahypar_health = {
+        "enabled_from_checkpoint": enable_kahypar,
+        "partition_status_counts": dict(sorted(status_counts.items())),
+        "degraded_count": int(degraded_count),
+        "type3_slot_count": int(type3_slot_count),
+        "invalid_disabled_count": int(invalid_disabled_count),
+        "circuit_open": bool(graph_builder.kahypar_circuit_open),
+    }
+    kahypar_health["pass"] = bool(
+        not enable_kahypar
+        or (
+            int(degraded_count) == 0
+            and int(type3_slot_count) > 0
+            and int(invalid_disabled_count) == 0
+            and not bool(kahypar_health["circuit_open"])
+        )
+    )
     result = {
         "schema": "six_arm_fixed_tape_evaluation_v2",
-        "status": "completed",
+        "status": "completed" if bool(kahypar_health["pass"]) else "failed_kahypar",
         "completed_at_utc": datetime.now(timezone.utc).isoformat(),
         "arm": str(args.arm),
         "model_seed": int(args.model_seed),
         "checkpoint": str(args.checkpoint),
         "checkpoint_label": str(args.checkpoint_label),
         "protocol": str(args.protocol),
+        "task_encoder": str(controls["task_encoder"]),
+        "enable_kahypar": enable_kahypar,
+        "kahypar_health": kahypar_health,
         "tape_ids": tape_ids,
         "rows": rows,
         "actual_parameters": controls,
@@ -136,6 +169,8 @@ def main() -> None:
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
+    if not bool(kahypar_health["pass"]):
+        raise RuntimeError(f"KaHyPar evaluation health gate failed: {kahypar_health}")
     print(json.dumps({"status": "completed", "output": str(args.output), "row_count": len(rows)}, sort_keys=True))
 
 

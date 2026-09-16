@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -97,6 +98,49 @@ def _normalize_task_encoder_for_comparison(task_encoder: str) -> str:
     if value not in TASK_ENCODER_CHOICES:
         raise ValueError(f"unsupported task encoder: {value}")
     return value
+
+
+def _build_rng_neutral_comparison_task_encoder(
+    *,
+    builder: Any,
+    torch: Any,
+    encoder_type: str,
+    task_feature_dim: int,
+    hidden_dim: int,
+    output_dim: int,
+    training_seed: int,
+    enabled: bool,
+) -> Any:
+    """Build a treatment encoder without shifting the shared-module RNG stream."""
+
+    if not bool(enabled):
+        return builder(
+            encoder_type=str(encoder_type),
+            task_feature_dim=int(task_feature_dim),
+            hidden_dim=int(hidden_dim),
+            output_dim=int(output_dim),
+        )
+    if _normalize_task_encoder_for_comparison(str(encoder_type)) != TASK_ENCODER_TYPED_GATED_HGNN:
+        raise ValueError(
+            "RNG-neutral comparison initialization requires typed_gated_hgnn"
+        )
+
+    reference_mlp = builder(
+        encoder_type=TASK_ENCODER_MLP,
+        task_feature_dim=int(task_feature_dim),
+        hidden_dim=int(hidden_dim),
+        output_dim=int(output_dim),
+    )
+    del reference_mlp
+    devices = list(range(int(torch.cuda.device_count()))) if torch.cuda.is_available() else []
+    with torch.random.fork_rng(devices=devices):
+        torch.manual_seed(int(training_seed))
+        return builder(
+            encoder_type=str(encoder_type),
+            task_feature_dim=int(task_feature_dim),
+            hidden_dim=int(hidden_dim),
+            output_dim=int(output_dim),
+        )
 
 
 def _validated_completed_dag_weight(value: str | float) -> float:
@@ -565,6 +609,12 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("checkpoint value_clip_epsilon must be finite and non-negative")
     task_encoder = str(cli.get("task_encoder", "hgnn"))
     _normalize_task_encoder_for_comparison(task_encoder)
+    enable_kahypar = cli.get(
+        "enable_kahypar",
+        experiment_controls.get("enable_kahypar", False),
+    )
+    if not isinstance(enable_kahypar, bool):
+        raise ValueError("checkpoint enable_kahypar must be boolean")
     critic_task_pooling = normalize_clean_critic_task_pooling(
         cli.get(
             "critic_task_pooling",
@@ -659,6 +709,7 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
         "normalize_value_targets": normalize_value_targets,
         "value_clip_epsilon": value_clip_epsilon,
         "task_encoder": task_encoder,
+        "enable_kahypar": enable_kahypar,
         "critic_task_pooling": critic_task_pooling,
         "num_envs": num_envs,
         "sampler_backend": sampler_backend,
@@ -788,6 +839,12 @@ def validate_resume_experiment_controls(
         raise ValueError(
             "resume checkpoint task encoder mismatch: "
             f"requested {requested_task_encoder}, checkpoint {saved['task_encoder']}"
+        )
+    requested_enable_kahypar = bool(getattr(args, "enable_kahypar", False))
+    if requested_enable_kahypar != bool(saved["enable_kahypar"]):
+        raise ValueError(
+            "resume checkpoint KaHyPar mode mismatch: "
+            f"requested {requested_enable_kahypar}, checkpoint {saved['enable_kahypar']}"
         )
     requested_critic_task_pooling = normalize_clean_critic_task_pooling(
         getattr(args, "critic_task_pooling", "mean")
@@ -1064,6 +1121,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "new skeleton modes are standard_weighted_hgnn and typed_gated_hgnn."
         ),
     )
+    parser.add_argument(
+        "--rng-neutral-task-encoder-comparison",
+        action="store_true",
+        default=False,
+        help=(
+            "Initialize typed_gated_hgnn in an isolated RNG context while advancing "
+            "the shared RNG stream exactly as the MLP encoder path would."
+        ),
+    )
     parser.add_argument("--ppo-epochs", type=int, default=1)
     parser.add_argument("--max-grad-norm", type=float, default=0.5)
     parser.add_argument(
@@ -1307,6 +1373,14 @@ def build_config_snapshot(args: argparse.Namespace) -> dict[str, Any]:
             "normalize_value_targets": bool(args.normalize_value_targets),
             "value_clip_epsilon": float(args.value_clip_epsilon),
             "task_encoder": str(args.task_encoder),
+            "rng_neutral_task_encoder_comparison": bool(
+                getattr(args, "rng_neutral_task_encoder_comparison", False)
+            ),
+            "typed_encoder_seed": (
+                int(args.seed)
+                if bool(getattr(args, "rng_neutral_task_encoder_comparison", False))
+                else None
+            ),
             "num_envs": int(args.num_envs),
             "sampler_backend": str(args.sampler_backend),
             "environment_seeds": [
@@ -1470,6 +1544,13 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("--max-updates diagnostic control currently requires --num-envs 1")
     if float(args.eft_auxiliary_lambda_initial) > 0.0 and str(args.task_encoder) != "mlp":
         raise ValueError("EFT auxiliary diagnostic requires --task-encoder mlp")
+    if bool(getattr(args, "rng_neutral_task_encoder_comparison", False)) and (
+        _normalize_task_encoder_for_comparison(str(args.task_encoder))
+        != TASK_ENCODER_TYPED_GATED_HGNN
+    ):
+        raise ValueError(
+            "--rng-neutral-task-encoder-comparison requires --task-encoder typed_gated_hgnn"
+        )
     if float(args.eft_auxiliary_lambda_initial) > 0.0 and not bool(args.freeze_movement):
         raise ValueError("EFT auxiliary diagnostic requires --freeze-movement")
     if (
@@ -1550,11 +1631,15 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         if lagged_q_enabled
         else None
     )
-    task_encoder = build_clean_task_encoder(
+    task_encoder = _build_rng_neutral_comparison_task_encoder(
+        builder=build_clean_task_encoder,
+        torch=torch,
         encoder_type=str(args.task_encoder),
         task_feature_dim=task_feature_dim,
         hidden_dim=int(args.hidden_dim),
         output_dim=int(args.task_embedding_dim),
+        training_seed=int(args.seed),
+        enabled=bool(getattr(args, "rng_neutral_task_encoder_comparison", False)),
     )
     decision_critic_enabled = bool(args.decision_critic)
     offloading_decision_critic = (
@@ -1860,6 +1945,9 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     )
     progress = _make_progress_bar(total=max(int(args.episodes) - start_episode, 0) * int(args.max_steps_per_episode))
     max_updates_reached = False
+    kahypar_status_counts: Counter[str] = Counter()
+    kahypar_type3_slot_count = 0
+    kahypar_invalid_disabled_count = 0
     try:
         for episode in range(start_episode, int(args.episodes)):
             env.reset()
@@ -1913,6 +2001,12 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                     reward_redesign_ledger=reward_redesign_ledger,
                     rollout_cost_diagnostics=bool(args.rollout_cost_diagnostics),
                 )
+                partition_status = str(info.get("kahypar_partition_status", "disabled"))
+                kahypar_status_counts[partition_status] += 1
+                if int(info.get("kahypar_partition_hyperedge_count", 0)) > 0:
+                    kahypar_type3_slot_count += 1
+                if partition_status == "disabled" and int(info.get("active_task_count", 0)) >= 2:
+                    kahypar_invalid_disabled_count += 1
                 global_slot += 1
                 episode_reward += float(slot_record.reward)
                 episode_component_totals["reward"] += float(info.get("step_reward", 0.0))
@@ -2218,6 +2312,15 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         "kahypar_last_failure_reason": graph_builder.kahypar_last_failure_reason,
         "kahypar_cleanup_failed": bool(graph_builder.kahypar_cleanup_failed),
         "kahypar_worker_alive_after_close": bool(graph_builder.kahypar_worker_alive),
+        **(
+            {
+                "kahypar_partition_status_counts": dict(sorted(kahypar_status_counts.items())),
+                "kahypar_type3_slot_count": int(kahypar_type3_slot_count),
+                "kahypar_invalid_disabled_count": int(kahypar_invalid_disabled_count),
+            }
+            if bool(args.enable_kahypar)
+            else {}
+        ),
     }
 
 
@@ -3865,6 +3968,9 @@ def _finish_collect_clean_slot(
     partition_status = str(getattr(graph_snapshot, "partition_status", "disabled"))
     info["kahypar_partition_status"] = partition_status
     info["kahypar_partition_hyperedge_count"] = int(len(graph_snapshot.partition_hyperedges))
+    if bool(config.ENABLE_KAHYPAR_PARTITION_HYPEREDGES):
+        info["kahypar_health_diagnostics_enabled"] = True
+        info["active_task_count"] = int(len(graph_snapshot.active_task_ids))
     if partition_status.startswith("degraded"):
         info["kahypar_degraded_label"] = str(config.KAHYPAR_DEGRADED_EXPERIMENT_LABEL)
     return slot_record, bool(done), info

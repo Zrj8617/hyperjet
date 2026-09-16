@@ -14,8 +14,14 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from environment.reward_redesign import REWARD_REDENOMINATION_ARMS
-from scripts.eval_clean_mainline import build_arg_parser as build_eval_parser, run_evaluation
+from scripts.eval_clean_mainline import (
+    _load_trusted_checkpoint,
+    _require_torch,
+    build_arg_parser as build_eval_parser,
+    run_evaluation,
+)
 from scripts.train_clean_mainline import (
+    TASK_ENCODER_CHOICES,
     build_arg_parser as build_train_parser,
     resolved_reward_redesign_flags,
     run_training,
@@ -46,6 +52,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--steps", type=int, default=500)
     parser.add_argument("--rollout-horizon", type=int, default=125)
     parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--task-encoder", choices=TASK_ENCODER_CHOICES, default="mlp")
+    parser.add_argument("--enable-kahypar", action="store_true", default=False)
+    parser.add_argument(
+        "--rng-neutral-task-encoder-comparison",
+        action="store_true",
+        default=False,
+    )
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--run-name", type=str, required=True)
     parser.add_argument("--max-updates", type=int, default=None)
@@ -71,6 +84,18 @@ def _writer(path: Path) -> Any:
     except ModuleNotFoundError:
         from torch.utils.tensorboard import SummaryWriter
     return SummaryWriter(str(path))
+
+
+def _parameter_counts(checkpoint: Path) -> dict[str, int]:
+    torch = _require_torch()
+    payload = _load_trusted_checkpoint(torch, checkpoint)
+    names = ("hgnn", "movement_actor", "offloading_actor", "critic")
+    counts = {
+        name: int(sum(int(tensor.numel()) for tensor in payload[name].values()))
+        for name in names
+    }
+    counts["total_policy_value_modules"] = int(sum(counts.values()))
+    return counts
 
 
 def _write_tensorboard(
@@ -137,12 +162,16 @@ def main(argv: list[str] | None = None) -> int:
             "--rollout-horizon", str(int(args.rollout_horizon)),
             "--seed", str(int(args.seed)),
             "--device", str(args.device),
-            "--task-encoder", "mlp",
+            "--task-encoder", str(args.task_encoder),
             "--output-dir", str(run_root / "train"),
             "--run-name", str(args.run_name),
             "--reward-redesign-arm", str(args.arm),
             "--no-dag-progress-potential-shaping",
         ]
+    if bool(args.enable_kahypar):
+        train_argv.append("--enable-kahypar")
+    if bool(args.rng_neutral_task_encoder_comparison):
+        train_argv.append("--rng-neutral-task-encoder-comparison")
     if args.max_updates is not None:
         train_argv.extend(["--max-updates", str(int(args.max_updates))])
     if args.teacher_anneal_total_updates is not None:
@@ -164,8 +193,7 @@ def main(argv: list[str] | None = None) -> int:
     if bool(args.skip_eval):
         evaluation = {"status": "skipped_diagnostic_replay"}
     else:
-        eval_args = build_eval_parser().parse_args(
-            [
+        eval_argv = [
             "--checkpoint", str(checkpoint),
             "--episodes", "20",
             "--arrival-steps", "500",
@@ -178,8 +206,10 @@ def main(argv: list[str] | None = None) -> int:
             "--freeze-movement",
             "--clean-training-rng-prelude",
             "--no-render",
-            ]
-        )
+        ]
+        if bool(args.enable_kahypar):
+            eval_argv.append("--enable-kahypar")
+        eval_args = build_eval_parser().parse_args(eval_argv)
         evaluation_started_wall = perf_counter()
         evaluation = run_evaluation(eval_args)
         evaluation_wall_seconds = float(perf_counter() - evaluation_started_wall)
@@ -193,9 +223,34 @@ def main(argv: list[str] | None = None) -> int:
     forecast_wall_seconds = sum(
         float(row.get("ppo_forecast_wall_seconds", 0.0)) for row in train_rows
     )
+    kahypar_status_counts = dict(train_result.get("kahypar_partition_status_counts", {}))
+    degraded_count = sum(
+        int(count)
+        for status, count in kahypar_status_counts.items()
+        if str(status).startswith("degraded")
+    )
+    kahypar_health = {
+        "required": bool(args.enable_kahypar),
+        "partition_status_counts": kahypar_status_counts,
+        "type3_slot_count": int(train_result.get("kahypar_type3_slot_count", 0)),
+        "invalid_disabled_count": int(
+            train_result.get("kahypar_invalid_disabled_count", 0)
+        ),
+        "degraded_count": int(degraded_count),
+        "circuit_open": bool(train_result.get("kahypar_circuit_open", False)),
+    }
+    kahypar_health["pass"] = bool(
+        not kahypar_health["required"]
+        or (
+            int(kahypar_health["degraded_count"]) == 0
+            and not bool(kahypar_health["circuit_open"])
+            and int(kahypar_health["type3_slot_count"]) > 0
+            and int(kahypar_health["invalid_disabled_count"]) == 0
+        )
+    )
     result = {
         "schema": "reward_redesign_arm_v2",
-        "status": "completed",
+        "status": "completed" if bool(kahypar_health["pass"]) else "failed_kahypar",
         "run_name": str(args.run_name),
         "arm": str(args.arm),
         "seed": int(args.seed),
@@ -230,10 +285,18 @@ def main(argv: list[str] | None = None) -> int:
             "trainer_git_object": _git("hash-object", str(ROOT / "scripts" / "train_clean_mainline.py")),
         },
     }
+    if bool(args.enable_kahypar):
+        result["parameter_counts"] = _parameter_counts(checkpoint)
+        result["kahypar_health"] = kahypar_health
+        result["version"]["hgnn_git_object"] = _git(
+            "hash-object", str(ROOT / "marl_models" / "hgnn" / "clean_incidence.py")
+        )
     (run_root / "result.json").write_text(
         json.dumps(result, indent=2, sort_keys=True, default=str), encoding="utf-8"
     )
-    print(json.dumps({"status": "completed", "result": str(run_root / "result.json")}))
+    print(json.dumps({"status": result["status"], "result": str(run_root / "result.json")}))
+    if not bool(kahypar_health["pass"]):
+        raise RuntimeError(f"KaHyPar health gate failed: {kahypar_health}")
     return 0
 
 

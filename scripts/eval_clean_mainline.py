@@ -412,6 +412,7 @@ def _run_eval_episode(
     kahypar_status_counts: dict[str, int] = {}
     kahypar_partition_hyperedge_total = 0
     kahypar_partition_nonzero_slot_count = 0
+    kahypar_invalid_disabled_count = 0
     offloading_decisions: list[dict[str, Any]] = []
 
     for _ in range(max(int(arrival_steps), 0)):
@@ -440,6 +441,7 @@ def _run_eval_episode(
         assignment_buffer_entry_total += int(info.get("assignment_buffer_entry_count", 0))
         committed_assignment_total += int(info.get("newly_assigned_tasks", 0))
         _count_kahypar_status(kahypar_status_counts, info)
+        kahypar_invalid_disabled_count += _kahypar_invalid_disabled(info)
         partition_edge_count = int(info.get("kahypar_partition_hyperedge_count", 0))
         kahypar_partition_hyperedge_total += partition_edge_count
         kahypar_partition_nonzero_slot_count += int(partition_edge_count > 0)
@@ -474,6 +476,7 @@ def _run_eval_episode(
         assignment_buffer_entry_total += int(info.get("assignment_buffer_entry_count", 0))
         committed_assignment_total += int(info.get("newly_assigned_tasks", 0))
         _count_kahypar_status(kahypar_status_counts, info)
+        kahypar_invalid_disabled_count += _kahypar_invalid_disabled(info)
         partition_edge_count = int(info.get("kahypar_partition_hyperedge_count", 0))
         kahypar_partition_hyperedge_total += partition_edge_count
         kahypar_partition_nonzero_slot_count += int(partition_edge_count > 0)
@@ -548,6 +551,7 @@ def _run_eval_episode(
         "kahypar_success_slot_count": int(kahypar_status_counts.get("success", 0)),
         "kahypar_partition_hyperedge_total": int(kahypar_partition_hyperedge_total),
         "kahypar_partition_nonzero_slot_count": int(kahypar_partition_nonzero_slot_count),
+        "kahypar_invalid_disabled_count": int(kahypar_invalid_disabled_count),
         "kahypar_degraded_label": (
             str(config.KAHYPAR_DEGRADED_EXPERIMENT_LABEL)
             if any(str(status).startswith("degraded") for status in kahypar_status_counts)
@@ -635,6 +639,8 @@ def _eval_one_slot(
     info["offloading_action_count"] = len(offloading_decisions)
     info["kahypar_partition_status"] = str(getattr(prepared.graph_snapshot, "partition_status", "disabled"))
     info["kahypar_partition_hyperedge_count"] = int(len(prepared.graph_snapshot.partition_hyperedges))
+    if bool(config.ENABLE_KAHYPAR_PARTITION_HYPEREDGES):
+        info["kahypar_active_task_count"] = int(len(prepared.graph_snapshot.active_task_ids))
     return bool(done), info, movement_counts, len(offloading_decisions), offloading_decisions
 
 
@@ -1089,6 +1095,9 @@ def _aggregate_summary(aggregate: dict[str, Any], *, episode_count: int) -> dict
         "kahypar_partition_nonzero_slot_count": int(
             sum(int(row.get("kahypar_partition_nonzero_slot_count", 0)) for row in rows)
         ),
+        "kahypar_invalid_disabled_count": int(
+            sum(int(row.get("kahypar_invalid_disabled_count", 0)) for row in rows)
+        ),
         "kahypar_degraded_label": (
             str(config.KAHYPAR_DEGRADED_EXPERIMENT_LABEL)
             if sum(int(row.get("kahypar_degraded_slot_count", 0)) for row in rows) > 0
@@ -1157,6 +1166,13 @@ def _merge_counts(target: dict[str, int], source: dict[str, int]) -> None:
 def _count_kahypar_status(target: dict[str, int], info: dict[str, Any]) -> None:
     status = str(info.get("kahypar_partition_status", "disabled"))
     target[status] = int(target.get(status, 0)) + 1
+
+
+def _kahypar_invalid_disabled(info: dict[str, Any]) -> int:
+    return int(
+        str(info.get("kahypar_partition_status", "disabled")) == "disabled"
+        and int(info.get("kahypar_active_task_count", 0)) >= 2
+    )
 
 
 def _normalized_distribution(counts: dict[str, int]) -> dict[str, float]:

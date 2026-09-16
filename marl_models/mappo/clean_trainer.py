@@ -2313,6 +2313,11 @@ def write_clean_training_log(
         "truncated": bool(info.get("truncated", False)),
         "torch_model_checks_skipped": bool(torch_skipped),
     }
+    if bool(info.get("kahypar_health_diagnostics_enabled", False)):
+        payload["kahypar_partition_hyperedge_count"] = int(
+            info.get("kahypar_partition_hyperedge_count", 0)
+        )
+        payload["active_task_count"] = int(info.get("active_task_count", 0))
     if update_stats is not None:
         payload.update({f"ppo_{key}": value for key, value in asdict(update_stats).items()})
     if extra:
