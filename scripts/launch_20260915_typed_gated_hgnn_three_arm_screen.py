@@ -287,6 +287,15 @@ def _gpu_memory_snapshot(gpus: tuple[int, ...]) -> list[dict[str, int]]:
     return sorted(rows, key=lambda row: row["gpu"])
 
 
+def _kahypar_preflight() -> dict[str, str]:
+    import kahypar
+
+    version = str(getattr(kahypar, "__version__", "unknown"))
+    if version != "1.3.7":
+        raise RuntimeError(f"KaHyPar 1.3.7 required, found {version}")
+    return {"status": "pass", "version": version, "module": str(kahypar.__file__)}
+
+
 def _version() -> dict[str, Any]:
     files = {
         "launcher": Path(__file__).resolve(),
@@ -326,6 +335,7 @@ def main(argv: list[str] | None = None) -> int:
     controls_audit = _validate_controls(mlp_results)
     runner_default_audit = _runner_default_preflight()
     rng_audit = _rng_preflight()
+    kahypar_audit = _kahypar_preflight()
 
     targets: list[dict[str, Any]] = []
     index = 0
@@ -430,6 +440,7 @@ def main(argv: list[str] | None = None) -> int:
         "mlp_controls_audit": controls_audit,
         "runner_default_preflight": runner_default_audit,
         "rng_preflight": rng_audit,
+        "kahypar_preflight": kahypar_audit,
         "gpu_memory_before_launch": pre_launch_gpu_memory,
         "gpu_memory_before_extra_runs": extra_gpu_memory,
         "version": version,
