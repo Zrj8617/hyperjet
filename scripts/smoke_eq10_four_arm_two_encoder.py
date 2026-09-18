@@ -160,6 +160,8 @@ def _config_diff(payloads: dict[tuple[str, str], dict[str, Any]]) -> dict[str, A
         "output_dir",
         "run_name",
         "teacher_anneal_total_updates",
+        "offloading_eft_advantage",
+        "movement_position_advantage",
         "rng_neutral_task_encoder_comparison",
         "rng_neutral_reference_encoder_hidden_dim",
     }
