@@ -81,6 +81,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--task-embedding-dim", type=int, default=None)
     parser.add_argument("--hidden-dim", type=int, default=None)
+    parser.add_argument("--task-encoder-hidden-dim", type=int, default=None)
     return parser
 
 
@@ -701,7 +702,7 @@ def _build_modules(
         hgnn=build_clean_task_encoder(
             encoder_type=encoder_type,
             task_feature_dim=int(dims["task_feature_dim"]),
-            hidden_dim=int(dims["hidden_dim"]),
+            hidden_dim=int(dims["task_encoder_hidden_dim"]),
             output_dim=int(dims["task_embedding_dim"]),
         ).to(device),
         movement_actor=CleanMovementActor(
@@ -774,10 +775,16 @@ def _module_dims_from_checkpoint(payload: dict[str, Any], args: argparse.Namespa
     cli_config = payload.get("config", {}).get("cli", {}) if isinstance(payload.get("config"), dict) else {}
     task_embedding_dim = args.task_embedding_dim or cli_config.get("task_embedding_dim") or _infer_hgnn_output_dim(payload)
     hidden_dim = args.hidden_dim or cli_config.get("hidden_dim") or _infer_hidden_dim(payload)
+    task_encoder_hidden_dim = (
+        getattr(args, "task_encoder_hidden_dim", None)
+        or cli_config.get("task_encoder_hidden_dim")
+        or _infer_hgnn_hidden_dim(payload)
+    )
     return {
         "task_feature_dim": int(_infer_hgnn_task_feature_dim(payload)),
         "task_embedding_dim": int(task_embedding_dim),
         "hidden_dim": int(hidden_dim),
+        "task_encoder_hidden_dim": int(task_encoder_hidden_dim),
     }
 
 
@@ -793,10 +800,18 @@ def _infer_hgnn_output_dim(payload: dict[str, Any]) -> int:
     return int(weight.shape[0]) if hasattr(weight, "shape") else 64
 
 
-def _infer_hidden_dim(payload: dict[str, Any]) -> int:
+def _infer_hgnn_hidden_dim(payload: dict[str, Any]) -> int:
     state = payload.get("hgnn", {})
     weight = state.get("input_proj.weight")
     return int(weight.shape[0]) if hasattr(weight, "shape") else 128
+
+
+def _infer_hidden_dim(payload: dict[str, Any]) -> int:
+    state = payload.get("offloading_actor", {})
+    weight = state.get("scorer.net.0.weight")
+    if hasattr(weight, "shape"):
+        return int(weight.shape[0])
+    return _infer_hgnn_hidden_dim(payload)
 
 
 def _set_eval_mode(modules: CleanTrainingModules) -> None:

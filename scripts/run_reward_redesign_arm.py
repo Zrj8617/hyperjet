@@ -59,6 +59,13 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
     )
+    parser.add_argument(
+        "--rng-neutral-reference-encoder-hidden-dim", type=int, default=None
+    )
+    parser.add_argument("--hidden-dim", type=int, default=128)
+    parser.add_argument("--task-encoder-hidden-dim", type=int, default=None)
+    parser.add_argument("--task-embedding-dim", type=int, default=64)
+    parser.add_argument("--reward-energy-lambda", type=float, default=None)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--run-name", type=str, required=True)
     parser.add_argument("--max-updates", type=int, default=None)
@@ -163,6 +170,19 @@ def main(argv: list[str] | None = None) -> int:
             "--seed", str(int(args.seed)),
             "--device", str(args.device),
             "--task-encoder", str(args.task_encoder),
+            "--hidden-dim", str(int(args.hidden_dim)),
+            "--task-embedding-dim", str(int(args.task_embedding_dim)),
+            "--num-envs", "1",
+            "--sampler-backend", "synchronous",
+            "--lr", "0.0003",
+            "--gamma", "0.99",
+            "--gae-lambda", "0.95",
+            "--clip-ratio", "0.2",
+            "--entropy-coef", "0.01",
+            "--value-coef", "0.5",
+            "--ppo-epochs", "1",
+            "--normalize-value-targets",
+            "--checkpoint-interval", "10",
             "--output-dir", str(run_root / "train"),
             "--run-name", str(args.run_name),
             "--reward-redesign-arm", str(args.arm),
@@ -172,6 +192,21 @@ def main(argv: list[str] | None = None) -> int:
         train_argv.append("--enable-kahypar")
     if bool(args.rng_neutral_task_encoder_comparison):
         train_argv.append("--rng-neutral-task-encoder-comparison")
+    if args.rng_neutral_reference_encoder_hidden_dim is not None:
+        train_argv.extend(
+            [
+                "--rng-neutral-reference-encoder-hidden-dim",
+                str(int(args.rng_neutral_reference_encoder_hidden_dim)),
+            ]
+        )
+    if args.task_encoder_hidden_dim is not None:
+        train_argv.extend(
+            ["--task-encoder-hidden-dim", str(int(args.task_encoder_hidden_dim))]
+        )
+    if args.reward_energy_lambda is not None:
+        train_argv.extend(
+            ["--reward-energy-lambda", str(float(args.reward_energy_lambda))]
+        )
     if args.max_updates is not None:
         train_argv.extend(["--max-updates", str(int(args.max_updates))])
     if args.teacher_anneal_total_updates is not None:
@@ -276,6 +311,7 @@ def main(argv: list[str] | None = None) -> int:
             "clean_training_rng_prelude": True,
         },
         "resolved_flags": resolved_reward_redesign_flags(train_args),
+        "parameter_counts": train_result.get("parameter_counts"),
         "tensorboard": {"directory": str(run_root / "tensorboard"), "tags": list(TB_TAGS)},
         "actual_parameters": vars(train_args),
         "version": {

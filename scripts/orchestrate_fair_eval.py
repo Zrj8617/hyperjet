@@ -18,7 +18,18 @@ if str(ROOT) not in sys.path:
 from environment.exogenous_tape import read_tape
 from scripts.generate_fair_eval_tapes import scene_parameters
 APPROVED_ARMS = ("B1", "B2", "C2A", "C2B", "C2", "C1")
+EQ10_TREATMENTS = (
+    "B2_MLP_EQ10",
+    "B2_TYPED_GATED_HGNN_EQ10",
+    "C2A_MLP_EQ10",
+    "C2A_TYPED_GATED_HGNN_EQ10",
+    "C2B_MLP_EQ10",
+    "C2B_TYPED_GATED_HGNN_EQ10",
+    "C2_MLP_EQ10",
+    "C2_TYPED_GATED_HGNN_EQ10",
+)
 APPROVED_SEEDS = (5, 86, 617)
+TAPE_GENERATION_HEAD = "2450a40f4b877c6155d284a3f5d3c5d0cca61130"
 CANDIDATE_EPISODES = (320, 360, 400, 450, 500)
 TEST_PROTOCOLS = ("joint", "forced_hover")
 VALIDATION_PROTOCOL = "joint"
@@ -61,12 +72,13 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     arms = tuple(args.arms)
     seeds = tuple(args.seeds)
-    if arms != APPROVED_ARMS:
-        raise ValueError(f"--arms must be {','.join(APPROVED_ARMS)} in this order")
+    expected_arms = EQ10_TREATMENTS if str(args.run_prefix) == "20260918" else APPROVED_ARMS
+    if arms != expected_arms:
+        raise ValueError(f"--arms must be {','.join(expected_arms)} in this order")
     if seeds != APPROVED_SEEDS:
         raise ValueError(f"--seeds must be {','.join(map(str, APPROVED_SEEDS))}")
-    if str(args.run_prefix) != "20260915":
-        raise ValueError("--run-prefix must be 20260915")
+    if str(args.run_prefix) not in {"20260915", "20260918"}:
+        raise ValueError("--run-prefix must be 20260915 or 20260918")
     if args.output_root.exists() or args.manifest.exists():
         raise FileExistsError("fair-evaluation output or manifest already exists")
     validation_tape_audit = _validate_tapes(
@@ -241,8 +253,24 @@ def _audit_runs(
             if result.get("status") != "completed":
                 raise ValueError(f"incomplete source run: {result_path}")
             actual = dict(result["actual_parameters"])
-            if str(actual["reward_redesign_arm"]) != arm or int(actual["seed"]) != seed:
+            is_eq10 = arm.endswith("_EQ10")
+            expected_arm, expected_encoder = (
+                _treatment_identity(arm)
+                if is_eq10
+                else (arm, str(actual.get("task_encoder")))
+            )
+            if (
+                str(actual["reward_redesign_arm"]) != expected_arm
+                or str(actual["task_encoder"]) != expected_encoder
+                or int(actual["seed"]) != seed
+            ):
                 raise ValueError(f"source run identity mismatch: {result_path}")
+            flags = result.get("resolved_flags", {})
+            if is_eq10 and (
+                float(flags.get("reward_redesign_lambda_task", -1.0)) != 1.0
+                or float(flags.get("reward_redesign_lambda_move", -1.0)) != 1.0
+            ):
+                raise ValueError(f"source run energy coefficients are not EQ10: {result_path}")
             train_dir = Path(result["train_dir"])
             rows = [
                 json.loads(line)
@@ -355,6 +383,8 @@ def _run_one(job: dict[str, Any], index: int, gpus: tuple[int, ...]) -> None:
         str(job["seed"]),
         "--checkpoint-label",
         job["checkpoint_label"],
+        "--energy-lambda",
+        "1.0",
     ]
     environment = dict(os.environ)
     environment.update(
@@ -400,8 +430,8 @@ def _validate_tapes(
         raise ValueError("fixed-tape manifest schema is not v2")
     if manifest.get("scene_parameters") != expected_scene:
         raise ValueError("fixed-tape manifest scene parameters do not match runtime")
-    if manifest.get("version", {}).get("head") != _git("rev-parse", "HEAD"):
-        raise ValueError("fixed tapes were not generated from the execution commit")
+    if manifest.get("version", {}).get("head") != TAPE_GENERATION_HEAD:
+        raise ValueError("fixed tapes do not come from the frozen 2450a40 tape commit")
     if manifest.get("version", {}).get("dirty"):
         raise ValueError("fixed tapes were generated from a dirty worktree")
     if manifest.get("splits", {}).get(required_split) != list(tape_ids):
@@ -481,6 +511,17 @@ def _git(*args: str) -> str:
     return subprocess.run(
         ["git", *args], cwd=ROOT, check=True, capture_output=True, text=True
     ).stdout.rstrip()
+
+
+def _treatment_identity(treatment: str) -> tuple[str, str]:
+    suffixes = {
+        "_MLP_EQ10": "mlp",
+        "_TYPED_GATED_HGNN_EQ10": "typed_gated_hgnn",
+    }
+    for suffix, encoder in suffixes.items():
+        if treatment.endswith(suffix):
+            return treatment[: -len(suffix)], encoder
+    raise ValueError(f"invalid EQ10 treatment name: {treatment}")
 
 
 def _write(path: Path, payload: Any) -> None:

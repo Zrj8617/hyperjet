@@ -107,6 +107,7 @@ def _build_rng_neutral_comparison_task_encoder(
     encoder_type: str,
     task_feature_dim: int,
     hidden_dim: int,
+    reference_mlp_hidden_dim: int | None,
     output_dim: int,
     training_seed: int,
     enabled: bool,
@@ -128,7 +129,7 @@ def _build_rng_neutral_comparison_task_encoder(
     reference_mlp = builder(
         encoder_type=TASK_ENCODER_MLP,
         task_feature_dim=int(task_feature_dim),
-        hidden_dim=int(hidden_dim),
+        hidden_dim=int(reference_mlp_hidden_dim or hidden_dim),
         output_dim=int(output_dim),
     )
     del reference_mlp
@@ -307,9 +308,23 @@ def _offloading_forecast_advantage_enabled(arm: str | None) -> bool:
     return arm in {"N0", "N0-LOCAL", "B2D"}
 
 
-def resolved_reward_redesign_flags(args: argparse.Namespace) -> dict[str, bool | int]:
+def _reward_redesign_ledger_from_args(args: argparse.Namespace) -> RewardRedesignLedger | None:
     arm = getattr(args, "reward_redesign_arm", None)
-    ledger = RewardRedesignLedger(str(arm)) if arm is not None else None
+    if arm is None:
+        return None
+    return RewardRedesignLedger(
+        str(arm),
+        common_energy_lambda_seconds_per_joule=getattr(
+            args, "reward_energy_lambda", None
+        ),
+    )
+
+
+def resolved_reward_redesign_flags(
+    args: argparse.Namespace,
+) -> dict[str, bool | int | float | str]:
+    arm = getattr(args, "reward_redesign_arm", None)
+    ledger = _reward_redesign_ledger_from_args(args)
     return {
         "offloading_eft_advantage": bool(
             getattr(args, "offloading_eft_advantage", False)
@@ -320,6 +335,13 @@ def resolved_reward_redesign_flags(args: argparse.Namespace) -> dict[str, bool |
         "forecast_enabled": bool(ledger is not None and ledger.forecast_enabled),
         "offloading_forecast_advantage": _offloading_forecast_advantage_enabled(arm),
         "teacher_anneal_total_updates": _resolved_teacher_anneal_total_updates(args),
+        "reward_redesign_lambda_task": (
+            0.0 if ledger is None else float(ledger.lambda_task_seconds_per_joule)
+        ),
+        "reward_redesign_lambda_move": (
+            0.0 if ledger is None else float(ledger.lambda_move_seconds_per_joule)
+        ),
+        "task_encoder": str(getattr(args, "task_encoder", "hgnn")),
     }
 
 
@@ -615,6 +637,9 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
     )
     if not isinstance(enable_kahypar, bool):
         raise ValueError("checkpoint enable_kahypar must be boolean")
+    reward_energy_lambda = cli.get("reward_energy_lambda")
+    if reward_energy_lambda is not None:
+        reward_energy_lambda = _validated_completed_dag_weight(reward_energy_lambda)
     critic_task_pooling = normalize_clean_critic_task_pooling(
         cli.get(
             "critic_task_pooling",
@@ -710,6 +735,10 @@ def checkpoint_experiment_controls(payload: dict[str, Any]) -> dict[str, Any]:
         "value_clip_epsilon": value_clip_epsilon,
         "task_encoder": task_encoder,
         "enable_kahypar": enable_kahypar,
+        "task_encoder_hidden_dim": int(
+            cli.get("task_encoder_hidden_dim") or cli.get("hidden_dim", 128)
+        ),
+        "reward_energy_lambda": reward_energy_lambda,
         "critic_task_pooling": critic_task_pooling,
         "num_envs": num_envs,
         "sampler_backend": sampler_backend,
@@ -846,6 +875,14 @@ def validate_resume_experiment_controls(
             "resume checkpoint KaHyPar mode mismatch: "
             f"requested {requested_enable_kahypar}, checkpoint {saved['enable_kahypar']}"
         )
+    requested_encoder_hidden = int(
+        getattr(args, "task_encoder_hidden_dim", None) or args.hidden_dim
+    )
+    if requested_encoder_hidden != int(saved["task_encoder_hidden_dim"]):
+        raise ValueError("resume checkpoint task encoder hidden dimension mismatch")
+    requested_energy_lambda = getattr(args, "reward_energy_lambda", None)
+    if requested_energy_lambda != saved["reward_energy_lambda"]:
+        raise ValueError("resume checkpoint reward energy lambda mismatch")
     requested_critic_task_pooling = normalize_clean_critic_task_pooling(
         getattr(args, "critic_task_pooling", "mean")
     )
@@ -977,6 +1014,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=REWARD_REDENOMINATION_ARMS,
         default=None,
         help="Frozen 2026-09-06 seven-arm reward/credit treatment.",
+    )
+    parser.add_argument(
+        "--reward-energy-lambda",
+        type=_nonnegative_finite_float,
+        default=None,
+        help=(
+            "Optional common seconds-per-joule coefficient for both task and "
+            "movement energy in redesigned reward arms. Omit to preserve each "
+            "arm's frozen historical coefficients."
+        ),
     )
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--gamma", type=float, default=0.99)
@@ -1113,6 +1160,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--task-embedding-dim", type=int, default=64)
     parser.add_argument("--hidden-dim", type=int, default=128)
     parser.add_argument(
+        "--task-encoder-hidden-dim",
+        type=_positive_int,
+        default=None,
+        help=(
+            "Optional encoder-only hidden width used for capacity alignment; "
+            "omitting it preserves the historical shared --hidden-dim behavior."
+        ),
+    )
+    parser.add_argument(
         "--task-encoder",
         choices=TASK_ENCODER_CHOICES,
         default="hgnn",
@@ -1129,6 +1185,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "Initialize typed_gated_hgnn in an isolated RNG context while advancing "
             "the shared RNG stream exactly as the MLP encoder path would."
         ),
+    )
+    parser.add_argument(
+        "--rng-neutral-reference-encoder-hidden-dim",
+        type=_positive_int,
+        default=None,
+        help="MLP encoder width whose RNG draw count the typed encoder treatment matches.",
     )
     parser.add_argument("--ppo-epochs", type=int, default=1)
     parser.add_argument("--max-grad-norm", type=float, default=0.5)
@@ -1636,7 +1698,10 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         torch=torch,
         encoder_type=str(args.task_encoder),
         task_feature_dim=task_feature_dim,
-        hidden_dim=int(args.hidden_dim),
+        hidden_dim=int(args.task_encoder_hidden_dim or args.hidden_dim),
+        reference_mlp_hidden_dim=getattr(
+            args, "rng_neutral_reference_encoder_hidden_dim", None
+        ),
         output_dim=int(args.task_embedding_dim),
         training_seed=int(args.seed),
         enabled=bool(getattr(args, "rng_neutral_task_encoder_comparison", False)),
@@ -1677,6 +1742,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         offloading_decision_critic=offloading_decision_critic,
         movement_decision_critic=movement_decision_critic,
     )
+    parameter_counts = _training_module_parameter_counts(modules)
     args._offloading_initialization_identity = _initialize_offloading_policy(
         args=args,
         modules=modules,
@@ -1951,11 +2017,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     try:
         for episode in range(start_episode, int(args.episodes)):
             env.reset()
-            reward_redesign_ledger = (
-                RewardRedesignLedger(str(args.reward_redesign_arm))
-                if args.reward_redesign_arm is not None
-                else None
-            )
+            reward_redesign_ledger = _reward_redesign_ledger_from_args(args)
             if lagged_q_tracker is not None:
                 lagged_q_tracker.start_episode(episode)
             if decision_transition_tracker is not None:
@@ -2138,6 +2200,9 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                             + int(decision_transition_tracker.pending)
                         )
                         latest_update_stats.diagnostics.update(phase4_stats)
+                    latest_update_stats.diagnostics.update(
+                        _typed_hyperedge_weight_diagnostics(modules.hgnn)
+                    )
                     if lagged_q_tracker is not None and bool(done or truncated):
                         lagged_tracker_summary = lagged_q_tracker.finish_episode()
                     write_clean_training_log(
@@ -2255,6 +2320,10 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
                     "latest_update": None if latest_update_stats is None else asdict(latest_update_stats),
                     "completed_dag_weight": float(args.completed_dag_weight),
                     "task_encoder": str(args.task_encoder),
+                    "task_encoder_hidden_dim": int(
+                        args.task_encoder_hidden_dim or args.hidden_dim
+                    ),
+                    "parameter_counts": dict(parameter_counts),
                     "detach_critic_hgnn": bool(args.detach_critic_hgnn),
                     "critic_task_pooling": str(args.critic_task_pooling),
                     "record_decision_transitions": bool(args.record_decision_transitions),
@@ -2286,6 +2355,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         "run_dir": str(run_dir),
         "global_slot": global_slot,
         "completed_update_count": int(updater.update_step),
+        "parameter_counts": dict(parameter_counts),
         "latest_update": None if latest_update_stats is None else asdict(latest_update_stats),
         "completed_dag_weight": float(args.completed_dag_weight),
         "detach_critic_hgnn": bool(args.detach_critic_hgnn),
@@ -4182,6 +4252,52 @@ def _set_seed(seed: int, *, torch: Any) -> None:
     torch.manual_seed(int(seed))
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(int(seed))
+
+
+def _training_module_parameter_counts(modules: CleanTrainingModules) -> dict[str, int]:
+    def count(module: Any) -> int:
+        return int(
+            sum(
+                parameter.numel()
+                for parameter in module.parameters()
+                if parameter.requires_grad
+            )
+        )
+
+    task_encoder = count(modules.hgnn)
+    movement_actor = count(modules.movement_actor)
+    offloading_actor = count(modules.offloading_actor)
+    critic = count(modules.critic)
+    actor_total = movement_actor + offloading_actor
+    return {
+        "task_encoder": task_encoder,
+        "movement_actor": movement_actor,
+        "offloading_actor": offloading_actor,
+        "actor_total": actor_total,
+        "critic": critic,
+        "total": task_encoder + actor_total + critic,
+    }
+
+
+def _typed_hyperedge_weight_diagnostics(task_encoder: Any) -> dict[str, float]:
+    typed_layers = [
+        layer
+        for layer in getattr(task_encoder, "layers", [])
+        if hasattr(layer, "normalized_type_weights")
+    ]
+    if not typed_layers:
+        return {}
+    values = [
+        layer.normalized_type_weights().detach().cpu().tolist()
+        for layer in typed_layers
+    ]
+    names = ("dag", "khop", "attribute", "partition")
+    return {
+        f"typed_hyperedge_weight_{name}": float(
+            sum(float(row[index]) for row in values) / len(values)
+        )
+        for index, name in enumerate(names)
+    }
 
 
 def _build_process_worker_modules(

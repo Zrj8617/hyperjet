@@ -70,6 +70,19 @@ EXPECTED_FLAGS = {
         "teacher_anneal_total_updates": 2000,
     },
 }
+for _arm, _flags in EXPECTED_FLAGS.items():
+    _legacy_ledger = RewardRedesignLedger(_arm)
+    _flags.update(
+        {
+            "reward_redesign_lambda_task": float(
+                _legacy_ledger.lambda_task_seconds_per_joule
+            ),
+            "reward_redesign_lambda_move": float(
+                _legacy_ledger.lambda_move_seconds_per_joule
+            ),
+            "task_encoder": "mlp",
+        }
+    )
 PRECHANGE_C1_C2 = {arm: EXPECTED_FLAGS[arm] for arm in ("C1", "C2")}
 
 

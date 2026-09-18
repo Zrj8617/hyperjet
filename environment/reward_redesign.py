@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from typing import Any
 
 
@@ -29,6 +30,7 @@ class RewardRedesignLedger:
     flowtime_ref_seconds: float = 500.0
     lambda_task_seconds_per_joule: float = 1.0
     lambda_move_seconds_per_joule: float = 0.10
+    common_energy_lambda_seconds_per_joule: float | None = None
     last_forecast: dict[str, float] = field(default_factory=dict)
     admitted: set[str] = field(default_factory=set)
 
@@ -36,7 +38,13 @@ class RewardRedesignLedger:
         self.arm = str(self.arm).upper()
         if self.arm not in REWARD_REDENOMINATION_ARMS:
             raise ValueError(f"unknown reward-redesign arm: {self.arm}")
-        if self.arm == "D2":
+        if self.common_energy_lambda_seconds_per_joule is not None:
+            common_lambda = float(self.common_energy_lambda_seconds_per_joule)
+            if not math.isfinite(common_lambda) or common_lambda < 0.0:
+                raise ValueError("common energy lambda must be finite and non-negative")
+            self.lambda_task_seconds_per_joule = common_lambda
+            self.lambda_move_seconds_per_joule = common_lambda
+        elif self.arm == "D2":
             self.lambda_move_seconds_per_joule = 0.04
 
     @property

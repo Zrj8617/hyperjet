@@ -44,6 +44,7 @@ def main() -> None:
     parser.add_argument("--arm", type=str, required=True)
     parser.add_argument("--model-seed", type=int, required=True)
     parser.add_argument("--checkpoint-label", type=str, required=True)
+    parser.add_argument("--energy-lambda", type=float, default=1.0)
     args = parser.parse_args()
     if args.output.exists():
         raise FileExistsError(f"refusing to overwrite output: {args.output}")
@@ -115,7 +116,11 @@ def main() -> None:
                     "protocol": str(args.protocol),
                     "tape_id": int(tape_id),
                     "tape_path": str(tape_path),
-                    **_unified_cost(env=env, tape=tape),
+                    **_unified_cost(
+                        env=env,
+                        tape=tape,
+                        energy_lambda=float(args.energy_lambda),
+                    ),
                     "hover_action_ratio": float(hover_action_ratio),
                     "policy_metrics": policy_row,
                 }
@@ -165,6 +170,8 @@ def main() -> None:
         "tape_ids": tape_ids,
         "rows": rows,
         "actual_parameters": controls,
+        "evaluation_energy_lambda_task": float(args.energy_lambda),
+        "evaluation_energy_lambda_move": float(args.energy_lambda),
         "version": _version_record(),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -174,7 +181,9 @@ def main() -> None:
     print(json.dumps({"status": "completed", "output": str(args.output), "row_count": len(rows)}, sort_keys=True))
 
 
-def _unified_cost(*, env: Env, tape: ExogenousTapeReplay) -> dict[str, Any]:
+def _unified_cost(
+    *, env: Env, tape: ExogenousTapeReplay, energy_lambda: float = 1.0
+) -> dict[str, Any]:
     end_seconds = float(tape.payload["slots"]) * float(tape.payload["time_slot_duration"])
     delay_total = 0.0
     completed_ids: list[str] = []
@@ -194,8 +203,10 @@ def _unified_cost(*, env: Env, tape: ExogenousTapeReplay) -> dict[str, Any]:
     task_energy = float(env.metrics.metrics.total_task_energy)
     move_energy = float(env.metrics.metrics.uav_movement_energy_total)
     delay_component = delay_total / 500.0
-    task_component = task_energy / 500.0
-    move_component = 0.10 * move_energy / 500.0
+    task_energy_lambda = float(energy_lambda)
+    move_energy_lambda = float(energy_lambda)
+    task_component = task_energy_lambda * task_energy / 500.0
+    move_component = move_energy_lambda * move_energy / 500.0
     j_episode = delay_component + task_component + move_component
     denominator = float(max(offer_count, 1))
     completed_flowtimes = [
@@ -213,6 +224,8 @@ def _unified_cost(*, env: Env, tape: ExogenousTapeReplay) -> dict[str, Any]:
         "delay_seconds_total": delay_total,
         "task_energy_joules_total": task_energy,
         "move_energy_joules_total": move_energy,
+        "lambda_task_seconds_per_joule": task_energy_lambda,
+        "lambda_move_seconds_per_joule": move_energy_lambda,
         "J_episode": j_episode,
         "J_per_offer": j_episode / denominator,
         "J_delay_component": delay_component,
