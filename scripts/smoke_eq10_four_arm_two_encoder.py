@@ -22,6 +22,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--result", type=Path, required=True)
     parser.add_argument("--gpus", default="0,1,2,3,4,5,6")
+    parser.add_argument(
+        "--reuse-completed",
+        action="store_true",
+        help="Validate already-completed smoke cells without launching them again.",
+    )
     return parser
 
 
@@ -164,6 +169,7 @@ def _config_diff(payloads: dict[tuple[str, str], dict[str, Any]]) -> dict[str, A
         "movement_position_advantage",
         "rng_neutral_task_encoder_comparison",
         "rng_neutral_reference_encoder_hidden_dim",
+        "_offloading_initialization_identity",
     }
     baseline = payloads[("B2", "mlp")]["actual_parameters"]
     differences: dict[str, Any] = {}
@@ -195,18 +201,24 @@ def main(argv: list[str] | None = None) -> int:
             command, run_root, log_path = _command(
                 arm=arm, encoder=encoder, output_root=output_root
             )
-            if run_root.exists() or log_path.exists():
+            if args.reuse_completed:
+                if not (run_root / "result.json").is_file() or not log_path.is_file():
+                    raise FileNotFoundError(
+                        f"completed smoke result and log required for reuse: {run_root}"
+                    )
+            elif run_root.exists() or log_path.exists():
                 raise FileExistsError(f"refusing to overwrite smoke target: {run_root}")
             jobs.append((arm, encoder, command, run_root, log_path, gpus[index % len(gpus)]))
             index += 1
 
-    with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
-        futures = {
-            pool.submit(_run_cell, command, log_path, gpu): (arm, encoder)
-            for arm, encoder, command, _, log_path, gpu in jobs
-        }
-        for future in as_completed(futures):
-            future.result()
+    if not args.reuse_completed:
+        with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+            futures = {
+                pool.submit(_run_cell, command, log_path, gpu): (arm, encoder)
+                for arm, encoder, command, _, log_path, gpu in jobs
+            }
+            for future in as_completed(futures):
+                future.result()
 
     payloads: dict[tuple[str, str], dict[str, Any]] = {}
     cells: list[dict[str, Any]] = []
