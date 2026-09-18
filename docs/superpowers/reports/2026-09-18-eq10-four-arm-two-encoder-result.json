@@ -1,0 +1,143 @@
+{
+  "schema": "eq10_four_arm_two_encoder_result_v1",
+  "status": "formal_training_launched",
+  "phase": "training",
+  "reported_at": "2026-09-18T21:41:54+08:00",
+  "hard_stop": null,
+  "conclusion_scope": "Smoke gates passed and formal training launched; no encoder-effect conclusion before frozen evaluation.",
+  "protocol": {
+    "arms": ["B2", "C2A", "C2B", "C2"],
+    "encoders": ["mlp", "typed_gated_hgnn"],
+    "seeds": [5, 86, 617],
+    "run_count": 24,
+    "episodes": 500,
+    "steps_per_episode": 500,
+    "rollout_horizon": 125,
+    "energy_lambda_task": 1.0,
+    "energy_lambda_move": 1.0,
+    "flowtime_ref_seconds": 500.0,
+    "shared_hidden_dim": 128,
+    "task_embedding_dim": 64,
+    "encoder_hidden_dims": {
+      "mlp": 773,
+      "typed_gated_hgnn": 128
+    },
+    "kahypar_enabled": false
+  },
+  "verified_inputs": {
+    "validation_tape_root": "/data2/zrj2025/uav-results/audits/20260915_six_arm_realign_tapes",
+    "tape_generation_commit": "2450a40",
+    "validation_tape_ids": [100, 119],
+    "validation_tape_count": 20,
+    "validation_offer_count": 11094,
+    "validation_task_count": 71995,
+    "test_tape_payload_read": false,
+    "scene_parameters_match_runtime": true,
+    "default_reward_regression_passed": true
+  },
+  "parameter_counts": {
+    "mlp": {
+      "task_encoder": 59585,
+      "movement_actor": 63749,
+      "offloading_actor": 26881,
+      "actor_total": 90630,
+      "critic": 29825,
+      "total": 180040
+    },
+    "typed_gated_hgnn": {
+      "task_encoder": 59588,
+      "movement_actor": 63749,
+      "offloading_actor": 26881,
+      "actor_total": 90630,
+      "critic": 29825,
+      "total": 180043
+    },
+    "total_relative_difference": 0.00001666268613608971,
+    "capacity_gate_maximum": 0.10,
+    "capacity_gate_passed": true
+  },
+  "smoke": {
+    "status": "pass",
+    "cell_count": 8,
+    "episodes_per_cell": 5,
+    "updates_per_cell": 20,
+    "non_treatment_config_diff": {},
+    "typed_weight_diagnostics_present": true,
+    "result_path": "/data2/zrj2025/uav-results/audits/20260918_eq10_four_arm_two_encoder_smoke.json"
+  },
+  "verified_prior_movement_reference_percent": {
+    "B2": {
+      "per_seed": {"5": 0.0, "86": 0.076, "617": 0.076},
+      "aggregate": 0.0507
+    },
+    "C2A": {
+      "per_seed": {"5": 0.5784, "86": 0.0, "617": 0.096},
+      "aggregate": 0.2248
+    },
+    "C2B": {
+      "per_seed": {"5": 0.76, "86": 0.4624, "617": 0.2456},
+      "aggregate": 0.4893
+    },
+    "C2": {
+      "per_seed": {"5": 0.52, "86": 0.6656, "617": 0.6376},
+      "aggregate": 0.6077
+    },
+    "task_stated_reference_used_as_gate": false,
+    "note": "Recomputed from the 2026-09-15 fixed-tape joint budget-selected machine-readable results; the task-stated approximate reference did not match those raw results."
+  },
+  "version": {
+    "execution_head": "ba6de8b91afba4da330c6c40fbde0ec70f6133ba",
+    "execution_dirty_files": [],
+    "launcher_git_object": "44ffbf5bb8ba81281ebc213dcd5fae44ea04e5c6",
+    "runner_git_object": "ebe18536d1b4f603afb7d8ffc703d28f6060ead2",
+    "trainer_git_object": "870bae5f935a4d70a97659fb163160cf09c1a4d2",
+    "reward_ledger_git_object": "31041d8cbe8f4cbdb165ffbd8e8d34d561b018e8"
+  },
+  "launch": {
+    "status": "launched_unmonitored",
+    "launched_at_utc": "2026-09-18T13:40:26.941125+00:00",
+    "launched_at_asia_shanghai": "2026-09-18T21:40:26.941125+08:00",
+    "manifest_path": "/data2/zrj2025/uav-results/audits/20260918_eq10_four_arm_two_encoder_training_launch.json",
+    "gpu_run_counts": {"0": 4, "1": 2, "2": 2, "3": 5, "4": 2, "5": 5, "6": 4},
+    "runs": [
+      {"name": "20260918_B2_MLP_EQ10_seed5", "gpu": 3, "pid": 1477200},
+      {"name": "20260918_B2_MLP_EQ10_seed86", "gpu": 5, "pid": 1477201},
+      {"name": "20260918_B2_MLP_EQ10_seed617", "gpu": 6, "pid": 1477202},
+      {"name": "20260918_B2_TYPED_GATED_HGNN_EQ10_seed5", "gpu": 0, "pid": 1477203},
+      {"name": "20260918_B2_TYPED_GATED_HGNN_EQ10_seed86", "gpu": 3, "pid": 1477204},
+      {"name": "20260918_B2_TYPED_GATED_HGNN_EQ10_seed617", "gpu": 5, "pid": 1477205},
+      {"name": "20260918_C2A_MLP_EQ10_seed5", "gpu": 6, "pid": 1477206},
+      {"name": "20260918_C2A_MLP_EQ10_seed86", "gpu": 0, "pid": 1477207},
+      {"name": "20260918_C2A_MLP_EQ10_seed617", "gpu": 1, "pid": 1477208},
+      {"name": "20260918_C2A_TYPED_GATED_HGNN_EQ10_seed5", "gpu": 2, "pid": 1477209},
+      {"name": "20260918_C2A_TYPED_GATED_HGNN_EQ10_seed86", "gpu": 4, "pid": 1477210},
+      {"name": "20260918_C2A_TYPED_GATED_HGNN_EQ10_seed617", "gpu": 3, "pid": 1477211},
+      {"name": "20260918_C2B_MLP_EQ10_seed5", "gpu": 5, "pid": 1477212},
+      {"name": "20260918_C2B_MLP_EQ10_seed86", "gpu": 6, "pid": 1477213},
+      {"name": "20260918_C2B_MLP_EQ10_seed617", "gpu": 0, "pid": 1477214},
+      {"name": "20260918_C2B_TYPED_GATED_HGNN_EQ10_seed5", "gpu": 3, "pid": 1477215},
+      {"name": "20260918_C2B_TYPED_GATED_HGNN_EQ10_seed86", "gpu": 5, "pid": 1477216},
+      {"name": "20260918_C2B_TYPED_GATED_HGNN_EQ10_seed617", "gpu": 6, "pid": 1477217},
+      {"name": "20260918_C2_MLP_EQ10_seed5", "gpu": 0, "pid": 1477218},
+      {"name": "20260918_C2_MLP_EQ10_seed86", "gpu": 1, "pid": 1477219},
+      {"name": "20260918_C2_MLP_EQ10_seed617", "gpu": 2, "pid": 1477220},
+      {"name": "20260918_C2_TYPED_GATED_HGNN_EQ10_seed5", "gpu": 4, "pid": 1477221},
+      {"name": "20260918_C2_TYPED_GATED_HGNN_EQ10_seed86", "gpu": 3, "pid": 1477222},
+      {"name": "20260918_C2_TYPED_GATED_HGNN_EQ10_seed617", "gpu": 5, "pid": 1477223}
+    ]
+  },
+  "estimated_training_completion": {
+    "basis": "Measured five-episode smoke wall times scaled to 500 episodes and adjusted for per-GPU concurrency/current external load.",
+    "range_hours": [48, 72],
+    "range_asia_shanghai": [
+      "2026-09-20T21:40:26+08:00",
+      "2026-09-21T21:40:26+08:00"
+    ]
+  },
+  "evaluation": {
+    "status": "pending_training_completion",
+    "validation_selection_locked": false,
+    "test_tape_payload_read": false,
+    "objective": "(flowtime + 1.0 * task_energy + 1.0 * move_energy) / 500"
+  }
+}
