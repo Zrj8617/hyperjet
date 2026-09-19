@@ -1,10 +1,10 @@
 {
   "schema": "eq10_four_arm_two_encoder_result_v1",
-  "status": "formal_training_launched",
-  "phase": "training",
-  "reported_at": "2026-09-18T21:41:54+08:00",
+  "status": "evaluation_launched",
+  "phase": "evaluation",
+  "reported_at": "2026-09-19T18:53:06+08:00",
   "hard_stop": null,
-  "conclusion_scope": "Smoke gates passed and formal training launched; no encoder-effect conclusion before frozen evaluation.",
+  "conclusion_scope": "Smoke gates and all 24 formal training runs completed; frozen evaluation launched, with no encoder-effect conclusion before its completion.",
   "protocol": {
     "arms": ["B2", "C2A", "C2B", "C2"],
     "encoders": ["mlp", "typed_gated_hgnn"],
@@ -126,18 +126,34 @@
       {"name": "20260918_C2_TYPED_GATED_HGNN_EQ10_seed617", "gpu": 5, "pid": 1477223}
     ]
   },
-  "estimated_training_completion": {
-    "basis": "Measured five-episode smoke wall times scaled to 500 episodes and adjusted for per-GPU concurrency/current external load.",
-    "range_hours": [48, 72],
-    "range_asia_shanghai": [
-      "2026-09-20T21:40:26+08:00",
-      "2026-09-21T21:40:26+08:00"
-    ]
+  "training_completion": {
+    "status": "completed",
+    "completed_run_count": 24,
+    "all_runs_completed_2000_updates": true,
+    "all_final_checkpoints_exist": true,
+    "exited_without_result": [],
+    "earliest_completed_at_utc": "2026-09-18T21:25:59.008176+00:00",
+    "latest_completed_at_utc": "2026-09-19T04:57:05.482651+00:00",
+    "training_wall_seconds_min": 27794.738858804107,
+    "training_wall_seconds_max": 54901.936911841854
   },
   "evaluation": {
-    "status": "pending_training_completion",
-    "validation_selection_locked": false,
-    "test_tape_payload_read": false,
+    "status": "running_unmonitored",
+    "launched_at_asia_shanghai": "2026-09-19T18:52:00+08:00",
+    "orchestrator_pid": 2226136,
+    "orchestrator_log": "/data2/zrj2025/uav-results/audits/20260918_eq10_four_arm_two_encoder_fair_eval_orchestrator.log",
+    "manifest_path": "/data2/zrj2025/uav-results/audits/20260918_eq10_four_arm_two_encoder_fair_eval_manifest.json",
+    "output_root": "/data2/zrj2025/uav-results/audits/20260918_eq10_four_arm_two_encoder_fair_eval",
+    "validation_batch_count": 120,
+    "validation_episode_count": 2400,
+    "test_batch_count": 96,
+    "test_episode_count": 4800,
+    "worker_count": 28,
+    "gpus": [0, 1, 2, 3, 4, 5, 6],
+    "preflight_hard_stops": [],
+    "validation_selection_locked_at_launch": false,
+    "test_tape_payload_read_before_launch": false,
+    "estimated_completion_hours": [6, 12],
     "objective": "(flowtime + 1.0 * task_energy + 1.0 * move_energy) / 500"
   }
 }
