@@ -268,7 +268,7 @@ def main(argv: list[str] | None = None) -> int:
                     path = (
                         args.evaluation_root
                         / "validation"
-                        / f"{treatment}_seed{seed}_ep{episode:04d}_validation_joint.json"
+                        / f"{treatment}_seed{seed}_ep{episode:04d}_joint.json"
                     )
                     payload = _read_result(path, expected_rows=20)
                     _write_rows(
@@ -303,7 +303,7 @@ def main(argv: list[str] | None = None) -> int:
                         path = (
                             args.evaluation_root
                             / "test"
-                            / f"{treatment}_seed{seed}_{checkpoint_label}_test_{protocol}.json"
+                            / f"{treatment}_seed{seed}_{checkpoint_label}_{protocol}.json"
                         )
                         payload = _read_result(path, expected_rows=50)
                         rows = list(payload["rows"])
