@@ -1,4 +1,4 @@
-"""Publish the 20260918 EQ10 training and fixed-tape evaluation runs to TensorBoard."""
+"""Publish EQ10 training and fixed-tape evaluation runs to TensorBoard."""
 
 from __future__ import annotations
 
@@ -19,6 +19,16 @@ TREATMENTS = (
     "C2_MLP_EQ10",
     "C2_TYPED_GATED_HGNN_EQ10",
 )
+KAHYPAR_TREATMENTS = (
+    "B2_TYPED_GATED_HGNN_KAHYPAR_EQ10",
+    "C2A_TYPED_GATED_HGNN_KAHYPAR_EQ10",
+    "C2B_TYPED_GATED_HGNN_KAHYPAR_EQ10",
+    "C2_TYPED_GATED_HGNN_KAHYPAR_EQ10",
+)
+TREATMENT_MATRICES = {
+    "20260918": TREATMENTS,
+    "20260921": KAHYPAR_TREATMENTS,
+}
 SEEDS = (5, 86, 617)
 CANDIDATE_EPISODES = (320, 360, 400, 450, 500)
 PROTOCOLS = ("joint", "forced_hover")
@@ -75,6 +85,11 @@ def _summary_writer(log_dir: Path, *, suffix: str):
 def _identity(treatment: str) -> tuple[str, str]:
     if treatment.endswith("_MLP_EQ10"):
         return treatment[: -len("_MLP_EQ10")], "mlp"
+    if treatment.endswith("_TYPED_GATED_HGNN_KAHYPAR_EQ10"):
+        return (
+            treatment[: -len("_TYPED_GATED_HGNN_KAHYPAR_EQ10")],
+            "typed_gated_hgnn_kahypar",
+        )
     if treatment.endswith("_TYPED_GATED_HGNN_EQ10"):
         return treatment[: -len("_TYPED_GATED_HGNN_EQ10")], "typed_gated_hgnn"
     raise ValueError(f"unknown treatment: {treatment}")
@@ -82,6 +97,8 @@ def _identity(treatment: str) -> tuple[str, str]:
 
 def _visible_name(*, run_prefix: str, treatment: str, seed: int) -> str:
     arm, encoder = _identity(treatment)
+    if encoder == "typed_gated_hgnn_kahypar":
+        return f"{run_prefix}_KAHYPAR_{arm}_seed{seed}"
     if encoder == "mlp":
         return f"{run_prefix}_{arm}_seed{seed}"
     return f"{run_prefix}_TYPED_GATED_HGNN_{arm}_seed{seed}"
@@ -173,12 +190,14 @@ def _write_rows(writer: Any, *, prefix: str, rows: Iterable[dict[str, Any]]) -> 
             writer.add_scalar(f"{prefix}/{metric}", value, step)
 
 
-def _validate_manifest(payload: dict[str, Any]) -> None:
+def _validate_manifest(
+    payload: dict[str, Any], *, treatments: tuple[str, ...]
+) -> None:
     if payload.get("status") != "completed":
         raise ValueError("fair evaluation is not completed")
     if payload.get("test_tapes_read_after_selection_locked") is not True:
         raise ValueError("test tapes were not read under the locked-selection protocol")
-    if tuple(payload.get("arms_order", ())) != TREATMENTS:
+    if tuple(payload.get("arms_order", ())) != treatments:
         raise ValueError("evaluation treatment order differs from the frozen matrix")
     if tuple(payload.get("seeds", ())) != SEEDS:
         raise ValueError("evaluation seeds differ from the frozen matrix")
@@ -215,24 +234,29 @@ def _verify_run(run_dir: Path) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    if str(args.run_prefix) != "20260918":
-        raise ValueError("--run-prefix must be 20260918")
+    treatments = TREATMENT_MATRICES.get(str(args.run_prefix))
+    if treatments is None:
+        raise ValueError("--run-prefix must be 20260918 or 20260921")
     if args.output_root.exists():
         raise FileExistsError(f"output root already exists: {args.output_root}")
     if not args.view_root.is_dir():
         raise FileNotFoundError(f"existing TensorBoard view root required: {args.view_root}")
 
     evaluation_manifest = json.loads(args.evaluation_manifest.read_text(encoding="utf-8"))
-    _validate_manifest(evaluation_manifest)
+    _validate_manifest(evaluation_manifest, treatments=treatments)
     selections = json.loads(
         (args.evaluation_root / "selection_six_arm.json").read_text(encoding="utf-8")
     )
     visible_names = [
         _visible_name(run_prefix=args.run_prefix, treatment=treatment, seed=seed)
-        for treatment in TREATMENTS
+        for treatment in treatments
         for seed in SEEDS
     ]
-    summary_name = f"{args.run_prefix}_SUMMARY"
+    summary_name = (
+        "20260921_KAHYPAR_SUMMARY"
+        if str(args.run_prefix) == "20260921"
+        else f"{args.run_prefix}_SUMMARY"
+    )
     for name in (*visible_names, summary_name):
         if (args.view_root / name).exists() or (args.view_root / name).is_symlink():
             raise FileExistsError(f"TensorBoard view target already exists: {name}")
@@ -241,7 +265,7 @@ def main(argv: list[str] | None = None) -> int:
     run_records: list[dict[str, Any]] = []
     summary_values: dict[str, list[float]] = {}
     try:
-        for treatment in TREATMENTS:
+        for treatment in treatments:
             arm, encoder = _identity(treatment)
             for seed in SEEDS:
                 visible_name = _visible_name(
@@ -360,7 +384,8 @@ def main(argv: list[str] | None = None) -> int:
         }
         for tag, value in summary_means.items():
             summary_writer.add_scalar(tag, value, 0)
-        for encoder in ("mlp", "typed_gated_hgnn"):
+        encoders = tuple(dict.fromkeys(_identity(treatment)[1] for treatment in treatments))
+        for encoder in encoders:
             arm_value = {
                 arm: summary_means[f"main/{encoder}/{arm}/J_per_offer"]
                 for arm in ("B2", "C2A", "C2B", "C2")
@@ -380,13 +405,14 @@ def main(argv: list[str] | None = None) -> int:
                 arm_value["C2"] - arm_value["C2A"] - arm_value["C2B"] + arm_value["B2"],
                 0,
             )
-        for arm in ("B2", "C2A", "C2B", "C2"):
-            summary_writer.add_scalar(
-                f"encoder_effect/{arm}/HGNN_minus_MLP/J_per_offer",
-                summary_means[f"main/typed_gated_hgnn/{arm}/J_per_offer"]
-                - summary_means[f"main/mlp/{arm}/J_per_offer"],
-                0,
-            )
+        if {"mlp", "typed_gated_hgnn"}.issubset(encoders):
+            for arm in ("B2", "C2A", "C2B", "C2"):
+                summary_writer.add_scalar(
+                    f"encoder_effect/{arm}/HGNN_minus_MLP/J_per_offer",
+                    summary_means[f"main/typed_gated_hgnn/{arm}/J_per_offer"]
+                    - summary_means[f"main/mlp/{arm}/J_per_offer"],
+                    0,
+                )
         summary_writer.close()
 
         verification = {
