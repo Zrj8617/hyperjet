@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 from typing import Any
 
 
@@ -38,6 +39,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--smoke-result", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--gpu-assignment", type=_csv_ints, required=True)
+    parser.add_argument(
+        "--launch-stagger-seconds",
+        type=float,
+        default=60.0,
+        help=(
+            "Delay between process starts so spawned KaHyPar workers do not "
+            "cold-start against storage simultaneously."
+        ),
+    )
     return parser
 
 
@@ -149,6 +159,8 @@ def main(argv: list[str] | None = None) -> int:
         raise FileNotFoundError("existing output and baseline audit roots are required")
     if args.manifest.exists():
         raise FileExistsError(f"manifest already exists: {args.manifest}")
+    if float(args.launch_stagger_seconds) < 0.0:
+        raise ValueError("--launch-stagger-seconds must be non-negative")
 
     smoke = json.loads(args.smoke_result.read_text(encoding="utf-8"))
     if smoke.get("schema") != "eq10_kahypar_four_arm_smoke_v1" or smoke.get(
@@ -166,7 +178,7 @@ def main(argv: list[str] | None = None) -> int:
             raise FileExistsError(f"refusing to overwrite {target['run_name']}")
 
     runs = []
-    for target in targets:
+    for index, target in enumerate(targets):
         command = _command(target)
         environment = dict(os.environ)
         environment.update(
@@ -204,6 +216,8 @@ def main(argv: list[str] | None = None) -> int:
                 "command": command,
             }
         )
+        if index + 1 < len(targets) and float(args.launch_stagger_seconds) > 0.0:
+            time.sleep(float(args.launch_stagger_seconds))
 
     manifest = {
         "schema": "eq10_kahypar_four_arm_launch_v1",
@@ -222,6 +236,7 @@ def main(argv: list[str] | None = None) -> int:
         "task_embedding_dim": 64,
         "smoke_result": str(args.smoke_result.resolve()),
         "gpu_assignment": list(args.gpu_assignment),
+        "launch_stagger_seconds": float(args.launch_stagger_seconds),
         "version": {
             "head": _git("rev-parse", "HEAD"),
             "dirty": _git("status", "--porcelain").splitlines(),

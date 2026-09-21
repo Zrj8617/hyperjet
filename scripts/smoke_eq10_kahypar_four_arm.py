@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import json
 import os
@@ -38,11 +37,16 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--baseline-audit-root", type=Path, required=True)
     parser.add_argument("--result", type=Path, required=True)
     parser.add_argument("--gpu-assignment", type=_csv_ints, required=True)
+    parser.add_argument(
+        "--run-prefix",
+        default=RUN_PREFIX,
+        help="Run-name prefix; use a new value for every non-overwriting retry.",
+    )
     return parser
 
 
-def _name(arm: str) -> str:
-    return f"{RUN_PREFIX}_{arm}_TYPED_GATED_HGNN_KAHYPAR_EQ10_seed{SEED}"
+def _name(arm: str, run_prefix: str) -> str:
+    return f"{run_prefix}_{arm}_TYPED_GATED_HGNN_KAHYPAR_EQ10_seed{SEED}"
 
 
 def _baseline_path(root: Path, arm: str) -> Path:
@@ -50,8 +54,10 @@ def _baseline_path(root: Path, arm: str) -> Path:
     return root / name / "result.json"
 
 
-def _command(*, arm: str, output_root: Path) -> tuple[list[str], Path, Path]:
-    name = _name(arm)
+def _command(
+    *, arm: str, output_root: Path, run_prefix: str
+) -> tuple[list[str], Path, Path]:
+    name = _name(arm, run_prefix)
     run_root = output_root / name
     log_path = output_root / f"{name}.log"
     command = [
@@ -208,18 +214,21 @@ def main(argv: list[str] | None = None) -> int:
         if baseline.get("status") != "completed":
             raise ValueError(f"incomplete baseline: {baseline_path}")
         baselines[arm] = baseline
-        command, run_root, log_path = _command(arm=arm, output_root=output_root)
+        command, run_root, log_path = _command(
+            arm=arm,
+            output_root=output_root,
+            run_prefix=str(args.run_prefix),
+        )
         if run_root.exists() or log_path.exists():
             raise FileExistsError(f"refusing to overwrite smoke target: {run_root}")
         jobs.append((arm, command, run_root, log_path, gpu))
 
-    with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
-        futures = {
-            pool.submit(_run, command, log_path, gpu): arm
-            for arm, command, _, log_path, gpu in jobs
-        }
-        for future in as_completed(futures):
-            future.result()
+    # KaHyPar uses a spawned persistent worker.  On this server, simultaneous
+    # cold starts can contend on storage long enough for all workers to exceed
+    # their response deadline and open the circuit.  Smoke cells are therefore
+    # deliberately serialized; production runs are staggered, then overlap.
+    for _, command, _, log_path, gpu in jobs:
+        _run(command, log_path, gpu)
 
     cells = []
     for arm, _, run_root, log_path, gpu in jobs:
@@ -249,6 +258,7 @@ def main(argv: list[str] | None = None) -> int:
         "arms": list(ARMS),
         "seed": SEED,
         "task_encoder": ENCODER,
+        "run_prefix": str(args.run_prefix),
         "enable_kahypar": True,
         "cells": cells,
     }
