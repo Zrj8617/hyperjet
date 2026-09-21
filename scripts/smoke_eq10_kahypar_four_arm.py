@@ -42,6 +42,11 @@ def _parser() -> argparse.ArgumentParser:
         default=RUN_PREFIX,
         help="Run-name prefix; use a new value for every non-overwriting retry.",
     )
+    parser.add_argument(
+        "--validate-existing",
+        action="store_true",
+        help="Validate already completed non-overwritten smoke cells without rerunning them.",
+    )
     return parser
 
 
@@ -155,6 +160,22 @@ def _non_treatment_diff(
     }
 
 
+def _canonical_parameter_counts(payload: dict[str, Any]) -> dict[str, int]:
+    counts = dict(payload.get("parameter_counts") or {})
+    task_encoder = counts.get("task_encoder", counts.get("hgnn"))
+    total = counts.get("total", counts.get("total_policy_value_modules"))
+    required = {
+        "task_encoder": task_encoder,
+        "movement_actor": counts.get("movement_actor"),
+        "offloading_actor": counts.get("offloading_actor"),
+        "critic": counts.get("critic"),
+        "total": total,
+    }
+    if any(value is None for value in required.values()):
+        raise ValueError(f"incomplete parameter counts: {counts}")
+    return {key: int(value) for key, value in required.items()}
+
+
 def _validate(
     *, arm: str, baseline: dict[str, Any], candidate: dict[str, Any]
 ) -> dict[str, Any]:
@@ -169,7 +190,9 @@ def _validate(
         raise ValueError(f"{arm}: task encoder is not {ENCODER}")
     if int(candidate["train"]["completed_update_count"]) != 20:
         raise ValueError(f"{arm}: expected exactly 20 smoke updates")
-    if candidate.get("parameter_counts") != baseline.get("parameter_counts"):
+    candidate_counts = _canonical_parameter_counts(candidate)
+    baseline_counts = _canonical_parameter_counts(baseline)
+    if candidate_counts != baseline_counts:
         raise ValueError(f"{arm}: parameter counts differ from KaHyPar-off baseline")
     differences = _non_treatment_diff(baseline, candidate)
     if differences:
@@ -188,7 +211,7 @@ def _validate(
     return {
         "arm": arm,
         "resolved_flags": candidate["resolved_flags"],
-        "parameter_counts": candidate["parameter_counts"],
+        "parameter_counts": candidate_counts,
         "kahypar_health": health,
         "non_treatment_config_diff": differences,
         "baseline_result": baseline,
@@ -219,7 +242,10 @@ def main(argv: list[str] | None = None) -> int:
             output_root=output_root,
             run_prefix=str(args.run_prefix),
         )
-        if run_root.exists() or log_path.exists():
+        if args.validate_existing:
+            if not (run_root / "result.json").is_file() or not log_path.is_file():
+                raise FileNotFoundError(f"incomplete existing smoke target: {run_root}")
+        elif run_root.exists() or log_path.exists():
             raise FileExistsError(f"refusing to overwrite smoke target: {run_root}")
         jobs.append((arm, command, run_root, log_path, gpu))
 
@@ -227,8 +253,9 @@ def main(argv: list[str] | None = None) -> int:
     # cold starts can contend on storage long enough for all workers to exceed
     # their response deadline and open the circuit.  Smoke cells are therefore
     # deliberately serialized; production runs are staggered, then overlap.
-    for _, command, _, log_path, gpu in jobs:
-        _run(command, log_path, gpu)
+    if not args.validate_existing:
+        for _, command, _, log_path, gpu in jobs:
+            _run(command, log_path, gpu)
 
     cells = []
     for arm, _, run_root, log_path, gpu in jobs:
