@@ -28,6 +28,12 @@ EQ10_TREATMENTS = (
     "C2_MLP_EQ10",
     "C2_TYPED_GATED_HGNN_EQ10",
 )
+KAHYPAR_EQ10_TREATMENTS = (
+    "B2_TYPED_GATED_HGNN_KAHYPAR_EQ10",
+    "C2A_TYPED_GATED_HGNN_KAHYPAR_EQ10",
+    "C2B_TYPED_GATED_HGNN_KAHYPAR_EQ10",
+    "C2_TYPED_GATED_HGNN_KAHYPAR_EQ10",
+)
 APPROVED_SEEDS = (5, 86, 617)
 TAPE_GENERATION_HEAD = "2450a40f4b877c6155d284a3f5d3c5d0cca61130"
 CANDIDATE_EPISODES = (320, 360, 400, 450, 500)
@@ -72,13 +78,18 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     arms = tuple(args.arms)
     seeds = tuple(args.seeds)
-    expected_arms = EQ10_TREATMENTS if str(args.run_prefix) == "20260918" else APPROVED_ARMS
+    approved_matrix = {
+        "20260915": APPROVED_ARMS,
+        "20260918": EQ10_TREATMENTS,
+        "20260921": KAHYPAR_EQ10_TREATMENTS,
+    }
+    expected_arms = approved_matrix.get(str(args.run_prefix))
+    if expected_arms is None:
+        raise ValueError("--run-prefix must be 20260915, 20260918, or 20260921")
     if arms != expected_arms:
         raise ValueError(f"--arms must be {','.join(expected_arms)} in this order")
     if seeds != APPROVED_SEEDS:
         raise ValueError(f"--seeds must be {','.join(map(str, APPROVED_SEEDS))}")
-    if str(args.run_prefix) not in {"20260915", "20260918"}:
-        raise ValueError("--run-prefix must be 20260915 or 20260918")
     if args.output_root.exists() or args.manifest.exists():
         raise FileExistsError("fair-evaluation output or manifest already exists")
     validation_tape_audit = _validate_tapes(
@@ -271,6 +282,14 @@ def _audit_runs(
                 or float(flags.get("reward_redesign_lambda_move", -1.0)) != 1.0
             ):
                 raise ValueError(f"source run energy coefficients are not EQ10: {result_path}")
+            if run_prefix == "20260921":
+                if not bool(actual.get("enable_kahypar")):
+                    raise ValueError(f"source run is not KaHyPar-on: {result_path}")
+                health = result.get("kahypar_health")
+                if not isinstance(health, dict) or not bool(health.get("pass")):
+                    raise ValueError(
+                        f"source run failed KaHyPar health gate: {result_path}"
+                    )
             train_dir = Path(result["train_dir"])
             rows = [
                 json.loads(line)
@@ -515,6 +534,7 @@ def _git(*args: str) -> str:
 
 def _treatment_identity(treatment: str) -> tuple[str, str]:
     suffixes = {
+        "_TYPED_GATED_HGNN_KAHYPAR_EQ10": "typed_gated_hgnn",
         "_MLP_EQ10": "mlp",
         "_TYPED_GATED_HGNN_EQ10": "typed_gated_hgnn",
     }
