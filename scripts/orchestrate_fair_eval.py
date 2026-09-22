@@ -9,6 +9,7 @@ from pathlib import Path
 import statistics
 import subprocess
 import sys
+import time
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -71,6 +72,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--seeds", type=_csv_ints, required=True)
     parser.add_argument("--run-prefix", type=str, required=True)
     parser.add_argument("--gpus", type=_csv_ints, required=True)
+    parser.add_argument(
+        "--launch-stagger-seconds",
+        type=float,
+        default=0.0,
+        help=(
+            "Delay between evaluation process submissions. The default preserves "
+            "the frozen 20260915/20260918 launch behavior."
+        ),
+    )
     return parser
 
 
@@ -92,6 +102,8 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError(f"--seeds must be {','.join(map(str, APPROVED_SEEDS))}")
     if args.output_root.exists() or args.manifest.exists():
         raise FileExistsError("fair-evaluation output or manifest already exists")
+    if float(args.launch_stagger_seconds) < 0.0:
+        raise ValueError("--launch-stagger-seconds must be non-negative")
     validation_tape_audit = _validate_tapes(
         tape_dir=args.tape_dir,
         tape_ids=tuple(range(100, 120)),
@@ -118,6 +130,7 @@ def main(argv: list[str] | None = None) -> int:
         "test_tapes_read_after_selection_locked": None,
         "max_workers": int(args.max_workers),
         "gpus": list(args.gpus),
+        "launch_stagger_seconds": float(args.launch_stagger_seconds),
         "version": _version_record(),
         "arms": _audit_runs(
             args.audit_root,
@@ -169,6 +182,7 @@ def _run_all(
         validation_jobs,
         max_workers=int(args.max_workers),
         gpus=tuple(args.gpus),
+        launch_stagger_seconds=float(args.launch_stagger_seconds),
     )
 
     selections: dict[str, Any] = {}
@@ -243,6 +257,7 @@ def _run_all(
         test_jobs,
         max_workers=int(args.max_workers),
         gpus=tuple(args.gpus),
+        launch_stagger_seconds=float(args.launch_stagger_seconds),
     )
 
 
@@ -364,13 +379,22 @@ def _output_path(
 
 
 def _run_jobs(
-    jobs: list[dict[str, Any]], *, max_workers: int, gpus: tuple[int, ...]
+    jobs: list[dict[str, Any]],
+    *,
+    max_workers: int,
+    gpus: tuple[int, ...],
+    launch_stagger_seconds: float = 0.0,
 ) -> None:
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {
-            pool.submit(_run_one, job, index, gpus): job
-            for index, job in enumerate(jobs)
-        }
+        futures = {}
+        for index, job in enumerate(jobs):
+            futures[pool.submit(_run_one, job, index, gpus)] = job
+            if index + 1 < len(jobs) and launch_stagger_seconds > 0.0:
+                time.sleep(launch_stagger_seconds)
+            finished = [future for future in futures if future.done()]
+            for future in finished:
+                future.result()
+                del futures[future]
         for future in as_completed(futures):
             future.result()
 
