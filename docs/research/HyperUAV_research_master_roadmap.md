@@ -984,3 +984,46 @@ B2 的奖励里有一半以上的量是任何策略都无法影响的。
 第一阶段门禁至此 G1–G9 全部 PASS，进入第二阶段：
 `docs/superpowers/specs/2026-09-15-six-arm-realign-training.md`（18 个正式 run）。
 
+---
+
+## 状态更新 2026-10-09（三方版本审计与服务器副本归档）
+
+### 共同维护文件确认
+
+- Claude / Codex 协作使用的唯一活动状态文档就是本文件：
+  `docs/research/HyperUAV_research_master_roadmap.md`（Living Research Charter）。
+- `AGENTS.md` 明确规定：Claude 负责方案、审核与维护 charter；Codex 负责源码核查、实现、
+  服务器执行、版本一致性检查和 report。旧 `HyperUAV_context_handoff_*.md` 与
+  `docs/progress_report.md` 不是新的单一事实源。
+
+### 审计时三方状态
+
+- 本地：分支 `param-realign-20260914`，审计开始时 HEAD `a072387`，工作树有 9 条
+  modified/untracked 状态；这些未提交项主要是 Chapter 3 文档、计划、报告及输出/临时工具，
+  没有已跟踪 Python 源码修改。
+- 最新已提交 Python / shell 源码 commit：`00520c3`；其后的 `9a0301e`、`a072387`
+  仅新增/整理 Chapter 3 设计文档。
+- 服务器整理前有 4 个同历史 Git 副本：`HyperUAV`、`HyperUAV-gating-20260915`、
+  `HyperUAV-reward-redesign`、`HyperUAV-typed-gated-hgnn-20260915`。其中三个含未提交内容；
+  未进入 Git 历史的文件通过整目录归档保留。
+- GitHub 可见默认分支仍为 `codex/canonical-training-a950187-20260901`，commit `a950187`；
+  本地后续提交尚未发布。因此审计结论是：三方当时不统一。
+
+### 服务器整理结果
+
+- 唯一顶层主仓库：`/data2/zrj2025/HyperUAV`；分支 `param-realign-20260914`；
+  整理完成时 HEAD `a072387`；工作树 clean；origin 已改回
+  `git@github.com:Zrj8617/hyperjet.git`。
+- 3 个旧/脏仓库、8 个 bundle、2 个 EQ10 postprocess 临时目录已移动到
+  `/data2/zrj2025/archive/hyperuav-legacy-20261009/`。本次没有删除文件，归档可恢复。
+- `/data2/zrj2025/uav-results`（约 47 GB）原地保留；独立项目 `HGNN`、`HYGMA-main`、
+  `HyperGraph_UAV` 及依赖目录 `hgnn-deps-20260915` 未改动。
+- 无训练进程在运行。已有 reward-redesign TensorBoard 仍读取绝对结果路径
+  `/data2/zrj2025/uav-results/tensorboard_views/reward_redesign`；目录移动后进程仍存活。
+
+### 尚未闭合的版本事项
+
+- 本地与服务器主仓库已对齐到同一提交；GitHub 仍停在 `a950187`，尚未三方统一。
+- 后续若要闭合三方版本，应在 GitHub 网络/认证可用时发布
+  `param-realign-20260914`，再明确是否把它设为默认分支。该动作不自动执行。
+
