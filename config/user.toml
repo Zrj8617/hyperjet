@@ -1,0 +1,23 @@
+[user]
+# 用户数量，单位：个。（暂定）
+count = 60
+# 热点内相对非热点的单位面积人数倍数，无量纲。（暂定）
+hotspot_density = 2.0
+# 区域权重的相对浮动幅度，0 表示人数固定，无量纲。（暂定）
+area_fluctuation = 0.0
+# 移动前位于热点内时的本步位移倍数，无量纲。（暂定）
+hotspot_speed_scale = 0.5
+# 平均步行速度，单位：m/s。（暂定）
+mean_speed = 1.2
+# 高斯—马尔可夫记忆系数，无量纲。（暂定）
+gm_alpha = 0.85
+# 速度噪声标准差，单位：m/s。（暂定）
+speed_sigma = 0.3
+# 方向噪声标准差，单位：rad。（暂定）
+heading_sigma = 0.30
+# 每时隙移动所代表的时长，单位：s。（暂定）
+move_duration_s = 5.0
+# 上传发射功率，单位：W。（暂定）
+transmit_power_w = 0.5
+# 每用户每到达时隙的基础到达概率，无量纲。（暂定）
+arrival_probability = 0.0145

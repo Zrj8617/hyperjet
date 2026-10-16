@@ -1,0 +1,11 @@
+[region]
+# 正方形地图边长，单位：m。（暂定）
+side_length_m = 500.0
+# 每回合热点个数下限，单位：个。（暂定）
+min_hotspots = 3
+# 每回合热点个数上限，单位：个。（暂定）
+max_hotspots = 3
+# 圆形热点半径，单位：m。（暂定）
+hotspot_radius_m = 80.0
+# 热点内到达概率倍率，无量纲。（暂定）
+arrival_multiplier = 2.0

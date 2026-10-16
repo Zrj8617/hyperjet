@@ -1,0 +1,155 @@
+{
+  "date": "2026-10-14",
+  "gate": 2,
+  "status": "implemented_awaiting_entity_review",
+  "gate3_started": false,
+  "branch": "param-realign-20260914",
+  "head": "670ba0dfd549d8b28606a3b85df4ad04fbffbf39",
+  "demo": {
+    "command": "@'\nimport sys\nimport tempfile\nfrom pathlib import Path\nsys.path.insert(0, str(Path(tempfile.gettempdir()) / \"hyperuav-gate2-python312\"))\nimport numpy as np\nfrom environment_v2.settings import load_settings\nfrom environment_v2.random_streams import RandomStreams\nfrom environment_v2.entities import Region, UE, UAV\nfrom environment_v2.dag import generate_dag\n\nnp.set_printoptions(precision=6, linewidth=120)\ncfg = load_settings(\"config\")\nprint(*cfg, sep=\"\\n\")\nstreams = RandomStreams(seed=42, episode=0)\nregion = Region.create(cfg.region, streams.scene)\nuav = UAV.create(cfg.uav, cfg.region, streams.scene)\nue = UE.create(cfg.user, cfg.region, streams.scene)\nprint(\"seed=42 episode=0\")\nprint(region)\nprint(\"UAV before:\", uav.positions)\nprint(\"UE before:\", ue)\nactions = np.tile([1.0, 1.0], (cfg.uav.count, 1))\nactions[0] = [0.0, 0.0]\nblocked = uav.apply_flight_actions(actions, cfg.uav, cfg.region)\nue.move(cfg.user, cfg.region, streams.mobility)\nprint(\"Actions:\", actions)\nprint(\"UAV after:\", uav.positions)\nprint(\"Out of bounds:\", blocked)\nprint(\"Flight energy J:\", uav.flight_energy(actions, blocked, cfg.uav, cfg.scheduling))\nprint(\"UE after:\", ue)\nprint(\"UE region IDs:\", region.get_region_ids(ue.positions))\nfor i in range(3):\n    print(generate_dag(i, i, 0.0, cfg.dag, streams.dag))\n'@ | python -B -",
+    "chunk_id": "40d26d",
+    "wall_time_seconds": 1.3081613,
+    "exit_code": 0,
+    "original_token_count": 3100,
+    "output": "RegionConfig(side_length_m=500.0, hotspot_radius_m=150.0, arrival_multiplier=2.0)\r\nUserConfig(count=60, mean_speed=1.2, gm_alpha=0.85, speed_sigma=0.3, heading_sigma=0.3, move_duration_s=5.0, transmit_power_w=0.5, arrival_probability=0.0145)\r\nUAVConfig(count=5, altitude_m=100.0, max_speed=15.0, flight_duration_s=0.5, cpu_frequency_hz=1000000000.0, kappa=1e-28, transmit_power_w=0.5, queue_limit=16, profile_power_w=80.0, induced_power_w=80.0, tip_speed=110.0, hover_induced_speed=4.0, drag_ratio=0.6, air_density=1.225, rotor_solidity=0.05, rotor_area=0.5)\r\nDAGConfig(min_tasks=5, max_tasks=8, max_levels=4, max_parents=3, min_input_bits=838860.8, max_input_bits=8388608.0, min_edge_bits=1258291.2, max_edge_bits=6291456.0, min_return_bits=1258291.2, max_return_bits=6291456.0, base_unit_bits=81920.0, min_task_constant=500000, max_task_constant=1500000, linear_probability=0.2, log_probability=0.7, squared_log_probability=0.1)\r\nChannelConfig(ground_to_air_bandwidth_hz=4000000.0, air_to_air_bandwidth_hz=6000000.0, air_to_ground_bandwidth_hz=4000000.0, reference_channel_gain=1e-06, nlos_attenuation_factor=0.2, noise_power_w=1e-13, los_alpha=9.61, los_beta=0.16)\r\nSchedulingConfig(slot_duration_s=5.0, arrival_slots=500, relative_deadline_slots=40)\r\nseed=42 episode=0\r\nRegion(center=array([333.348832, 332.197334]), radius_m=150.0)\r\nUAV before: [[438.296252 154.659205 100.      ]\r\n [477.328037  87.54729  100.      ]\r\n [498.31407  376.016739 100.      ]\r\n [ 75.190592 191.671024 100.      ]\r\n [289.648773  87.729204 100.      ]]\r\nUE before: UE(positions=array([[124.681586, 463.948088,   0.      ],\r\n       [225.219691,  40.249003,   0.      ],\r\n       [464.48714 ,   7.293952,   0.      ],\r\n       [372.534583, 254.089756,   0.      ],\r\n       [ 80.570554, 213.614975,   0.      ],\r\n       [404.949433, 425.668479,   0.      ],\r\n       [ 34.731081, 289.083782,   0.      ],\r\n       [ 67.476019, 279.317632,   0.      ],\r\n       [362.021178, 388.175888,   0.      ],\r\n       [156.322541, 314.683407,   0.      ],\r\n       [ 38.002273, 306.221211,   0.      ],\r\n       [381.358409, 334.250232,   0.      ],\r\n       [  8.940895, 446.966845,   0.      ],\r\n       [340.599431,  29.075457,   0.      ],\r\n       [106.612285, 441.181892,   0.      ],\r\n       [310.476412,  67.918267,   0.      ],\r\n       [364.217287, 394.549195,   0.      ],\r\n       [158.936358,  18.62641 ,   0.      ],\r\n       [ 38.960394, 254.184617,   0.      ],\r\n       [258.538046, 113.121793,   0.      ],\r\n       [173.80249 , 478.143201,   0.      ],\r\n       [436.42755 , 286.312232,   0.      ],\r\n       [475.677593, 326.084124,   0.      ],\r\n       [441.294812, 348.328419,   0.      ],\r\n       [491.681642, 464.429435,   0.      ],\r\n       [322.776511, 204.33256 ,   0.      ],\r\n       [354.544145, 276.351408,   0.      ],\r\n       [313.712954,  39.185532,   0.      ],\r\n       [ 20.775195, 124.162194,   0.      ],\r\n       [ 33.7635  , 194.687167,   0.      ],\r\n       [ 19.799263,  52.785434,   0.      ],\r\n       [305.24341 , 255.636911,   0.      ],\r\n       [241.730595, 384.190081,   0.      ],\r\n       [319.960465, 413.62579 ,   0.      ],\r\n       [ 40.148601,  35.761651,   0.      ],\r\n       [366.748615, 280.98622 ,   0.      ],\r\n       [ 97.547693, 206.632678,   0.      ],\r\n       [195.802423, 225.213975,   0.      ],\r\n       [254.926157, 331.388072,   0.      ],\r\n       [236.950135, 117.659462,   0.      ],\r\n       [ 39.149109, 347.254683,   0.      ],\r\n       [186.370474,  11.127785,   0.      ],\r\n       [284.142722, 429.783469,   0.      ],\r\n       [209.856267, 126.749979,   0.      ],\r\n       [210.255381, 374.612882,   0.      ],\r\n       [113.87989 , 415.28256 ,   0.      ],\r\n       [423.910547, 455.909517,   0.      ],\r\n       [ 27.075469, 463.760033,   0.      ],\r\n       [490.46738 , 401.518998,   0.      ],\r\n       [ 19.526581, 413.657138,   0.      ],\r\n       [329.345606, 279.190492,   0.      ],\r\n       [ 85.101351, 361.43781 ,   0.      ],\r\n       [274.64562 , 215.828396,   0.      ],\r\n       [226.667135, 365.79167 ,   0.      ],\r\n       [135.846411, 318.855593,   0.      ],\r\n       [355.985926, 458.744103,   0.      ],\r\n       [468.322581,  44.988795,   0.      ],\r\n       [388.770717, 317.955113,   0.      ],\r\n       [409.713603, 322.169542,   0.      ],\r\n       [369.726419, 463.322689,   0.      ]]), speeds=array([1.45775 , 2.338914, 1.852668, 1.502001, 1.62126 , 0.645932, 2.267846, 1.600475, 1.543157, 0.593782, 1.8727  ,\r\n       1.457102, 1.328941, 2.138605, 0.161897, 1.973068, 1.180202, 2.163277, 1.612522, 0.242332, 2.051486, 1.965874,\r\n       1.553665, 2.230179, 0.66424 , 1.868253, 2.337848, 1.012842, 0.048349, 1.754141, 0.917931, 1.037453, 0.581097,\r\n       1.240617, 0.022519, 0.013653, 0.965312, 0.16355 , 1.114173, 2.194218, 0.335786, 0.916524, 1.527888, 0.453834,\r\n       1.620355, 1.795299, 1.916998, 1.453843, 0.75956 , 0.296286, 1.264092, 0.975931, 0.545432, 2.170415, 0.645466,\r\n       1.463193, 1.363695, 0.486998, 0.909075, 0.81004 ]), headings=array([0.91447 , 4.060719, 0.833697, 0.667349, 3.947487, 1.439313, 4.822696, 0.274294, 4.750441, 6.045537, 3.830458,\r\n       2.519478, 1.518297, 1.363673, 2.750686, 0.395124, 2.482157, 2.841656, 1.363153, 5.606818, 5.142104, 1.401241,\r\n       1.78175 , 5.895856, 4.175195, 2.949878, 4.958929, 1.806805, 0.081115, 3.356526, 3.534854, 5.955737, 4.796327,\r\n       4.718075, 5.383021, 2.169046, 4.62031 , 3.79604 , 2.11711 , 3.420956, 4.182378, 1.015097, 5.354317, 3.312964,\r\n       0.525741, 3.639812, 1.703816, 5.367645, 5.698424, 4.175712, 5.521463, 0.973004, 6.177212, 1.342693, 3.974307,\r\n       1.985892, 1.441418, 4.412841, 4.292493, 5.560999]))\r\nActions: [[0. 0.]\r\n [1. 1.]\r\n [1. 1.]\r\n [1. 1.]\r\n [1. 1.]]\r\nUAV after: [[438.296252 154.659205 100.      ]\r\n [484.828037  95.04729  100.      ]\r\n [498.31407  376.016739 100.      ]\r\n [ 82.690592 199.171024 100.      ]\r\n [297.148773  95.229204 100.      ]]\r\nOut of bounds: [False False  True False False]\r\nFlight energy J: [800.       815.852194 800.       815.852194 815.852194]\r\nUE after: UE(positions=array([[127.829506, 471.396941,   0.      ],\r\n       [217.202932,  32.257648,   0.      ],\r\n       [470.647785,  11.937829,   0.      ],\r\n       [378.288948, 256.978376,   0.      ],\r\n       [ 75.7626  , 206.182594,   0.      ],\r\n       [404.982444, 427.506122,   0.      ],\r\n       [ 33.791329, 277.845716,   0.      ],\r\n       [ 74.27177 , 285.077242,   0.      ],\r\n       [363.550439, 380.880251,   0.      ],\r\n       [160.642751, 314.611441,   0.      ],\r\n       [ 31.093122, 302.947001,   0.      ],\r\n       [376.274964, 339.748964,   0.      ],\r\n       [  8.269328, 453.192003,   0.      ],\r\n       [343.433318,  37.536563,   0.      ],\r\n       [104.954545, 441.633139,   0.      ],\r\n       [319.614624,  73.158692,   0.      ],\r\n       [358.690532, 396.704145,   0.      ],\r\n       [149.391243,  22.847514,   0.      ],\r\n       [ 41.160693, 261.539487,   0.      ],\r\n       [259.765508, 112.182414,   0.      ],\r\n       [176.829337, 469.580589,   0.      ],\r\n       [435.77582 , 294.656781,   0.      ],\r\n       [473.946973, 332.374596,   0.      ],\r\n       [449.130007, 342.45964 ,   0.      ],\r\n       [489.333649, 462.268986,   0.      ],\r\n       [315.459544, 206.314172,   0.      ],\r\n       [355.602852, 266.166722,   0.      ],\r\n       [312.074975,  44.960696,   0.      ],\r\n       [ 23.506353, 124.753755,   0.      ],\r\n       [ 25.856143, 190.540415,   0.      ],\r\n       [ 14.728543,  50.010288,   0.      ],\r\n       [310.164756, 252.152515,   0.      ],\r\n       [243.576978, 380.946195,   0.      ],\r\n       [319.737189, 407.971899,   0.      ],\r\n       [ 40.320581,  35.607828,   0.      ],\r\n       [366.622377, 281.286738,   0.      ],\r\n       [ 96.844637, 202.802287,   0.      ],\r\n       [194.139619, 223.000951,   0.      ],\r\n       [252.639083, 337.704806,   0.      ],\r\n       [226.516477, 113.865906,   0.      ],\r\n       [ 37.640921, 345.426285,   0.      ],\r\n       [189.320341,  16.178284,   0.      ],\r\n       [291.401779, 424.888389,   0.      ],\r\n       [207.382992, 126.350508,   0.      ],\r\n       [215.899845, 379.486347,   0.      ],\r\n       [107.809426, 410.606498,   0.      ],\r\n       [423.398572, 464.876034,   0.      ],\r\n       [ 30.473299, 458.873531,   0.      ],\r\n       [493.370379, 400.821061,   0.      ],\r\n       [ 18.884609, 412.564311,   0.      ],\r\n       [333.302618, 274.08365 ,   0.      ],\r\n       [ 88.183641, 365.109855,   0.      ],\r\n       [279.315792, 215.581459,   0.      ],\r\n       [231.889594, 374.015249,   0.      ],\r\n       [133.439319, 317.22831 ,   0.      ],\r\n       [353.114363, 465.776616,   0.      ],\r\n       [469.436472,  51.062692,   0.      ],\r\n       [388.076219, 315.208067,   0.      ],\r\n       [406.432839, 317.450617,   0.      ],\r\n       [373.121037, 461.117297,   0.      ]]), speeds=array([1.617341, 2.263892, 1.542973, 1.28774 , 1.770387, 0.367588, 2.255458, 1.781632, 1.490838, 0.864162, 1.529141,\r\n       1.497698, 1.252256, 1.784615, 0.343612, 2.106836, 1.186403, 2.087361, 1.535388, 0.309134, 1.816372, 1.673992,\r\n       1.304839, 1.957885, 0.638141, 1.516111, 2.047913, 1.200591, 0.558898, 1.785742, 1.156091, 1.205996, 0.74651 ,\r\n       1.13166 , 0.046147, 0.065191, 0.778876, 0.553621, 1.343605, 2.220381, 0.474032, 1.169773, 1.751065, 0.501065,\r\n       1.491451, 1.532529, 1.796224, 1.190347, 0.597144, 0.253487, 1.292096, 0.958841, 0.935339, 1.948346, 0.581107,\r\n       1.519238, 1.235038, 0.566695, 1.149464, 0.809622]), headings=array([1.170956, 3.925404, 0.645927, 0.465236, 4.138201, 1.552835, 4.628961, 0.703059, 4.919011, 6.266529, 3.584139,\r\n       2.316971, 1.67826 , 1.247608, 2.875826, 0.520678, 2.769813, 2.725222, 1.280108, 5.629962, 5.052175, 1.648741,\r\n       1.839272, 5.640307, 3.885416, 2.877113, 4.815968, 1.847163, 0.213302, 3.624582, 3.642351, 5.667099, 5.229845,\r\n       4.672919, 5.553459, 1.968482, 4.530863, 4.068011, 1.91818 , 3.490321, 4.022667, 1.042169, 5.689889, 3.301724,\r\n       0.712226, 3.797958, 1.627833, 5.319987, 6.047244, 4.181255, 5.371602, 0.872492, 6.230359, 1.004996, 3.736054,\r\n       1.95846 , 1.389422, 4.464761, 4.104868, 5.70704 ]))\r\nUE region IDs: [0 0 0 1 0 1 0 0 1 0 0 1 0 0 0 0 1 0 0 0 0 1 1 1 0 1 1 0 0 0 0 1 1 1 0 1 0 0 1 0 0 0 1 0 1 0 0 0 0 0 1 0 1 1 0 1 0 1 1\r\n 1]\r\nDAG(id=0, ue_id=0, arrival_time_s=0.0, num_tasks=8, edges=[(1, 2), (0, 3), (0, 4), (1, 4), (2, 4), (1, 5), (2, 5), (4, 5), (2, 6), (4, 6), (2, 7)], edge_bits=array([4190781.99622 , 4234166.64378 , 5009102.415458, 3657546.961964, 4883536.942481, 2907649.432712, 4304192.855409,\r\n       5702306.855475, 4224870.202778, 3992020.119753, 5756723.310488]), input_bits=array([ 861556.69314 , 2451821.552934, 5337965.752575, 3605982.629284, 7886586.83072 , 1645132.924918, 2623535.076115,\r\n       3431022.01147 ]), return_bits=array([      0.      ,       0.      ,       0.      , 4601171.192509,       0.      , 3413258.449122, 1701821.6025  ,\r\n       2349271.637525]), cpu_cycles=array([1.558279e+08, 3.944072e+07, 4.974415e+08, 2.457351e+08, 6.200010e+08, 1.278880e+08, 2.687570e+07, 1.147242e+08]), levels=array([0, 0, 1, 2, 2, 3, 3, 3]))\r\nDAG(id=1, ue_id=1, arrival_time_s=0.0, num_tasks=8, edges=[(0, 6), (1, 7), (3, 7), (4, 7)], edge_bits=array([5106239.845377, 3286719.406751, 2730220.076046, 4792170.746216]), input_bits=array([6072832.849244, 6897824.286266, 6195344.009409, 5015403.682356, 3803572.188981, 4253817.873941, 2637580.522389,\r\n       3123968.372459]), return_bits=array([      0.      ,       0.      , 5279049.385229,       0.      ,       0.      , 4175897.791783, 5898272.797504,\r\n       3117065.810074]), cpu_cycles=array([5.128868e+07, 2.786446e+08, 5.572089e+08, 4.585395e+08, 8.298749e+08, 3.513414e+08, 1.651577e+08, 1.323617e+08]), levels=array([0, 0, 0, 0, 0, 0, 1, 1]))\r\nDAG(id=2, ue_id=2, arrival_time_s=0.0, num_tasks=7, edges=[(0, 3), (1, 4), (2, 4), (1, 5), (3, 5), (4, 6)], edge_bits=array([3555113.402036, 5229211.586842, 2574431.451949, 4262215.847652, 5223048.536972, 3400327.068144]), input_bits=array([8378851.331661, 4849208.359196, 6661890.40842 , 4242345.986924, 3776489.742897, 6197319.635666, 1275928.823369]), return_bits=array([      0.      ,       0.      ,       0.      ,       0.      ,       0.      , 5116073.469423, 5941850.109578]), cpu_cycles=array([7.180761e+08, 4.505560e+08, 6.982699e+08, 1.960447e+08, 2.343266e+08, 4.837355e+08, 7.717758e+07]), levels=array([0, 0, 0, 1, 2, 2, 3]))\r\n"
+  },
+  "additional_checks": {
+    "chunk_id": "7e5a5a",
+    "wall_time_seconds": 0.9250757,
+    "exit_code": 0,
+    "original_token_count": 69,
+    "output": "Reflection positions: [[496.0, 250.0, 0.0], [4.0, 250.0, 0.0]] headings: [3.141592653589793, 1.2246467991473532e-16]\r\nHover power W: 160.0\r\nDAG stream independent of mobility: True\r\nFixed seed DAG replay: True\r\nDAG node/edge/sink counts: 8 11 4\r\nSyntax OK: 13 Python files\r\n"
+  },
+  "runtime": "Python 3.12.9 + NumPy 2.3.3 (NumPy installed only in temporary target directory)",
+  "files": [
+    {
+      "path": "environment_v2/types.py",
+      "lines": 26
+    },
+    {
+      "path": "environment_v2/contracts.py",
+      "lines": 58
+    },
+    {
+      "path": "environment_v2/random_streams.py",
+      "lines": 17
+    },
+    {
+      "path": "environment_v2/entities.py",
+      "lines": 144
+    },
+    {
+      "path": "environment_v2/dag.py",
+      "lines": 71
+    },
+    {
+      "path": "config/channel.toml",
+      "lines": 17
+    },
+    {
+      "path": "config/dag.toml",
+      "lines": 33
+    },
+    {
+      "path": "config/region.toml",
+      "lines": 7
+    },
+    {
+      "path": "config/scheduling.toml",
+      "lines": 7
+    },
+    {
+      "path": "config/uav.toml",
+      "lines": 33
+    },
+    {
+      "path": "config/user.toml",
+      "lines": 17
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-14-hyperuav-env-gate2.md",
+      "lines": 26
+    },
+    {
+      "path": "docs/superpowers/reports/2026-10-14-hyperuav-env-gate2-results.md",
+      "lines": 113
+    }
+  ],
+  "whitespace_checks": [
+    {
+      "path": "environment_v2/types.py",
+      "exit_code": 1,
+      "output": ""
+    },
+    {
+      "path": "environment_v2/contracts.py",
+      "exit_code": 1,
+      "output": ""
+    },
+    {
+      "path": "environment_v2/random_streams.py",
+      "exit_code": 1,
+      "output": ""
+    },
+    {
+      "path": "environment_v2/entities.py",
+      "exit_code": 1,
+      "output": ""
+    },
+    {
+      "path": "environment_v2/dag.py",
+      "exit_code": 1,
+      "output": ""
+    },
+    {
+      "path": "config/channel.toml",
+      "exit_code": 1,
+      "output": ""
+    },
+    {
+      "path": "config/dag.toml",
+      "exit_code": 1,
+      "output": ""
+    },
+    {
+      "path": "config/region.toml",
+      "exit_code": 1,
+      "output": ""
+    },
+    {
+      "path": "config/scheduling.toml",
+      "exit_code": 1,
+      "output": ""
+    },
+    {
+      "path": "config/uav.toml",
+      "exit_code": 1,
+      "output": ""
+    },
+    {
+      "path": "config/user.toml",
+      "exit_code": 1,
+      "output": ""
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-14-hyperuav-env-gate2.md",
+      "exit_code": 1,
+      "output": ""
+    },
+    {
+      "path": "docs/superpowers/reports/2026-10-14-hyperuav-env-gate2-results.md",
+      "exit_code": 1,
+      "output": ""
+    },
+    {
+      "path": "docs/superpowers/reports/2026-10-14-hyperuav-env-gate2-result.json",
+      "exit_code": 1,
+      "output": ""
+    }
+  ],
+  "tracked_diff_check": {
+    "exit_code": 0,
+    "output": ""
+  },
+  "git_status_short": " M docs/superpowers/specs/2026-09-23-hyperuav-chapter3-word-design.md\n M docs/superpowers/specs/2026-10-10-hyperuav-env-rebuild-requirements-draft.md\n?? config/\n?? docs/superpowers/2026-10-13-hyperuav-env-rebuild-context-brief.md\n?? docs/superpowers/plans/2026-09-23-hyperuav-chapter3-word-implementation.md\n?? docs/superpowers/plans/2026-09-28-pdf-code-consistency-audit.md\n?? docs/superpowers/plans/2026-10-14-hyperuav-env-gate1.md\n?? docs/superpowers/plans/2026-10-14-hyperuav-env-gate2.md\n?? docs/superpowers/reports/2026-09-28-pdf-code-consistency-audit.md\n?? docs/superpowers/reports/2026-10-14-hyperuav-env-gate1-result.json\n?? docs/superpowers/reports/2026-10-14-hyperuav-env-gate1-results.md\n?? docs/superpowers/reports/2026-10-14-hyperuav-env-gate2-result.json\n?? docs/superpowers/reports/2026-10-14-hyperuav-env-gate2-results.md\n?? environment_v2/\n?? output/\n?? tools/\n"
+}

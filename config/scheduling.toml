@@ -1,0 +1,7 @@
+[scheduling]
+# 时隙长度，单位：s。（暂定）
+slot_duration_s = 5.0
+# 产生到达的时隙数量，单位：时隙。（暂定）
+arrival_slots = 500
+# 每 DAG 的统一相对截止长度，单位：时隙。（暂定）
+relative_deadline_slots = 40

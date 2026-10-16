@@ -56,7 +56,7 @@
 
 1. 实体为 UE、UAV、DAG，外加 Region；没有基站（BS）。子任务不是独立实体，而是 DAG 内的节点，用 `(dag_id, node_id)` 标识（同 MRDTS）。
 2. 属性大体沿用当前代码；如有更清爽的写法（包括 MRDTS 的写法），采用更好的版本。逐字段的保留、删除、改名、迁出以 §0.4.10 字段表为准。
-3. Region：借用 MRDTS“给位置返回区域 id”的接口思路（方法名 `get_region_ids`），不搬其 Voronoi 网格实现。区域只有两类：热点区（id=1）与非热点区（id=0）；热点为圆形，每个 episode 重新采样中心。
+3. Region：借用 MRDTS“给位置返回区域 id”的接口思路（方法名 `get_region_ids`），不搬其 Voronoi 网格实现。区域只有两类：热点区（id=1）与非热点区（id=0）；热点为若干个半径相同的完整圆（整个圆在地图内），个数每个 episode 在 [`min_hotspots`, `max_hotspots`] 中均匀抽取（两者相等即固定个数），中心每个 episode 重新采样，任意两个中心距离不小于 2 倍半径（互不重叠）；位于任一热点内即为热点区（2026-10-15 改）。
 4. UAV：只有一种 UAV，写成单个 `UAV` 类，合并 MRDTS 的 `UAV` 父类与 `MemberUAV` 中需要的部分：
    - 集合写法：一个对象保存全部 UAV，`positions` 为 (N, 3) 数组，按下标访问；
    - 位置沿用现有三维 (x, y, z)：UE 的 z=0，UAV 的 z 为飞行高度（当前 UE/UAV 位置本来就是三维；二维的只是 clean 通信公式和 DAG/Task 的 `source_pos`，二者都在本轮改掉）；
@@ -65,11 +65,11 @@
    - 单核：不设核数和逐 UAV 主频数组，主频为 `UAVConfig.cpu_frequency_hz` 一个标量（UAV 同构；2026-10-13 改，以后需要多核或异构时再加）；
    - 计算能耗改用 MRDTS 的电容模型 κ·C·f²；计算量 `num_operation` 自 2026-09-14 起已按 CPU cycles 标定，只改名为 `cpu_cycles`，数值不重新缩放；
    - 保留高度、发射功率；
-   - 保留飞行能耗（用户 2026-10-12 决定）：采用标准旋翼无人机推进功率公式 P(V) = P0·(1 + 3V²/U_tip²) + Pi·(√(1 + V⁴/(4v0⁴)) − V²/(2v0²))^{1/2} + ½·d0·ρ·s·A·V³（Zeng et al., IEEE TWC 2019）。MRDTS 的 `u1–u5` 在其代码中没有对应公式，不沿用；参数直接按公式中的物理量命名（叶片轮廓功率 P0、诱导功率 Pi、叶尖速度 U_tip、悬停诱导速度 v0、机身阻力比 d0、空气密度 ρ、旋翼实度 s、旋翼盘面积 A），数值最后再定。环境每时隙按各 UAV 的飞行速度输出飞行能耗（焦耳）；悬停也按该模型计耗能（当前代码是“移动则按常数功率 × 时隙长度计、悬停为 0”，见 `env.py:717`，这一语义随之改变）；
+   - 保留飞行能耗（用户 2026-10-12 决定）：采用标准旋翼无人机推进功率公式 P(V) = P0·(1 + 3V²/U_tip²) + Pi·(√(1 + V⁴/(4v0⁴)) − V²/(2v0²))^{1/2} + ½·d0·ρ·s·A·V³（Zeng et al., IEEE TWC 2019）。MRDTS 的 `u1–u5` 在其代码中没有对应公式，不沿用；参数直接按公式中的物理量命名（叶片轮廓功率 P0、诱导功率 Pi、叶尖速度 U_tip、悬停诱导速度 v0、机身阻力比 d0、空气密度 ρ、旋翼实度 s、旋翼盘面积 A），数值最后再定。环境每时隙按各 UAV 的飞行速度输出飞行能耗（焦耳）；悬停也按该模型计耗能（当前代码是“移动则按常数功率 × 时隙长度计、悬停为 0”，见 `env.py:717`，这一语义随之改变）；每时隙飞行能耗 = P(V)×`flight_duration_s` + P(0)×(时隙长度 − `flight_duration_s`)，越界未动的 UAV 按 V=0 计（悬停整个时隙），写成 `UAV` 的方法（2026-10-13：师兄建议能耗写进实体；结构同旧 `uavs.py:354` 的飞行+悬停分段，常数功率换成上式）；
    - 去掉：BS 相关、`slot_energy`、Master 相关与按区域分配 Member 的逻辑、`coverage_radius`；
    - UAV 不保存剩余能量：clean 主线从未调用扣减能量的函数，`remaining_energy_ratio` 恒为 1.0（graph 特征 `graph_builder.py:291` 读到的是常数），删除不影响结果；覆盖半径 `UAV_COVERAGE_RADIUS` 只被位置塑形奖励（`env.py:752`）使用，不是 UAV 的物理属性，移到 reward 配置（Gate 7，见 §0.4.13）；
    - 初始位置：地图内均匀随机（沿用当前做法）。
-5. UE：集合写法；高斯-马尔可夫移动，每个时隙的位移 = 速度 × `move_duration_s`（`user.toml`，默认取时隙长度；设为飞行时长即“只在飞行阶段移动”，换算法只改这个数，不保留两套代码）；去掉每时隙最大移动距离限制（`UE_MAX_DIST`、`UE_GM_MAX_SPEED`），只保留速度不小于 0 和地图边界反弹；取消等待服务降速（见 §0.4.14）。UE 位置每个时隙只在飞行阶段更新一次，本时隙之后的上传、回传都用这个位置。
+5. UE：集合写法；初始位置（2026-10-15 改，参照 MRDTS `User` 按区域分配人数）：各区域权重 = 面积 × 密度倍数（热点为 `hotspot_density`，非热点为 1）× U(1 − `area_fluctuation`, 1 + `area_fluctuation`)，归一化后按 MRDTS 的取整方法（先向下取整，余数按小数部分从大到小补）分配人数；热点内的 UE 在圆内均匀采样，非热点的 UE 在地图内、所有热点外均匀采样；不采用 MRDTS 的向区域中心聚集；热点内减速（2026-10-15 定）：移动前位于任一热点内的 UE，本步位移乘 `hotspot_speed_scale`（高斯-马尔可夫的速度状态本身不变），只看位置、与策略无关；稳定后热点密度约为非热点的 1/`hotspot_speed_scale` 倍，取 1/`hotspot_density` 时开局分布即为稳定分布（不减速时开局多放在热点的 UE 约 50 个时隙后走散）。高斯-马尔可夫移动，每个时隙的位移 = 速度 × `move_duration_s`（`user.toml`，默认取时隙长度；设为飞行时长即“只在飞行阶段移动”，换算法只改这个数，不保留两套代码）；去掉每时隙最大移动距离限制（`UE_MAX_DIST`、`UE_GM_MAX_SPEED`），只保留速度不小于 0 和地图边界反弹；取消等待服务降速（见 §0.4.14）。UE 位置每个时隙只在飞行阶段更新一次，本时隙之后的上传、回传都用这个位置。
 
 ### 0.4.3 通信
 
@@ -97,7 +97,7 @@
 ### 0.4.5 配置
 
 1. 仿照 MRDTS：`config/*.toml` 存数值，`environment_v2/settings/*_config.py` 用 dataclass + `tomllib` 读取（训练环境为 Python 3.12）。
-2. 文件划分：`region.toml`（地图边长、热点半径、热点到达倍数）、`user.toml`（UE 数量、移动参数、`move_duration_s`、发射功率、基础到达概率）、`uav.toml`（数量、高度、最大速度、飞行时长、主频、电容系数、发射功率、队列上限、推进功率公式参数）、`dag.toml`（任务数、层数、父节点数、输入数据量、边数据量、回传数据量、计算量参数）、`channel.toml`（沿用 MRDTS）、`scheduling.toml`（时隙长度、到达时隙数 `arrival_slots`、截止时隙数 `relative_deadline_slots`，见 §0.4.15）。
+2. 文件划分：`region.toml`（地图边长、热点个数上下限 `min_hotspots`/`max_hotspots`、热点半径、热点到达倍数）、`user.toml`（UE 数量、热点密度倍数 `hotspot_density`、人数浮动 `area_fluctuation`、热点内速度倍数 `hotspot_speed_scale`、移动参数、`move_duration_s`、发射功率、基础到达概率）、`uav.toml`（数量、高度、最大速度、飞行时长、主频、电容系数、发射功率、队列上限、推进功率公式参数）、`dag.toml`（任务数、层数、父节点数、输入数据量、边数据量、回传数据量、计算量参数）、`channel.toml`（沿用 MRDTS）、`scheduling.toml`（时隙长度、到达时隙数 `arrival_slots`、截止时隙数 `relative_deadline_slots`，见 §0.4.15）。
 3. 旧 `config.py` 保留给旧代码；训练/算法参数不进入新配置。
 4. 读取方式：每个 dataclass 用 `cls(**data)` 直接构造，缺键、多键由 Python 报错，不另写逐键校验。只检查会让仿真静默出错的几个值：时隙长度、飞行时长大于 0，飞行时长不超过时隙长度，`relative_deadline_slots` 大于 DAG 最大层数。
 
@@ -161,7 +161,7 @@
 | UE | `pos`、`speed`、`theta`、`velocity` | `positions`、`speeds`、`headings` | 与 UAV 一致采用集合写法（用户 2026-10-12 确认）；速度向量由 `speeds`、`headings` 现算，不另存（2026-10-13） |
 | UE | `service_waiting`、`active_dag_id` | — | 删除；等待服务降速已取消（§0.4.14），UE 是否有活动 DAG 由 DAG 记录推出；一个 UE 可同时有多个活动 DAG（§0.4.15） |
 | UAV | 见 §0.4.2 第 4 条 | `positions` | 高度、最大速度、飞行时长、主频 `cpu_frequency_hz`、发射功率、电容系数放在 `UAVConfig`；区域 id 现算 |
-| Region | — | `center`、`radius_m`、`get_region_ids(positions)` | 热点到达倍数放在 `region.toml` |
+| Region | — | `centers`（K×2）、`radius_m`、`get_region_ids(positions)` | 热点个数上下限、到达倍数放在 `region.toml`（2026-10-15） |
 
 ### 0.4.11 命名规范
 
@@ -202,9 +202,9 @@
 
 ### 0.4.14 随机流与外生过程（2026-10-13 决定）
 
-1. 参照 MRDTS `RandomStreams`，由 (seed, episode) 派生四条独立的 `np.random.Generator`：场景（热点中心、UAV/UE 初始位置、UE 初始速度与方向）、移动（UE 移动）、到达（到达抽样）、DAG 内容。
+1. 参照 MRDTS `RandomStreams`，由 (seed, episode) 派生四条独立的 `np.random.Generator`：场景（热点个数与中心、UE 人数分配、UAV/UE 初始位置、UE 初始速度与方向）、移动（UE 移动）、到达（到达抽样）、DAG 内容。
 2. 到达窗口内每个 UE 每个时隙都抽一次到达，与它是否已有活动 DAG 无关；抽中即从 DAG 流生成一个 DAG，立即生效，不存在接收或拒绝（§0.4.15）。DAG `id` 按生成顺序递增。每条流一个 Generator，整个 episode 只用它，不按时隙或 UE 再拆。
-3. 取消等待服务降速（`UE_SERVICE_WAITING_SPEED_SCALE`）。
+3. 取消等待服务降速（`UE_SERVICE_WAITING_SPEED_SCALE`）。另设热点内减速（§0.4.2 第 5 条，2026-10-15）：只取决于 UE 自身位置，不破坏下一条的与策略无关。
 4. 效果：UE 轨迹、到达和 DAG 内容与策略无关，同一 (seed, episode) 下所有策略面对相同的外部环境，v2 不需要 tape。该语义与历史正式公平评估（固定 tape：不降速、固定 offer）一致。
 5. `SlotResult` 记录本时隙的 offer（DAG 编号、UE、到达时刻），供 offer 总数和按时完成率使用。
 6. 方法层和随机策略使用自己的随机数生成器，不使用环境的随机流。

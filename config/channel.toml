@@ -1,0 +1,17 @@
+[channel]
+# 地对空链路带宽，单位：Hz。（暂定）
+ground_to_air_bandwidth_hz = 4_000_000.0
+# 空对空链路带宽，单位：Hz。（暂定）
+air_to_air_bandwidth_hz = 6_000_000.0
+# 空对地链路带宽，单位：Hz。（暂定）
+air_to_ground_bandwidth_hz = 4_000_000.0
+# 一米处参考信道增益，无量纲。（暂定）
+reference_channel_gain = 1e-6
+# NLoS 相对 LoS 的增益系数，无量纲。（暂定）
+nlos_attenuation_factor = 0.2
+# 接收机噪声功率，单位：W。（暂定）
+noise_power_w = 1e-13
+# 仰角 LoS 概率参数 alpha，仰角按度输入。（暂定）
+los_alpha = 9.61
+# 仰角 LoS 概率参数 beta，仰角按度输入。（暂定）
+los_beta = 0.16

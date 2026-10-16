@@ -1,0 +1,33 @@
+[uav]
+# UAV 数量，单位：架。（暂定）
+count = 5
+# 固定飞行高度，单位：m。（暂定）
+altitude_m = 100.0
+# 水平动作各分量的速度尺度，单位：m/s。（暂定）
+max_speed = 15.0
+# 每时隙飞行时长，单位：s。（暂定）
+flight_duration_s = 0.5
+# 单核主频，单位：CPU cycles/s。（暂定）
+cpu_frequency_hz = 1_000_000_000.0
+# 计算能耗系数，E = kappa × CPU cycles × 主频平方。（暂定）
+kappa = 1e-28
+# 发送数据的功率，单位：W。（暂定）
+transmit_power_w = 0.5
+# 每架 UAV 的任务队列上限，单位：个。（暂定）
+queue_limit = 16
+# 悬停叶片轮廓功率 P0，单位：W。（暂定）
+profile_power_w = 80.0
+# 悬停诱导功率 Pi，单位：W。（暂定）
+induced_power_w = 80.0
+# 旋翼叶尖速度 U_tip，单位：m/s。（暂定）
+tip_speed = 110.0
+# 悬停平均诱导速度 v0，单位：m/s。（暂定）
+hover_induced_speed = 4.0
+# 机身阻力比 d0，无量纲。（暂定）
+drag_ratio = 0.6
+# 空气密度 rho，单位：kg/m³。（暂定）
+air_density = 1.225
+# 旋翼实度 s，无量纲。（暂定）
+rotor_solidity = 0.05
+# 旋翼盘面积 A，单位：m²。（暂定）
+rotor_area = 0.5

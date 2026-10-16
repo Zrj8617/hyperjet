@@ -1,0 +1,33 @@
+[dag]
+# 每 DAG 最少节点数，单位：个。（暂定）
+min_tasks = 5
+# 每 DAG 最多节点数，单位：个。（暂定）
+max_tasks = 8
+# 每 DAG 最大层数，单位：层。（暂定）
+max_levels = 4
+# 每节点最大父节点数，单位：个。（暂定）
+max_parents = 3
+# 节点输入数据量下限，单位：bit。（暂定）
+min_input_bits = 838_860.8
+# 节点输入数据量上限，单位：bit。（暂定）
+max_input_bits = 8_388_608.0
+# 依赖边数据量下限，单位：bit。（暂定）
+min_edge_bits = 1_258_291.2
+# 依赖边数据量上限，单位：bit。（暂定）
+max_edge_bits = 6_291_456.0
+# sink 回传数据量下限，单位：bit。（暂定）
+min_return_bits = 1_258_291.2
+# sink 回传数据量上限，单位：bit。（暂定）
+max_return_bits = 6_291_456.0
+# 计算量公式 n = input_bits / base_unit_bits 的基准数据量，单位：bit。（暂定）
+base_unit_bits = 81_920.0
+# 复杂度函数的 CPU cycles 系数下限。（暂定）
+min_task_constant = 500_000
+# 复杂度函数的 CPU cycles 系数上限。（暂定）
+max_task_constant = 1_500_000
+# 复杂度 n 的抽样概率，无量纲。（暂定）
+linear_probability = 0.2
+# 复杂度 n × log2(n) 的抽样概率，无量纲。（暂定）
+log_probability = 0.7
+# 复杂度 n × log2(n)² 的抽样概率，无量纲。（暂定）
+squared_log_probability = 0.1

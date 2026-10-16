@@ -1,0 +1,204 @@
+{
+  "date": "2026-10-14",
+  "gate": 1,
+  "status": "implemented_awaiting_review",
+  "gate2_started": false,
+  "python": "3.12.9 (tags/v3.12.9:fdb8142, Feb  4 2025, 15:27:58) [MSC v.1942 64 bit (AMD64)]",
+  "config_load_stdout": "RegionConfig(side_length_m=500.0, hotspot_radius_m=150.0, arrival_multiplier=2.0)\nUserConfig(count=60, mean_speed=1.2, gm_alpha=0.85, speed_sigma=0.3, heading_sigma=0.3, move_duration_s=5.0, transmit_power_w=0.5, arrival_probability=0.0145)\nUAVConfig(count=5, altitude_m=100.0, max_speed=15.0, flight_duration_s=0.5, cpu_frequency_hz=1000000000.0, kappa=1e-28, transmit_power_w=0.5, queue_limit=16, profile_power_w=80.0, induced_power_w=80.0, tip_speed=110.0, hover_induced_speed=4.0, drag_ratio=0.6, air_density=1.225, rotor_solidity=0.05, rotor_area=0.5)\nDAGConfig(min_tasks=5, max_tasks=8, max_levels=4, max_parents=3, min_input_bits=838860.8, max_input_bits=8388608.0, min_edge_bits=1258291.2, max_edge_bits=6291456.0, min_return_bits=1258291.2, max_return_bits=6291456.0, base_unit_bits=81920.0, min_task_constant=500000, max_task_constant=1500000, linear_probability=0.2, log_probability=0.7, squared_log_probability=0.1)\nChannelConfig(ground_to_air_bandwidth_hz=4000000.0, air_to_air_bandwidth_hz=6000000.0, air_to_ground_bandwidth_hz=4000000.0, reference_channel_gain=1e-06, nlos_attenuation_factor=0.2, noise_power_w=1e-13, los_alpha=9.61, los_beta=0.16)\nSchedulingConfig(slot_duration_s=5.0, arrival_slots=500, relative_deadline_slots=40)\n",
+  "configs": {
+    "region": {
+      "side_length_m": 500.0,
+      "hotspot_radius_m": 150.0,
+      "arrival_multiplier": 2.0
+    },
+    "user": {
+      "count": 60,
+      "mean_speed": 1.2,
+      "gm_alpha": 0.85,
+      "speed_sigma": 0.3,
+      "heading_sigma": 0.3,
+      "move_duration_s": 5.0,
+      "transmit_power_w": 0.5,
+      "arrival_probability": 0.0145
+    },
+    "uav": {
+      "count": 5,
+      "altitude_m": 100.0,
+      "max_speed": 15.0,
+      "flight_duration_s": 0.5,
+      "cpu_frequency_hz": 1000000000.0,
+      "kappa": 1e-28,
+      "transmit_power_w": 0.5,
+      "queue_limit": 16,
+      "profile_power_w": 80.0,
+      "induced_power_w": 80.0,
+      "tip_speed": 110.0,
+      "hover_induced_speed": 4.0,
+      "drag_ratio": 0.6,
+      "air_density": 1.225,
+      "rotor_solidity": 0.05,
+      "rotor_area": 0.5
+    },
+    "dag": {
+      "min_tasks": 5,
+      "max_tasks": 8,
+      "max_levels": 4,
+      "max_parents": 3,
+      "min_input_bits": 838860.8,
+      "max_input_bits": 8388608.0,
+      "min_edge_bits": 1258291.2,
+      "max_edge_bits": 6291456.0,
+      "min_return_bits": 1258291.2,
+      "max_return_bits": 6291456.0,
+      "base_unit_bits": 81920.0,
+      "min_task_constant": 500000,
+      "max_task_constant": 1500000,
+      "linear_probability": 0.2,
+      "log_probability": 0.7,
+      "squared_log_probability": 0.1
+    },
+    "channel": {
+      "ground_to_air_bandwidth_hz": 4000000.0,
+      "air_to_air_bandwidth_hz": 6000000.0,
+      "air_to_ground_bandwidth_hz": 4000000.0,
+      "reference_channel_gain": 1e-06,
+      "nlos_attenuation_factor": 0.2,
+      "noise_power_w": 1e-13,
+      "los_alpha": 9.61,
+      "los_beta": 0.16
+    },
+    "scheduling": {
+      "slot_duration_s": 5.0,
+      "arrival_slots": 500,
+      "relative_deadline_slots": 40
+    }
+  },
+  "contract_import": "PASS on Python 3.10 with NumPy 1.26.4",
+  "limitation": "Default Python 3.12 lacks NumPy; combined contract import on 3.12 not verified.",
+  "syntax": "PASS: 10 Python files parsed with Python 3.12",
+  "tests_added": false,
+  "branch": "param-realign-20260914",
+  "head": "670ba0dfd549d8b28606a3b85df4ad04fbffbf39",
+  "tracked_diff_check": {
+    "exit_code": 0,
+    "output": ""
+  },
+  "new_file_diff_checks": [
+    {
+      "path": "environment_v2/__init__.py",
+      "exit_code": 1,
+      "output": "",
+      "passed": true
+    },
+    {
+      "path": "environment_v2/contracts.py",
+      "exit_code": 1,
+      "output": "",
+      "passed": true
+    },
+    {
+      "path": "environment_v2/settings/__init__.py",
+      "exit_code": 1,
+      "output": "",
+      "passed": true
+    },
+    {
+      "path": "environment_v2/settings/channel_config.py",
+      "exit_code": 1,
+      "output": "",
+      "passed": true
+    },
+    {
+      "path": "environment_v2/settings/dag_config.py",
+      "exit_code": 1,
+      "output": "",
+      "passed": true
+    },
+    {
+      "path": "environment_v2/settings/region_config.py",
+      "exit_code": 1,
+      "output": "",
+      "passed": true
+    },
+    {
+      "path": "environment_v2/settings/scheduling_config.py",
+      "exit_code": 1,
+      "output": "",
+      "passed": true
+    },
+    {
+      "path": "environment_v2/settings/uav_config.py",
+      "exit_code": 1,
+      "output": "",
+      "passed": true
+    },
+    {
+      "path": "environment_v2/settings/user_config.py",
+      "exit_code": 1,
+      "output": "",
+      "passed": true
+    },
+    {
+      "path": "environment_v2/types.py",
+      "exit_code": 1,
+      "output": "",
+      "passed": true
+    },
+    {
+      "path": "config/channel.toml",
+      "exit_code": 1,
+      "output": "",
+      "passed": true
+    },
+    {
+      "path": "config/dag.toml",
+      "exit_code": 1,
+      "output": "",
+      "passed": true
+    },
+    {
+      "path": "config/region.toml",
+      "exit_code": 1,
+      "output": "",
+      "passed": true
+    },
+    {
+      "path": "config/scheduling.toml",
+      "exit_code": 1,
+      "output": "",
+      "passed": true
+    },
+    {
+      "path": "config/uav.toml",
+      "exit_code": 1,
+      "output": "",
+      "passed": true
+    },
+    {
+      "path": "config/user.toml",
+      "exit_code": 1,
+      "output": "",
+      "passed": true
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-14-hyperuav-env-gate1.md",
+      "exit_code": 1,
+      "output": "",
+      "passed": true
+    },
+    {
+      "path": "docs/superpowers/reports/2026-10-14-hyperuav-env-gate1-results.md",
+      "exit_code": 1,
+      "output": "",
+      "passed": true
+    },
+    {
+      "path": "docs/superpowers/reports/2026-10-14-hyperuav-env-gate1-result.json",
+      "exit_code": 1,
+      "output": "",
+      "passed": true
+    }
+  ],
+  "final_git_status_short": " M docs/superpowers/specs/2026-09-23-hyperuav-chapter3-word-design.md\n M docs/superpowers/specs/2026-10-10-hyperuav-env-rebuild-requirements-draft.md\n?? config/\n?? docs/superpowers/2026-10-13-hyperuav-env-rebuild-context-brief.md\n?? docs/superpowers/plans/2026-09-23-hyperuav-chapter3-word-implementation.md\n?? docs/superpowers/plans/2026-09-28-pdf-code-consistency-audit.md\n?? docs/superpowers/plans/2026-10-14-hyperuav-env-gate1.md\n?? docs/superpowers/reports/2026-09-28-pdf-code-consistency-audit.md\n?? docs/superpowers/reports/2026-10-14-hyperuav-env-gate1-result.json\n?? docs/superpowers/reports/2026-10-14-hyperuav-env-gate1-results.md\n?? environment_v2/\n?? output/\n?? tools/\n",
+  "new_file_diff_check_note": "git diff --no-index implies --exit-code: 1 means files differ from NUL. All 19 checks emitted no whitespace diagnostics."
+}
