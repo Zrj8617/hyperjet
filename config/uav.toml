@@ -11,8 +11,8 @@ flight_duration_s = 0.5
 cpu_frequency_hz = 1_000_000_000.0
 # 计算能耗系数，E = kappa × CPU cycles × 主频平方。（暂定）
 kappa = 1e-28
-# 发送数据的功率，单位：W。（暂定）
-transmit_power_w = 0.5
+# 发送数据的功率，单位：W。（暂定，同 MRDTS）
+transmit_power_w = 1.0
 # 每架 UAV 的任务队列上限，单位：个。（暂定）
 queue_limit = 16
 # 悬停叶片轮廓功率 P0，单位：W。（暂定）
