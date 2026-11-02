@@ -224,13 +224,21 @@ reward、关键路径、超图等只在方法层计算，不存进实体。
 4. 动作：节点打分器（所有子任务共用一个小 MLP）输出每个子任务在候选执行节点（候选 UAV 和该 DAG 的用户）上的分布，不可选的掩码；飞行用高斯头；两部分对数概率相加。
 5. 邻居负载摘要：开关，默认开。时隙开始时邻居告知本时隙要管的子任务数和总计算量，作为局部超图中邻居 UAV 节点的特征（信令假设同 §0.5.1 第 3 条）。
 6. 奖励：暂缓，以后再设计。
-7. 环境快照需提供：每个 UE 的管理 UAV、UE 对各 UAV 的接收功率（或覆盖判断）、UAV 两两是否在 `air_range_m` 内、本时隙新 DAG 及其管理 UAV、每个子任务的候选执行节点（含 UE）。
+7. 环境快照：时隙开始、到达与关联做完后给方法层的只读视图（§0.4.8），不复制数组；每个时隙从空队列开始，快照里没有队列状态。字段：
+   - `slot`：时隙序号（截止 = 时隙开始 + `deadline_s`，现算）；
+   - `uav_positions` (N, 3)、`ue_positions` (M, 3)；
+   - `new_dags`：本时隙全部新 DAG 的静态数据（`id`、`ue_id`、`edges`、`input_bits`、`output_bits`、`cpu_cycles`、`levels`），含覆盖外 UE 的（critic 全局超图要用）；
+   - `manager_uav` (M,)：每个 UE 的管理 UAV；
+   - `coverage` (M, N) 布尔：UE 按 0.1 W 发到各 UAV 是否不低于 −86 dBm（同 `Router.can_upload`）；
+   - `uav_adjacency` (N, N) 布尔：两架 UAV 是否在 `air_range_m` 内；
+   - `candidates`：每个需要决策的 DAG 一个候选执行节点元组 `(None, u1, u1 的邻居按编号升序)`；覆盖外的 DAG 不出现（环境直接放 UE）。
+   不放：接收功率矩阵（有 `coverage`；ERS 的参考时长由方法层调 `Router.transfer_duration_s`，信道公式只有一处实现）、热点位置（不假设事先已知）、队列与 runtime 状态、邻居负载摘要（方法层由 `new_dags` 与 `manager_uav` 算）、UE 速度与方向、奖励和上一时隙结果（在 `SlotResult`）。位置数组在 `step` 末原地更新，快照只在本时隙内有效，方法层要留存需自己拷贝。
 8. 实验时照 HyperJet 做超边类型消融（HyperJet 实验里三类与两类超边效果几乎一样，多加不一定更好）。
 
 ### 0.5.4 接口、截止与 episode
 
 1. 接口：`reset(seed, episode)` 返回第一个时隙的快照；`step(flight_actions, placements)` 执行本时隙，返回 `SlotResult` 和下一时隙快照（`done=True` 时为 `None`）。⚠️ 偏离 MRDTS 的 `begin_slot`/`end_slot` 两个方法：飞行和卸载同时决策、飞行在时隙末才执行，分成两个方法没有意义。
-2. `placements`：((dag_id, node_id), 执行节点) 列表（执行节点为某架 UAV 的编号，或该 DAG 的 UE；具体表示 Gate 5 定），覆盖本时隙全部需要决策的子任务（覆盖外 UE 的 DAG 由环境直接放在 UE 上，不在其中）；列表顺序即入口输入的进队顺序，方法层把各 UAV 的分配按 ERS 值统一排序后再交（§0.5.9 第 6 条）。入口校验：子任务属于本时隙新 DAG、每个恰好出现一次、执行节点在该子任务的候选集合内。不合法的分配计数，所在 DAG 直接记 TIMED_OUT。
+2. `placements`：((dag_id, node_id), 执行节点) 列表（执行节点为某架 UAV 的编号，`None` 表示该 DAG 的 UE；UAV 0 和 `None` 在 Python 里都为假，判断一律写 `is None`，不写 `if node:`），覆盖本时隙全部需要决策的子任务（覆盖外 UE 的 DAG 由环境直接放在 UE 上，不在其中）；列表顺序即入口输入的进队顺序，方法层把各 UAV 的分配按 ERS 值统一排序后再交（§0.5.9 第 6 条）。入口校验：子任务属于本时隙新 DAG、每个恰好出现一次、执行节点在该子任务的候选集合内。不合法的分配计数，所在 DAG 直接记 TIMED_OUT。
 3. 不设 UAV 队列上限：每个时隙从空队列开始（§0.5.1 第 6 条），积压已被限住；设上限只会在任务集中的热点 UAV 上额外拒掉分配。
 4. 截止：配置为 `deadline_s`（`scheduling.toml`）；读取配置时检查 0 < `deadline_s` ≤ 时隙长度。成功 = 所有 sink 在截止前完成（回传打开时为回传完成）；超时的 DAG 也记下算完的时刻（§0.5.1 第 6 条）。
 5. episode 恰好 `arrival_slots` 个时隙，最后一个时隙结束时 `done=True`，没有收尾段。
@@ -362,7 +370,7 @@ scripts/                     # 一次性检查与可视化（§0.4.12；对应 M
    - `TaskStatus`：WAITING_DATA（已分配，等输入）→ QUEUED_COMPUTE（到齐，在 CPU 队）→ RUNNING → FINISHED；不设 MRDTS 的 UNSCHEDULED（t0 建立时已有执行节点）和 FAILED（截止不停，都会算完）；替换 `types.py` 现有的 WAITING / READY / SCHEDULED / RETURNING / DONE / CANCELLED（回传进度看回传那次传输的状态）；
    - `TransferStatus`：QUEUED → ACTIVE → FINISHED（同 MRDTS，它放在 `channel_queue.py`）；
    - `DAGStatus`：ACTIVE → COMPLETED / TIMED_OUT；
-   - `TaskRuntime`（照 MRDTS，时刻字段加 `_s`）：`key`、`execution_node`（UAV 编号或该 DAG 的 UE，表示 Gate 5 定）、`cpu_cycles`、`input_bits`、`predecessors`、`status`、`input_record`、`predecessor_records`、`input_arrival_s`、`predecessor_arrival_s`、`ready_time_s`、`start_time_s`、`finish_time_s`、`compute_energy_j`，加 `return_record`（sink 在 UAV 上且回传开时）；删 MRDTS 的 `decision_at`（都是 t0）、`compute_queue_enter_at`（= `ready_time_s`）、`execution_core_id`（单核）、`failed_at`（没有 FAILED）；状态只由 `event_runtime` 修改，不设 MRDTS 的 `mark_*` 方法（§0.4.9 第 1 条）；到齐判定：入口子任务 = 输入到达，其他 = 所有前驱的结果到达（MRDTS 两者都要，因为它每个子任务都有输入）；同一节点上的几个后继可共用同一个前驱的 `TransferRecord`；
+   - `TaskRuntime`（照 MRDTS，时刻字段加 `_s`）：`key`、`execution_node`（UAV 编号，`None` 表示该 DAG 的 UE）、`cpu_cycles`、`input_bits`、`predecessors`、`status`、`input_record`、`predecessor_records`、`input_arrival_s`、`predecessor_arrival_s`、`ready_time_s`、`start_time_s`、`finish_time_s`、`compute_energy_j`，加 `return_record`（sink 在 UAV 上且回传开时）；删 MRDTS 的 `decision_at`（都是 t0）、`compute_queue_enter_at`（= `ready_time_s`）、`execution_core_id`（单核）、`failed_at`（没有 FAILED）；状态只由 `event_runtime` 修改，不设 MRDTS 的 `mark_*` 方法（§0.4.9 第 1 条）；到齐判定：入口子任务 = 输入到达，其他 = 所有前驱的结果到达（MRDTS 两者都要，因为它每个子任务都有输入）；同一节点上的几个后继可共用同一个前驱的 `TransferRecord`；
    - 传输记录（`channel_queue.py`，照 `serial_scheduling`）：每次数据搬运（一个输入 / 一个前驱发往一个节点 / 一次回传）一个 `TransferRecord`（各跳作业、开始、结束、发送能耗）；每一跳一个 `TransferJob`：`transfer_id`、`source_ready_s`、`payload_bits`、`channel_gain`、`remaining_bits`、`bandwidth_hz`、`power_w`、`rate_bps`、`predicted_finish_s`、`tx_energy_j`、`status`、`start_time_s`、`finish_time_s`；下一跳的作业在前一跳传完时进队；剩余比特扣减时取 max(0, ·)（同 MRDTS，恰好传完时浮点舍入会出现略小于 0）；
    - `DAGRuntime`：DAG 静态数据、u1、`status`、`finish_time_s`（COMPLETED、TIMED_OUT 都写）、由 `edges` 推出的后继和 sink、还没完成的 sink 数；删 MRDTS 的 `remaining_predecessors` / `ready_node_ids`（逐个决策时用来判断哪些子任务能决策）和 `topological_order`（节点编号就是拓扑序）；
    - `SlotResult`（Gate 5 组装）：`offers`、`completed_dags`、`timed_out_dags`（都含覆盖外 UE 的 DAG）、各 DAG 的完成时刻（奖励按超时长短惩罚用）、`compute_energy_j`、`tx_energy_j`、`return_energy_j`、`flight_energy_j`、`invalid_placements`、`done`；同时改掉 `contracts.py` 中已过时的注释（“冻结 ready 列表”“队列未满”“承诺时计入”“统一相对截止长度”）；
