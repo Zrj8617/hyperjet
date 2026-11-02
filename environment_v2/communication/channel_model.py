@@ -1,4 +1,4 @@
-"""由三维位置计算 LoS/NLoS 链路的传输时间与发送能耗。"""
+"""由三维位置计算平均信道增益，并按分配的功率与带宽计算速率。"""
 
 from enum import Enum
 import math
@@ -18,25 +18,23 @@ class LinkType(str, Enum):
 
 
 class ChannelModel:
-    """使用子信道带宽与噪声功率谱密度计算单跳传输。"""
+    """提供 LoS/NLoS 平均信道增益、接收功率与香农速率。"""
 
     def __init__(self, config: ChannelConfig):
-        """保存信道配置，将噪声与上传接收功率门限换算为 W。"""
+        """保存信道配置，将噪声谱密度和接收功率门限换算为线性值。"""
         self.config = config
-        self.noise_power_w = (
+        self.noise_density_w_per_hz = (
             10 ** ((config.noise_density_dbm_per_hz - 30) / 10)
-            * config.subchannel_bandwidth_hz
         )
         self.min_received_power_w = 10 ** ((config.min_received_power_dbm - 30) / 10)
 
-    def received_power_w(
+    def average_channel_gain(
         self,
         tx_position: NDArray[np.float64],
         rx_position: NDArray[np.float64],
-        power_w: float,
         link_type: LinkType,
     ) -> float:
-        """由三维位置与链路类型返回平均接收功率（W）。"""
+        """由三维位置与链路类型返回平均功率增益。"""
         displacement = rx_position - tx_position
         horizontal_distance = float(np.linalg.norm(displacement[:2]))
         height_difference = abs(float(displacement[2]))
@@ -49,25 +47,24 @@ class ChannelModel:
                 1.0 + self.config.los_alpha
                 * math.exp(-self.config.los_beta * (elevation - self.config.los_alpha))
             )
-        los_gain = self.config.reference_channel_gain / distance**2
-        average_gain = (
-            los_probability * los_gain
-            + (1.0 - los_probability) * self.config.nlos_attenuation_factor * los_gain
-        )
-        return power_w * average_gain
+        return (
+            los_probability + (1.0 - los_probability) * self.config.nlos_attenuation_factor
+        ) * self.config.reference_channel_gain / max(distance**2, 1e-12)
 
-    def transfer(
+    def received_power_w(
         self,
-        bits: float,
         tx_position: NDArray[np.float64],
         rx_position: NDArray[np.float64],
         power_w: float,
         link_type: LinkType,
-    ) -> tuple[float, float]:
-        """返回指定数据量的传输时间（s）与发送方能耗（J）。"""
-        received_power = self.received_power_w(tx_position, rx_position, power_w, link_type)
-        rate = self.config.subchannel_bandwidth_hz * math.log2(
-            1.0 + received_power / self.noise_power_w
+    ) -> float:
+        """返回发送功率乘以平均信道增益得到的接收功率（W）。"""
+        return power_w * self.average_channel_gain(
+            tx_position, rx_position, link_type,
         )
-        time_s = bits / rate
-        return time_s, power_w * time_s
+
+    def rate_bps(self, channel_gain: float, power_w: float, bandwidth_hz: float) -> float:
+        """按给定增益、发送功率（W）和带宽（Hz）返回速率（bit/s）。"""
+        return bandwidth_hz * math.log2(
+            1.0 + power_w * channel_gain / (self.noise_density_w_per_hz * bandwidth_hz)
+        )

@@ -1,15 +1,15 @@
 [channel]
-# 每个子信道带宽，单位：Hz。（暂定）
-subchannel_bandwidth_hz = 1_000_000.0
-# 每架 UAV 子信道个数，收发共用。（暂定）
-subchannels_per_uav = 4
+# 全网共享总带宽，单位：Hz。（暂定，待模拟）
+total_bandwidth_hz = 12e6
+# UAV 之间直接通信的最大三维距离，单位：m。
+air_range_m = 300
 # 一米处参考信道增益，无量纲。（暂定）
 reference_channel_gain = 1e-6
 # NLoS 相对 LoS 的增益系数，无量纲。（暂定）
 nlos_attenuation_factor = 0.2
 # 噪声功率谱密度，单位：dBm/Hz。（暂定）
 noise_density_dbm_per_hz = -174.0
-# 上传最小接收功率，单位：dBm。（暂定）
+# UE 与 UAV 双向通信的最小接收功率，单位：dBm。（暂定）
 min_received_power_dbm = -86.0
 # 仰角 LoS 概率参数 alpha，仰角按度输入。（暂定）
 los_alpha = 9.61

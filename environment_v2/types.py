@@ -10,12 +10,18 @@ TaskKey: TypeAlias = tuple[int, int]
 class TaskStatus(str, Enum):
     """子任务的唯一运行状态；由 runtime 修改。"""
 
-    WAITING = "waiting"
-    READY = "ready"
-    SCHEDULED = "scheduled"
-    RETURNING = "returning"
-    DONE = "done"
-    CANCELLED = "cancelled"
+    WAITING_DATA = "waiting_data"
+    QUEUED_COMPUTE = "queued_compute"
+    RUNNING = "running"
+    FINISHED = "finished"
+
+
+class TransferStatus(str, Enum):
+    """单跳传输的唯一运行状态；由 runtime 修改。"""
+
+    QUEUED = "queued"
+    ACTIVE = "active"
+    FINISHED = "finished"
 
 
 class DAGStatus(str, Enum):

@@ -16,7 +16,6 @@ class UAVConfig:
     cpu_frequency_hz: float
     kappa: float
     transmit_power_w: float
-    queue_limit: int
     profile_power_w: float
     induced_power_w: float
     tip_speed: float

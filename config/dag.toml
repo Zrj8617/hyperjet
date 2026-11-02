@@ -8,23 +8,19 @@ max_levels = 4
 # 每节点最大父节点数，单位：个。（暂定）
 max_parents = 3
 # 节点输入数据量下限，单位：bit。（暂定）
-min_input_bits = 838_860.8
+min_input_bits = 279_620.3
 # 节点输入数据量上限，单位：bit。（暂定）
-max_input_bits = 8_388_608.0
-# 依赖边数据量下限，单位：bit。（暂定）
-min_edge_bits = 1_258_291.2
-# 依赖边数据量上限，单位：bit。（暂定）
-max_edge_bits = 6_291_456.0
-# sink 回传数据量下限，单位：bit。（暂定）
-min_return_bits = 1_258_291.2
-# sink 回传数据量上限，单位：bit。（暂定）
-max_return_bits = 6_291_456.0
+max_input_bits = 2_796_202.7
+# 每个子任务输出数据量下限，单位：bit。（暂定）
+min_output_bits = 419_430.4
+# 每个子任务输出数据量上限，单位：bit。（暂定）
+max_output_bits = 2_097_152.0
 # 计算量公式 n = input_bits / base_unit_bits 的基准数据量，单位：bit。（暂定）
-base_unit_bits = 81_920.0
+base_unit_bits = 27_306.67
 # 复杂度函数的 CPU cycles 系数下限。（暂定）
-min_task_constant = 500_000
+min_task_constant = 166_666.7
 # 复杂度函数的 CPU cycles 系数上限。（暂定）
-max_task_constant = 1_500_000
+max_task_constant = 500_000
 # 复杂度 n 的抽样概率，无量纲。（暂定）
 linear_probability = 0.2
 # 复杂度 n × log2(n) 的抽样概率，无量纲。（暂定）

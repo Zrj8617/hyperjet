@@ -16,8 +16,10 @@ speed_sigma = 0.3
 # 方向噪声标准差，单位：rad。（暂定）
 heading_sigma = 0.30
 # 每时隙移动所代表的时长，单位：s。（暂定）
-move_duration_s = 5.0
+move_duration_s = 1.0
 # 上传发射功率，单位：W。（暂定，同 MRDTS）
 transmit_power_w = 0.1
+# 单核主频，单位：CPU cycles/s。（暂定）
+cpu_frequency_hz = 1e9
 # 每用户每到达时隙的基础到达概率，无量纲。（暂定）
-arrival_probability = 0.0145
+arrival_probability = 0.09

@@ -44,6 +44,6 @@ def load_settings(directory: str | Path) -> Settings:
         raise ValueError("flight_duration_s 必须大于 0")
     if settings.uav.flight_duration_s > settings.scheduling.slot_duration_s:
         raise ValueError("flight_duration_s 不得超过 slot_duration_s")
-    if settings.scheduling.relative_deadline_slots <= settings.dag.max_levels:
-        raise ValueError("relative_deadline_slots 必须大于 max_levels")
+    if not 0 < settings.scheduling.deadline_s <= settings.scheduling.slot_duration_s:
+        raise ValueError("deadline_s 必须大于 0 且不超过 slot_duration_s")
     return settings

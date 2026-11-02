@@ -15,13 +15,11 @@ class DAGConfig:
     max_parents: int
     min_input_bits: float
     max_input_bits: float
-    min_edge_bits: float
-    max_edge_bits: float
-    min_return_bits: float
-    max_return_bits: float
+    min_output_bits: float
+    max_output_bits: float
     base_unit_bits: float
-    min_task_constant: int
-    max_task_constant: int
+    min_task_constant: float
+    max_task_constant: float
     linear_probability: float
     log_probability: float
     squared_log_probability: float

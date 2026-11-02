@@ -6,15 +6,13 @@ altitude_m = 100.0
 # 水平动作各分量的速度尺度，单位：m/s。（暂定）
 max_speed = 15.0
 # 每时隙飞行时长，单位：s。（暂定）
-flight_duration_s = 0.5
+flight_duration_s = 1.0
 # 单核主频，单位：CPU cycles/s。（暂定）
-cpu_frequency_hz = 1_000_000_000.0
+cpu_frequency_hz = 5e9
 # 计算能耗系数，E = kappa × CPU cycles × 主频平方。（暂定）
 kappa = 1e-28
 # 发送数据的功率，单位：W。（暂定，同 MRDTS）
 transmit_power_w = 1.0
-# 每架 UAV 的任务队列上限，单位：个。（暂定）
-queue_limit = 16
 # 悬停叶片轮廓功率 P0，单位：W。（暂定）
 profile_power_w = 80.0
 # 悬停诱导功率 Pi，单位：W。（暂定）

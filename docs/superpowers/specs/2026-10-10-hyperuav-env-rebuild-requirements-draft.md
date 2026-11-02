@@ -69,7 +69,7 @@
    - 计算与传输分开：每架 UAV、每个 UE 一条 CPU 时间线（单核，只排计算；输入全部到达后按到达先后计算，照 MRDTS），传输走第 3 条的共享信道，互不占用；子任务计算开始 = max(所有输入数据到达时刻, CPU 空闲时刻)；
    - 位置用时隙开始时的 `positions`（时隙内冻结），DAG 不保存位置。
 6. 时间估计：ERS 排序只用单跳参考时长（独占全部带宽和功率，同 MRDTS）和计算时长（候选含 UE，按候选平均）；中继/直连按同样的参考时长比较（§0.5.9 第 6 条），不另写独立的估计器。
-7. Gate 3 与 Gate 4 的分工：Gate 3 只提供只读计算——单跳计算（两端位置、链路类型 → 平均信道增益与接收功率；增益、功率、带宽 → 速率，照 MRDTS `serial_scheduling` 的 `rate_bps`）、UE 与 UAV 之间的覆盖判断（第 4 条）、UAV 之间是否在 `air_range_m` 内、路由计算（上传 / 前驱结果 / 回传三类，含 UE 执行时的路径，返回每一跳的发送方、接收方、链路类型）；带宽与功率的动态分配、有向链路与 CPU 的排队叫号、前驱结果按目的节点分发、中继/直连选择，由 Gate 4 的 runtime 负责（§0.5.9）。
+7. Gate 3 与 Gate 4 的分工：Gate 3 只提供只读计算——单跳计算（两端位置、链路类型 → 平均信道增益与接收功率；增益、功率、带宽 → 速率，照 MRDTS `serial_scheduling` 的 `rate_bps`）、UE 与 UAV 之间的覆盖判断（第 4 条）、UAV 之间是否在 `air_range_m` 内、路由计算（上传 / 前驱结果 / 回传三类，含 UE 执行时的路径，返回每一跳的发送方、接收方、链路类型；中继还是直连按独占参考时长选）；带宽与功率的动态分配、有向链路与 CPU 的排队叫号、前驱结果按目的节点分发，由 Gate 4 的 runtime 负责（§0.5.9）。
 
 ### 0.4.4 时间线
 
@@ -303,7 +303,7 @@ environment_v2/              # 环境，切换时改为正式名（对应 MRDTS 
     server_queue.py          #   单核 CPU 队列（照 MRDTS）
     channel_queue.py         #   有向链路先来先到（照 MRDTS）
     communication_resources.py  # 全网带宽与设备功率均分（照 MRDTS serial_scheduling）
-    event_runtime.py         #   时隙内事件推进、中继/直连规则、截止后照样算完
+    event_runtime.py         #   时隙内事件推进、截止后照样算完
     slot_result.py           #   SlotResult
   simulator.py               # Gate 5：reset / step（对应 MRDTS simulator.py）
 methods/                     # 方法层（对应 MRDTS methods/），环境不 import 它
@@ -362,7 +362,7 @@ scripts/                     # 一次性检查与可视化（§0.4.12；对应 M
    - `TaskStatus`：WAITING_DATA（已分配，等输入）→ QUEUED_COMPUTE（到齐，在 CPU 队）→ RUNNING → FINISHED；不设 MRDTS 的 UNSCHEDULED（t0 建立时已有执行节点）和 FAILED（截止不停，都会算完）；替换 `types.py` 现有的 WAITING / READY / SCHEDULED / RETURNING / DONE / CANCELLED（回传进度看回传那次传输的状态）；
    - `TransferStatus`：QUEUED → ACTIVE → FINISHED（同 MRDTS，它放在 `channel_queue.py`）；
    - `DAGStatus`：ACTIVE → COMPLETED / TIMED_OUT；
-   - `TaskRuntime`（照 MRDTS，时刻字段加 `_s`）：`key`、`execution_node`（UAV 编号或该 DAG 的 UE，表示 Gate 5 定）、`cpu_cycles`、`input_bits`、`predecessors`、`status`、`input_record`、`predecessor_records`、`input_arrival_s`、`predecessor_arrival_s`、`ready_time_s`、`start_time_s`、`finish_time_s`、`compute_energy_j`，加 `return_record`（sink 在 UAV 上且回传开时）；删 MRDTS 的 `decision_at`（都是 t0）、`compute_queue_enter_at`（= `ready_time_s`）、`execution_core_id`（单核）、`failed_at`（没有 FAILED）；改状态的 `mark_*` 方法同 MRDTS，只由 `event_runtime` 调用（§0.4.9 第 1 条）；到齐判定：入口子任务 = 输入到达，其他 = 所有前驱的结果到达（MRDTS 两者都要，因为它每个子任务都有输入）；同一节点上的几个后继可共用同一个前驱的 `TransferRecord`；
+   - `TaskRuntime`（照 MRDTS，时刻字段加 `_s`）：`key`、`execution_node`（UAV 编号或该 DAG 的 UE，表示 Gate 5 定）、`cpu_cycles`、`input_bits`、`predecessors`、`status`、`input_record`、`predecessor_records`、`input_arrival_s`、`predecessor_arrival_s`、`ready_time_s`、`start_time_s`、`finish_time_s`、`compute_energy_j`，加 `return_record`（sink 在 UAV 上且回传开时）；删 MRDTS 的 `decision_at`（都是 t0）、`compute_queue_enter_at`（= `ready_time_s`）、`execution_core_id`（单核）、`failed_at`（没有 FAILED）；状态只由 `event_runtime` 修改，不设 MRDTS 的 `mark_*` 方法（§0.4.9 第 1 条）；到齐判定：入口子任务 = 输入到达，其他 = 所有前驱的结果到达（MRDTS 两者都要，因为它每个子任务都有输入）；同一节点上的几个后继可共用同一个前驱的 `TransferRecord`；
    - 传输记录（`channel_queue.py`，照 `serial_scheduling`）：每次数据搬运（一个输入 / 一个前驱发往一个节点 / 一次回传）一个 `TransferRecord`（各跳作业、开始、结束、发送能耗）；每一跳一个 `TransferJob`：`transfer_id`、`source_ready_s`、`payload_bits`、`channel_gain`、`remaining_bits`、`bandwidth_hz`、`power_w`、`rate_bps`、`predicted_finish_s`、`tx_energy_j`、`status`、`start_time_s`、`finish_time_s`；下一跳的作业在前一跳传完时进队；剩余比特扣减时取 max(0, ·)（同 MRDTS，恰好传完时浮点舍入会出现略小于 0）；
    - `DAGRuntime`：DAG 静态数据、u1、`status`、`finish_time_s`（COMPLETED、TIMED_OUT 都写）、由 `edges` 推出的后继和 sink、还没完成的 sink 数；删 MRDTS 的 `remaining_predecessors` / `ready_node_ids`（逐个决策时用来判断哪些子任务能决策）和 `topological_order`（节点编号就是拓扑序）；
    - `SlotResult`（Gate 5 组装）：`offers`、`completed_dags`、`timed_out_dags`（都含覆盖外 UE 的 DAG）、各 DAG 的完成时刻（奖励按超时长短惩罚用）、`compute_energy_j`、`tx_energy_j`、`return_energy_j`、`flight_energy_j`、`invalid_placements`、`done`；同时改掉 `contracts.py` 中已过时的注释（“冻结 ready 列表”“队列未满”“承诺时计入”“统一相对截止长度”）；

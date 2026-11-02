@@ -19,6 +19,7 @@ class UserConfig:
     heading_sigma: float
     move_duration_s: float
     transmit_power_w: float
+    cpu_frequency_hz: float
     arrival_probability: float
 
     @classmethod

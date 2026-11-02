@@ -1,7 +1,9 @@
 [scheduling]
 # 时隙长度，单位：s。（暂定）
-slot_duration_s = 5.0
+slot_duration_s = 1.0
 # 产生到达的时隙数量，单位：时隙。（暂定）
-arrival_slots = 500
-# 每 DAG 的统一相对截止长度，单位：时隙。（暂定）
-relative_deadline_slots = 40
+arrival_slots = 200
+# 每 DAG 从到达到截止的时长，单位：s。（暂定）
+deadline_s = 1.0
+# sink 结果是否回传到所属 UE。
+result_return = true

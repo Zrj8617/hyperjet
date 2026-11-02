@@ -1,4 +1,4 @@
-"""子信道、噪声、上传覆盖与 LoS/NLoS 传播参数的 TOML 读取。"""
+"""共享带宽、噪声、覆盖与 LoS/NLoS 传播参数的 TOML 读取。"""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -7,10 +7,10 @@ import tomllib
 
 @dataclass(frozen=True)
 class ChannelConfig:
-    """子信道、噪声、上传覆盖与 LoS/NLoS 传播参数。"""
+    """共享带宽、噪声、覆盖与 LoS/NLoS 传播参数。"""
 
-    subchannel_bandwidth_hz: float
-    subchannels_per_uav: int
+    total_bandwidth_hz: float
+    air_range_m: float
     reference_channel_gain: float
     nlos_attenuation_factor: float
     noise_density_dbm_per_hz: float
