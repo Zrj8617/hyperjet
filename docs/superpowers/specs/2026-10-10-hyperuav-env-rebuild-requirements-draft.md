@@ -317,7 +317,7 @@ environment_v2/              # 环境，切换时改为正式名（对应 MRDTS 
   simulator.py               # Gate 5：reset / step（对应 MRDTS simulator.py）
 methods/                     # 方法层（对应 MRDTS methods/），环境不 import 它
   ers.py  scheduling.py      #   ERS 排序与每时隙一次性提交（⚠️ MRDTS 为 Member 内串行逐个决策）
-  baselines/                 #   随机、贪心两条参照线
+  baselines/policies.py      #   随机、全本地、贪心、HEFT 式四个基线和随机飞行（§0.5.10）
   hypergraph/                #   六类超边、KaHyPar 划分、HGNN 编码器（移植旧 clean_incidence.py）
   mappo/                     #   actor、critic、训练循环
 scripts/                     # 一次性检查与可视化（§0.4.12；对应 MRDTS scripts/）
@@ -382,3 +382,20 @@ scripts/                     # 一次性检查与可视化（§0.4.12；对应 M
    - `Router`：加“UE 到某架 UAV 是否覆盖”（现在的 `can_upload` 只看最近那架，直连要查 u2）和“某架 UAV 到 UE 是否覆盖”（回传直连，按 UAV 功率算）；只给出逐跳的（发送方, 接收方）：入口输入、UE 发给 UAV 的前驱结果、UAV 发给 UE 的前驱结果、回传（都是中继或直连，按第 6 条的参考时长选）和 UAV 之间的前驱结果；不再算每跳时长和能耗（共享带宽下由 runtime 算）。
 13. 配置改成版本 D：按 §0.5.5 改 `config/*.toml` 和对应 dataclass；`dag.toml` 的边数据量、回传数据量两组键合成 `min_output_bits` / `max_output_bits`；`region.toml` `side_length_m = 600`、`hotspot_radius_m = 90`；`channel.toml` 见第 12 条；`scheduling.toml` 删 `relative_deadline_slots`、加 `deadline_s`、`result_return`；`user.toml` 加 `cpu_frequency_hz`；`uav.toml` 删 `queue_limit`；`load_settings` 里“`relative_deadline_slots` > `max_levels`”换成 0 < `deadline_s` ≤ 时隙长度。
 14. 明确不做：内部断言、浮点容差（第 11 条剩余比特取 max(0, ·) 除外）、阶段对象、子信道 / 子载波、带宽或功率分配给智能体、“来不及就不发”的提前判断、跨时隙、干扰、UE 能耗。
+
+### 0.5.10 基线（方法层）
+
+1. 范围：`methods/ers.py`（ERS 排序和参考时长小函数，照 MRDTS `methods/random/ers.py` 改写）、`methods/baselines/policies.py`（四个基线和随机飞行，随机部分照 MRDTS `methods/random/run.py`；HEFT 没有可复用的现成实现，按下面规则写）、`scripts/run_baselines.py`（一次性脚本）。方法层只通过 `Simulator.reset` / `step` 交动作，不直接调用 runtime，不改环境代码；用自己的随机数生成器（§0.4.14 第 6 条）。
+2. ERS（照 MRDTS `methods/random/ers.py`，只排序、不选执行节点）：
+   - 每个要决策的 DAG 用快照里它的候选集合；平均计算时长 = `cpu_cycles` × 各候选主频倒数的平均（UAV 5 GHz、UE 1 GHz）；
+   - 平均每比特传输时长 = 候选两两之间（含同一节点，同节点为 0）按 `Router.predecessor` 的路径、各跳 `transfer_duration_s(跳, 1 bit)` 之和的平均；
+   - rank(i) = 平均计算时长(i) + max over 后继 c [`output_bits`(i) × 平均每比特传输时长 + rank(c)]，sink 只有平均计算时长；入口输入的上传不计入（同 MRDTS）；
+   - placements 按 rank 从大到小统一排序，相等按 (dag_id, node_id)。⚠️ MRDTS 通信项用每条边的数据量、按核心数加权；这里用前驱的 `output_bits`、单核。
+3. 四个基线，都按 ERS 排好序再交给 `step`：
+   - 随机：每个子任务在候选里均匀随机选（同 MRDTS Random）；
+   - 全本地：全部子任务放 UE（`None`）；
+   - 贪心（整个 DAG 一个节点）：按 DAG 内最大 rank 从大到小逐个 DAG，放到预计完成最早的候选（含 UE）。预计完成 = max(入口上传参考时长（各入口取最大；UE 为 0）, 该节点本时隙已分到的计算量 ÷ 主频) + 本 DAG 总计算量 ÷ 主频 + 回传参考时长（各 sink 取最大；UE 为 0）（上传和排队同时进行，取较大者）；放完把本 DAG 计算量记到该节点；
+   - HEFT 式（逐个子任务）：按 ERS 顺序逐个子任务（rank 大的先，前驱一定排在后继前面），对每个候选算预计完成 = max(数据就绪, 该节点空闲时刻) + `cpu_cycles` ÷ 主频；数据就绪 = 入口取上传参考时长，非入口取各前驱(预计完成 + 前驱节点到本节点的参考传输时长)的最大；节点空闲时刻 = 该节点上已放子任务的最晚预计完成（单核）；sink 选节点时再加上回传参考时长（UE 为 0；完成以回传到达为准），回传不占 CPU，节点空闲时刻只记计算完成；选最小者，相等取候选元组里靠前的。
+   - 参考时长都用 `Router.transfer_duration_s` 沿 Router 给出的路径求和（独占全部带宽和功率，不看排队，同 ERS）。
+4. 飞行：四个基线都随机飞行，每个分量在 [-1, 1] 均匀抽（同 MRDTS Random）。飞行用单独的随机数生成器，四个基线对同一 (seed, episode) 用同一个种子，因而 UAV 轨迹相同；随机基线选节点用另一个生成器，不影响飞行动作。
+5. `scripts/run_baselines.py`：对给定的若干 (seed, episode)，每个基线跑完整 episode，打印按时完成率（COMPLETED ÷ offers）、超时数、四类能耗，以及跨 episode 的均值和标准差、`invalid_placements` 合计（应为 0）；核对同一 (seed, episode) 下四个基线的 offer 序列和每时隙 UAV 位置完全相同。用于 §0.4.12 第 2 条（随机与贪心要有明显差距）和 §0.5.7 第 9 条扫参。
