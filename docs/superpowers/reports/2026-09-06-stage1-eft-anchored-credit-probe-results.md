@@ -136,10 +136,7 @@ ON 明显学到了 EFT 排序方向，但仍有 **23.12%** 的决策与 myopic E
 - 完整训练/eval logs：`.../formal_20260905_104527/logs/`
 - 版本记录：`.../formal_20260905_104527/run_version.txt`
 - 仓库机器可读结果：`docs/superpowers/reports/2026-09-06-stage1-eft-anchored-credit-probe-result.json`
-- 曲线：
-  - `docs/superpowers/reports/2026-09-06-stage1-eft-anchored-credit-probe-entropy.png`
-  - `docs/superpowers/reports/2026-09-06-stage1-eft-anchored-credit-probe-system.png`
-  - `docs/superpowers/reports/2026-09-06-stage1-eft-anchored-credit-probe-agreement.png`
+- 曲线图片已从当前代码目录清理；数值结果保留在上述机器可读 JSON 与服务器原始结果目录中。
 
 ## 9. Codex 自检
 

@@ -15,7 +15,7 @@ def allocate_transfers(
     if not active:
         return
     bandwidth = model.config.total_bandwidth_hz / len(active)
-    senders = {
+    senders = {# 判断当前发送端是否属于UE
         hop: (hop.link_type == LinkType.GROUND_TO_AIR, hop.sender) for hop in active
     }
     outgoing = Counter(senders.values())

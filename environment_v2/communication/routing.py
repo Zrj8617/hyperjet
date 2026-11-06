@@ -1,10 +1,8 @@
 """只读位置并计算入口输入、前驱结果和回传的逐跳路径。"""
-
+# 根据ue，uav的位置算出数据该怎么走
 from dataclasses import dataclass
-
 import numpy as np
 from numpy.typing import NDArray
-
 from .channel_model import ChannelModel, LinkType
 
 
@@ -36,6 +34,8 @@ class Router:
     def nearest_uav(
         self, ue_position: NDArray[np.float64], uav_positions: NDArray[np.float64]
     ) -> int:
+        # 输入：一个UE坐标、全部无人机坐标数组
+        # 算出这个UE到每台UAV的距离，返回最近那台UAV的id
         """返回三维距离最近的管理 UAV 下标。"""
         return int(np.argmin(np.linalg.norm(uav_positions - ue_position, axis=1)))
 

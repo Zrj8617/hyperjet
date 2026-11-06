@@ -1,5 +1,5 @@
 """环境动作与 DAG 到达记录；不负责执行。"""
-
+# 定义方法层和环境之间传递的数据格式
 from dataclasses import dataclass
 from typing import TypeAlias
 

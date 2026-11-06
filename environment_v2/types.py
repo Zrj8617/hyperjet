@@ -30,3 +30,4 @@ class DAGStatus(str, Enum):
     ACTIVE = "active"
     COMPLETED = "completed"
     TIMED_OUT = "timed_out"
+# 只有runtime会修改状态，其他层只读

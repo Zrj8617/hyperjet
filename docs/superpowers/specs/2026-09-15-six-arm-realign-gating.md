@@ -293,8 +293,8 @@ G9 账本闭合断言上触发硬停止，最大相对误差 `0.4891791541`。
 
 **连带更正**（已同步执行）：
 
-- `docs/research/HyperUAV_context_handoff_20260912.md` §4.4、
-  `docs/research/HyperUAV_context_handoff_20260908.md` §4.4：错误声明划除并加更正块
+- 2026-09-08 与 2026-09-12 的历史 context handoff §4.4：错误声明已划除并加更正块；
+  两份已作废 handoff 已从当前目录清理，原文可通过 Git 历史查看
 - `docs/research/HyperUAV_research_master_roadmap.md`：追加本次结论
 - `AGENTS.md` §4 新增第 11 条工程原则：文档里的定量断言在被用作推论前提、写进 spec、
   或作为 gate 条件之前必须先验证

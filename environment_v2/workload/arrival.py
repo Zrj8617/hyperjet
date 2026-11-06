@@ -1,5 +1,4 @@
-"""用独立到达流逐时隙采样 UE 请求，并用 DAG 流生成静态任务。"""
-
+"""决定每个时隙哪些 UE 会产生新的 DAG，以及 DAG 什么时候到达。"""
 import numpy as np
 from numpy.typing import NDArray
 
@@ -17,15 +16,16 @@ class ArrivalProcess:
         self.settings = settings
         self.region = region
         self.streams = streams
-        self.next_id = 0
+        self.next_id = 0 #同一个UE多次生成DAG，也不会重复使用DAG编号
 
     def generate(self, slot_index: int, ue_positions: NDArray[np.float64]) -> list[DAG]:
         """逐 UE 抽样，按 UE 下标生成该时隙的新 DAG。"""
+        # 同一个时隙可能有多个 UE 同时产生任务，也可能没有任何UE产生任务
         probabilities = self.settings.user.arrival_probability * np.where(
             self.region.get_region_ids(ue_positions) == 1,
             self.settings.region.arrival_multiplier, 1.0,
         )
-        arrivals = self.streams.arrival.binomial(1, probabilities)
+        arrivals = self.streams.arrival.binomial(1, probabilities)# 每个UE是否产生DAG，1表示产生，0表示不产生
         at = slot_index * self.settings.scheduling.slot_duration_s
         dags = []
         for ue_id in np.flatnonzero(arrivals):

@@ -1,5 +1,5 @@
 """UAV 和 UE 共用的单核 FIFO 计算队列。"""
-
+#管理计算资源
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -11,10 +11,10 @@ from .task_runtime import TaskRuntime
 class ComputeRecord:
     """一次计算的任务键、起止时刻和计算能耗。"""
 
-    task_key: TaskKey
+    task_key: TaskKey # 记录当前正在执行的子任务编号
     start_time_s: float
     finish_time_s: float
-    energy_j: float
+    energy_j: float # 这里记录的是一次计算任务的能耗
 
 
 @dataclass
@@ -35,13 +35,13 @@ class ServerState:
         if self.running is not None or not self.queued:
             return None
         task = self.queued.popleft()
-        self.running = ComputeRecord(
+        self.running = ComputeRecord(# 记录当前正在执行的子任务编号
             task.key, now, now + task.cpu_cycles / self.frequency_hz,
             self.kappa * task.cpu_cycles * self.frequency_hz**2,
         )
         return self.running
 
-    def finish(self) -> ComputeRecord:
+    def finish(self) -> ComputeRecord: # 释放CPU并返回刚完成的计算记录
         """释放单核并返回刚完成的计算记录。"""
         record = self.running
         self.running = None

@@ -8,14 +8,14 @@ from ..types import TransferStatus
 
 
 @dataclass
-class TransferJob:
+class TransferJob:# 这是单跳
     """一跳的剩余数据与资源份额，状态和时刻由事件运行时填写。"""
 
     transfer_id: int
     hop: Hop
     payload_bits: float
     channel_gain: float
-    source_ready_s: float | None = None
+    source_ready_s: float | None = None # 数据源准备好发送的时间
     remaining_bits: float = field(init=False)
     bandwidth_hz: float = 0.0
     power_w: float = 0.0
@@ -32,7 +32,7 @@ class TransferJob:
 
 
 @dataclass
-class TransferRecord:
+class TransferRecord:# 把多跳结合起来
     """一次输入、前驱分发或回传的数据搬运，包含全部逐跳作业。"""
 
     jobs: tuple[TransferJob, ...]
@@ -47,19 +47,19 @@ class TransferRecord:
 
 
 @dataclass
-class DirectedChannelState:
+class DirectedChannelState:# 管理某一条链路上的传输排队
     """一个有向链路的队列与当前在传作业。"""
 
-    queued: deque[TransferJob] = field(default_factory=deque)
-    active: TransferJob | None = None
+    queued: deque[TransferJob] = field(default_factory=deque)# 等待区
+    active: TransferJob | None = None # 当前在传作业区
 
     def enqueue(self, job: TransferJob) -> None:
         """将数据已就绪的跳追加到队尾。"""
         self.queued.append(job)
 
-    def start_head(self) -> TransferJob | None:
+    def start_head(self) -> TransferJob | None:# 这里只是将作业设为active，并没有真正开始传输
         """链路空闲且队列非空时取出队首。"""
-        if self.active is not None or not self.queued:
+        if self.active is not None or not self.queued: # 链路不空闲或队列为空 返回none
             return None
         self.active = self.queued.popleft()
         return self.active
@@ -69,3 +69,4 @@ class DirectedChannelState:
         job = self.active
         self.active = None
         return job
+# 同一条有向链路在这份代码中，同一时刻最多只有一个active作业，也就是独占带宽
