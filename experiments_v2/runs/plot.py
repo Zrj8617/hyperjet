@@ -1,0 +1,170 @@
+"""把多个正式实验的评估曲线和训练健康度画在同一组图中。"""
+
+import argparse
+import json
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+BASELINE_COLORS = {
+    "random": "0.45", "local": "tab:brown", "greedy": "tab:green", "heft": "tab:red",
+}
+
+
+def load_seed_rows(run):
+    """按 seed 读取新格式 metrics.jsonl。"""
+    rows = {}
+    for seed in sorted(run.glob("seed*")):
+        kinds = {}
+        with (seed / "metrics.jsonl").open(encoding="utf-8") as stream:
+            for line in stream:
+                row = json.loads(line)
+                kinds.setdefault(row["kind"], []).append(row)
+        rows[seed.name] = kinds
+    return rows
+
+
+def aggregate(seed_rows, kind, field):
+    """按更新编号聚合多种子的标量字段。"""
+    updates = sorted({row["update"] for kinds in seed_rows.values() for row in kinds[kind]})
+    values = np.asarray([[next(row[field] for row in kinds[kind] if row["update"] == update)
+                          for update in updates] for kinds in seed_rows.values()])
+    return np.asarray(updates), values.mean(axis=0), values.std(axis=0)
+
+
+def plot_series(axis, updates, mean, std, label, color, linestyle="-"):
+    """单种子画线，多种子增加均值标准差阴影。"""
+    axis.plot(updates, mean, label=label, color=color, linestyle=linestyle)
+    if np.any(std):
+        axis.fill_between(updates, mean - std, mean + std, alpha=0.16, color=color)
+
+
+def add_baselines(axis, summaries, field):
+    """增加四个固定评估基线的水平线。"""
+    for name, values in summaries.items():
+        axis.axhline(values[field], linestyle=":", linewidth=1.1,
+                     color=BASELINE_COLORS[name], label=name)
+
+
+def save_evaluation(output, runs, baselines, field, ylabel, filename):
+    """绘制多个方案的一个评估主指标及基线。"""
+    figure, axis = plt.subplots(figsize=(7.5, 4.8))
+    for index, (name, rows) in enumerate(runs):
+        updates, mean, std = aggregate(rows, "evaluation", field)
+        plot_series(axis, updates, mean, std, name, f"C{index}")
+    add_baselines(axis, baselines, field)
+    axis.set(xlabel="Update", ylabel=ylabel)
+    axis.grid(alpha=0.25)
+    axis.legend(ncol=2, fontsize=8)
+    figure.tight_layout()
+    path = output / "figures" / filename
+    figure.savefig(path, dpi=150)
+    plt.close(figure)
+    return path
+
+
+def save_coverage(output, runs, baselines):
+    """并排绘制覆盖占比与覆盖内完成率。"""
+    figure, axes = plt.subplots(1, 2, figsize=(11, 4.8))
+    for axis, field, title in zip(
+        axes, ("covered_share", "covered_on_time_rate"),
+        ("Covered DAG share", "Covered DAG on-time rate"),
+    ):
+        for index, (name, rows) in enumerate(runs):
+            updates, mean, std = aggregate(rows, "evaluation", field)
+            plot_series(axis, updates, mean, std, name, f"C{index}")
+        add_baselines(axis, baselines, field)
+        axis.set(xlabel="Update", ylabel=title)
+        axis.grid(alpha=0.25)
+        axis.legend(fontsize=7)
+    figure.tight_layout()
+    path = output / "figures/evaluation_coverage.png"
+    figure.savefig(path, dpi=150)
+    plt.close(figure)
+    return path
+
+
+def moving_average(values, window):
+    """计算固定窗口训练回报滑动平均。"""
+    return np.convolve(values, np.ones(window) / window, mode="valid")
+
+
+def save_health(output, runs):
+    """绘制三个方案的六项训练健康度。"""
+    figure, axes = plt.subplots(2, 3, figsize=(13, 7.5))
+    fields = (
+        ("value_loss", "Value loss"), ("entropy", "Entropy"),
+        ("approx_kl", "Approximate KL"), ("clip_fraction", "Clip fraction"),
+    )
+    scalar_axes = (axes[0, 0], axes[0, 1], axes[1, 0], axes[1, 1])
+    for axis, (field, title) in zip(scalar_axes, fields):
+        for index, (name, rows) in enumerate(runs):
+            updates, mean, std = aggregate(rows, "update", field)
+            plot_series(axis, updates, mean, std, name, f"C{index}")
+        axis.set(xlabel="Update", ylabel=title)
+        axis.grid(alpha=0.25)
+    for index, (name, rows) in enumerate(runs):
+        updates = sorted({row["update"] for kinds in rows.values() for row in kinds["update"]})
+        log_std = np.asarray([[next(row["flight_log_std"] for row in kinds["update"]
+                                          if row["update"] == update)
+                               for update in updates] for kinds in rows.values()])
+        for component, linestyle in ((0, "-"), (1, "--")):
+            per_seed = log_std[:, :, :, component].mean(axis=2)
+            plot_series(axes[0, 2], np.asarray(updates), per_seed.mean(axis=0),
+                        per_seed.std(axis=0), f"{name} dim {component}", f"C{index}", linestyle)
+        returns = np.asarray([[next(row["episode_return"] for row in kinds["update"]
+                                         if row["update"] == update)
+                              for update in updates] for kinds in rows.values()])
+        window = min(5, len(updates))
+        smoothed = np.asarray([moving_average(values, window) for values in returns])
+        smooth_updates = np.asarray(updates)[window - 1:]
+        plot_series(axes[1, 2], smooth_updates, smoothed.mean(axis=0), smoothed.std(axis=0),
+                    name, f"C{index}")
+    axes[0, 2].set(xlabel="Update", ylabel="Mean flight log_std")
+    axes[0, 2].grid(alpha=0.25)
+    axes[0, 2].legend(fontsize=7)
+    axes[1, 2].set(xlabel="Update", ylabel="Training return moving average")
+    axes[1, 2].grid(alpha=0.25)
+    for axis in scalar_axes:
+        axis.legend(fontsize=8)
+    axes[1, 2].legend(fontsize=8)
+    figure.tight_layout()
+    path = output / "figures/training_health.png"
+    figure.savefig(path, dpi=150)
+    plt.close(figure)
+    return path
+
+
+def main():
+    """读取多个实验目录并把四张对比图写入指定正式目录。"""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--run", type=Path, nargs="+", required=True)
+    parser.add_argument("--baselines", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    options = parser.parse_args()
+    (options.output / "figures").mkdir(parents=True, exist_ok=True)
+    runs = [(path.name, load_seed_rows(path)) for path in options.run]
+    baselines = json.loads(
+        (options.baselines / "summary.json").read_text(encoding="utf-8")
+    )["policies"]
+    figures = [
+        save_evaluation(options.output, runs, baselines, "average_delay_s",
+                        "Evaluation average delay / s", "evaluation_delay.png"),
+        save_evaluation(options.output, runs, baselines, "on_time_rate",
+                        "Evaluation on-time rate", "evaluation_on_time.png"),
+        save_coverage(options.output, runs, baselines),
+        save_health(options.output, runs),
+    ]
+    (options.output / "summary.json").write_text(json.dumps({
+        "runs": [str(path) for path in options.run],
+        "baselines": str(options.baselines),
+        "figures": [str(path) for path in figures],
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    for path in figures:
+        print(path)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,51 @@
+# actor 学习率。
+lr = 0.0005
+# critic 学习率。
+critic_lr = 0.0005
+# Adam 分母中的数值常数。
+opti_eps = 0.00001
+# Adam 权重衰减系数。
+weight_decay = 0.0
+# 每批样本的 PPO 更新轮数。
+ppo_epoch = 15
+# 每轮更新的小批次数。
+num_mini_batch = 1
+# 策略比值与归一化价值的裁剪范围。
+clip_param = 0.2
+# 联合动作熵的系数。
+entropy_coef = 0.01
+# 价值损失系数。
+value_loss_coef = 1.0
+# actor 与 critic 各自的梯度范数上限。
+max_grad_norm = 10.0
+# 奖励折扣因子。
+gamma = 0.99
+# GAE 递推系数。
+gae_lambda = 0.95
+# 归一化价值误差的 Huber 分界点。
+huber_delta = 10.0
+# MLP 隐藏层宽度。
+hidden_size = 64
+# 输入映射之后的隐藏层数。
+layer_N = 1
+# 动作输出层正交初始化增益。
+gain = 0.01
+# 飞行 actor 参数共享方式：shared、per_uav、shared_id。
+flight_actor = "shared"
+
+# 每次更新前采样的完整回合数。
+episodes_per_update = 32
+# 并行采样进程数，每个进程使用一个 PyTorch 线程。
+rollout_workers = 32
+# 每时隙期望到达的 DAG 数，用于奖励缩放。
+expected_arrivals = 19.5
+# 训练场景及方法随机流的种子。
+train_seed = 0
+# 固定评估集的场景种子。
+evaluation_seed = 1
+# 固定评估集的回合数，从回合零开始。
+evaluation_episodes = 10
+# 每隔多少次更新执行确定性评估。
+evaluation_interval = 10
+# PyTorch 的 CPU 计算线程数。
+training_threads = 8

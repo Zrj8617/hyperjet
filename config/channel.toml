@@ -1,6 +1,6 @@
 [channel]
 # 全网共享总带宽，单位：Hz。（暂定，待模拟）
-total_bandwidth_hz = 12e6
+total_bandwidth_hz = 20e6
 # UAV 之间直接通信的最大三维距离，单位：m。
 air_range_m = 300
 # 一米处参考信道增益，无量纲。（暂定）

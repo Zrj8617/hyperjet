@@ -22,4 +22,4 @@ transmit_power_w = 0.1
 # 单核主频，单位：CPU cycles/s。（暂定）
 cpu_frequency_hz = 1e9
 # 每用户每到达时隙的基础到达概率，无量纲。（暂定）
-arrival_probability = 0.15
+arrival_probability = 0.24

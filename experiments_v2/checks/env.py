@@ -1,10 +1,12 @@
 """打印固定输入、分布对照、随机运行量级和随机与贪心差距。"""
 from collections import defaultdict
+from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 import sys
 import numpy as np
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
 import config as reference_config
 from environment.dag_tasks import DAGTaskManager
 from environment.user_equipments import UE as ReferenceUE
@@ -14,8 +16,8 @@ from environment_v2.entities.user import UE
 from environment_v2.settings import load_settings
 from environment_v2.workload.arrival import ArrivalProcess
 from environment_v2.workload.dag_generator import generate_dag
-from methods.baselines.policies import choose_random, choose_greedy, sample_flight
-from methods.ers import ERS
+from methods_v2.baselines.policies import choose_random, choose_greedy, sample_flight
+from methods_v2.ers import ERS
 
 def summarize(values):
     """返回样本数、均值、最小值、分位数和最大值。"""
@@ -38,7 +40,7 @@ class TraceRuntime(simulator.EventRuntime):
 
 def main():
     """按当前 TOML 运行一次性检查，只打印，不作统计裁决。"""
-    settings = load_settings(Path(__file__).resolve().parents[1] / "config")
+    settings = load_settings(ROOT / "config")
     d, u, r = settings.dag, settings.user, settings.region
     count, bits_per_mib = 20000, 8 * 1024**2
     np.random.seed(42)
@@ -154,4 +156,10 @@ def main():
         print(name, summarize(values))
 
 if __name__ == "__main__":
-    main()
+    output = ROOT / "output/checks/env"
+    output.mkdir(parents=True, exist_ok=True)
+    log = output / "check.log"
+    with log.open("w", encoding="utf-8") as stream, redirect_stdout(stream):
+        main()
+    print(log.read_text(encoding="utf-8"), end="")
+    print(log.read_text(encoding="utf-8"), end="")

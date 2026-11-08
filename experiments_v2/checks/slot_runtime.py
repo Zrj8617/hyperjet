@@ -1,11 +1,12 @@
 """一次性核对到达复现、DAG 数据和手工场景的通信计算时间线。"""
 
+from contextlib import redirect_stdout
 from pathlib import Path
 import sys
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from environment_v2.entities.region import Region
@@ -103,4 +104,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    output = ROOT / "output/checks/slot_runtime"
+    output.mkdir(parents=True, exist_ok=True)
+    log = output / "check.log"
+    with log.open("w", encoding="utf-8") as stream, redirect_stdout(stream):
+        main()
+    print(log.read_text(encoding="utf-8"), end="")
+    print(log.read_text(encoding="utf-8"), end="")

@@ -142,7 +142,7 @@ reward、关键路径、超图等只在方法层计算，不存进实体。
 
 ### 0.4.12 验收
 
-1. 一个一次性检查脚本（约 100 行，放在 `scripts/` 下，不被环境 import，不设统计门槛）：
+1. 一个一次性检查脚本（约 100 行，放在 `experiments_v2/checks/` 下，不被环境 import，不设统计门槛）：
    - DAG 结构性质逐样本检查：无环、父任务来自更早的层、任务数与父节点数在配置范围内；
    - 固定输入下精确比较：热点判定、理论到达概率；
    - 新旧环境并排打印分布摘要：任务数、数据量、计算量、UE 位移、热点内外到达率；两边使用同一组对照参数，并先统一换算为 bit、CPU cycles、米、秒再打印；
@@ -223,7 +223,7 @@ reward、关键路径、超图等只在方法层计算，不存进实体。
    局部超图只用该 UAV 能得到的信息（自己、关联的被覆盖用户及其子任务、邻居 UAV）。
 4. 动作：节点打分器（所有子任务共用一个小 MLP）输出每个子任务在候选执行节点（候选 UAV 和该 DAG 的用户）上的分布，不可选的掩码；飞行用高斯头；两部分对数概率相加。
 5. 邻居负载摘要：开关，默认开。时隙开始时邻居告知本时隙要管的子任务数和总计算量，作为局部超图中邻居 UAV 节点的特征（信令假设同 §0.5.1 第 3 条）。
-6. 奖励：暂缓，以后再设计。
+6. 奖励：MLP 版先只做时延，公式见 §0.5.11 第 5 条；能耗和子任务级奖励以后再加。
 7. 环境快照：时隙开始、到达与关联做完后给方法层的只读视图（§0.4.8），不复制数组；每个时隙从空队列开始，快照里没有队列状态。字段：
    - `slot`：时隙序号（截止 = 时隙开始 + `deadline_s`，现算）；
    - `uav_positions` (N, 3)、`ue_positions` (M, 3)；
@@ -257,9 +257,9 @@ reward、关键路径、超图等只在方法层计算，不存进实体。
 | `config/user.toml` `count` | 60 |
 | `config/user.toml` `cpu_frequency_hz` | 1e9（JTPDTS、MRDTS） |
 | `config/user.toml` `move_duration_s` | 1.0 |
-| `config/user.toml` `arrival_probability` | 0.15（暂定，基线写好后扫参数再定；热点内 ×2；每时隙约 12 个 DAG、78 个子任务，UAV 负载约 46%，整个时隙没有任务的概率约百万分之一；每个 UE 每时隙一次伯努利，即泊松到达的离散时隙形式，同 Tang & Wong TMC 2022） |
+| `config/user.toml` `arrival_probability` | 0.24（热点内 ×2；每时隙约 19.5 个 DAG；每个 UE 每时隙一次伯努利，即泊松到达的离散时隙形式，同 Tang & Wong TMC 2022；选点见下方“扫参依据”） |
 | `config/channel.toml` `air_range_m` | 300 |
-| `config/channel.toml` `total_bandwidth_hz` | 待模拟定（先试 12 / 20 / 30 MHz） |
+| `config/channel.toml` `total_bandwidth_hz` | 20e6（师兄 MRDTS 为 12 MHz；师兄同意适当提高） |
 | `config/scheduling.toml` `slot_duration_s` | 1.0 |
 | `config/scheduling.toml` `deadline_s` | 1.0（等于时隙长度） |
 | `config/scheduling.toml` `result_return` | true |
@@ -269,7 +269,9 @@ reward、关键路径、超图等只在方法层计算，不存进实体。
 | `config/dag.toml` `base_unit_bits` | 27,306.67 |
 | `config/dag.toml` `min_task_constant` / `max_task_constant` | 166,666.7 / 500,000 |
 
-负载依据：负载 = 每时隙到达计算量 / UAV 总算力。论文一般不直接给负载，Claude 按其参数推算（只算 UAV、不含基站）：JTPDTS 每个设备每时隙一个 DAG，4 UAV/10 设备约 7%、8/40 约 14%、12/80 约 18%，完成率各方法 75%–98%（表 IV）；MRDTS 代码（100 用户每时隙各一个 DAG）约 19%–23%；Zhou INFOCOM 2022 约 1%。本项目 p = 0.15 时约 46%（0.09 时约 29%），比师兄偏重；实验扫规模（如负载 20%–75%）。子任务计算量在文献范围内：每子任务约 1.5e8 cycles（师兄 1e7–1e8，Zhan TMC 2026 1e8–5e8）；DAG 总计算量均值 9.8e8 cycles，UE 1 GHz 单独算一个 DAG 约 65% 能在 1 s 内做完。数据量比师兄大约 3–7 倍：入口输入 35–350 KB、子任务输出 52–262 KB，师兄是 100–500 Kbit（12.5–62.5 KB）、100–300 Kbit（12.5–37.5 KB）（MRDTS `event_runtime.py` 把配置值 ×1000 换成 bit）。KaHyPar 实测每次 15 ms（30 节点）到 99 ms（115 节点）。完成率在新模型下还没有模拟，Gate 4 实现后按 §0.5.7 第 9 条扫参数再定。
+负载依据：负载 = 每时隙到达计算量 / UAV 总算力。论文一般不直接给负载，Claude 按其参数推算（只算 UAV、不含基站）：JTPDTS 每个设备每时隙一个 DAG，4 UAV/10 设备约 7%、8/40 约 14%、12/80 约 18%，完成率各方法 75%–98%（表 IV）；MRDTS 代码（100 用户每时隙各一个 DAG）约 19%–23%；Zhou INFOCOM 2022 约 1%。本项目 p = 0.24 时约 76%（按全部 DAG 计；随机飞行下约 41% 的 DAG 覆盖不到、只在 UE 上算，UAV 实际负载约其六成），比师兄偏重；实验扫规模（如负载 20%–75%）。子任务计算量在文献范围内：每子任务约 1.5e8 cycles（师兄 1e7–1e8，Zhan TMC 2026 1e8–5e8）；DAG 总计算量均值 9.8e8 cycles，UE 1 GHz 单独算一个 DAG 约 65% 能在 1 s 内做完。数据量比师兄大约 3–7 倍：入口输入 35–350 KB、子任务输出 52–262 KB，师兄是 100–500 Kbit（12.5–62.5 KB）、100–300 Kbit（12.5–37.5 KB）（MRDTS `event_runtime.py` 把配置值 ×1000 换成 bit）。KaHyPar 实测每次 15 ms（30 节点）到 99 ms（115 节点）。完成率在新模型下还没有模拟，Gate 4 实现后按 §0.5.7 第 9 条扫参数再定。
+
+扫参依据（四个基线、随机飞行，12 个到达概率 0.06–0.48 × 12 / 20 / 30 MHz，每组 10 个 seed，`experiments_v2/runs/sweep.py`，真实代码）：随机飞行下约 59% 的 DAG 被覆盖，覆盖外的只能本地算、约 65% 按时完成；贪心在覆盖内的 DAG 上几乎做满（20 MHz 下 p ≤ 0.21 时 ≥ 99%），卸载难度主要随带宽变窄、负载升高出现。选点规则只看基线、事先定好：贪心与 HEFT 式未做满、四个基线拉得开。20 MHz、p = 0.24 时：全本地 65.6%、随机 70.8%、贪心 85.2%、HEFT 式 85.7%（覆盖内：随机 75.7%、贪心 98.7%、HEFT 式 99.5%）。学会的飞行提高覆盖后 UAV 负载会上升，卸载会更难。
 
 ### 0.5.6 各 Gate 内容
 
@@ -278,21 +280,21 @@ reward、关键路径、超图等只在方法层计算，不存进实体。
 3. Gate 4：整 DAG 提交 + 时隙内事件驱动 + 截止后照样算完，参照 MRDTS `env/runtime/`（文件名也照 MRDTS），信道为共享带宽，加入中继 / 直连规则和超距中转。详细规则见 §0.5.9。
 4. Gate 5：Simulator，流程按 §0.5.1，对外接口按 §0.5.4；只协调流程，不算 reward、不建超图、不构造 observation、不加载 checkpoint、不记录训练 loss。
 5. Gate 6：验收按 §0.4.12。
-6. Gate 7：方法层按 §0.5.3 新写（§0.5.7 第 4 条）。
+6. Gate 7：方法层按 §0.5.3 新写（§0.5.7 第 4 条）；先做不接超图的 MLP 版 MAPPO 跑通（§0.5.11，师兄 11-06 意见），再接超图。
 7. Gate 8：正式切换并通过审核后删除旧代码：不建永久 `legacy/`，由 Git 历史负责恢复；删除前只检查实际引用和研究证据用途；不删用户未提交文件；删除单独形成可审核 diff；用户明确批准后执行。
 
 ### 0.5.7 已记录、先不处理
 
 1. 划分超边 ε = 0.03 要求各块几乎一样大，若各 UAV 手上任务数相差悬殊，可能拆开本该在一起的一群任务；先照 HyperJet，看实验再定（可放大 ε 或用计算量做节点权重）。
 2. 孤立 UAV（300 m 内没有邻居，约 10%）：训练时统计；偏高再考虑加 UAV 或给 actor 全体 UAV 的位置。
-3. 奖励设计暂缓。
+3. 奖励：MLP 版只做时延（§0.5.11 第 5 条）；能耗、子任务级奖励（第 6 条）以后再加。
 4. Gate 7 不给旧训练代码做适配：方法层按 §0.5.3 新写，旧训练代码不动；以后若要旧方法当基线，在新框架里按其思路重写。
 5. 对比实验（JTPDTS、HYGMA、TGCNet、HyperJet 等）以后再做。
 6. 用户考虑给每个子任务单独的奖励（奖励设计时再定；可参考 One-shot DAG（NeurIPS 2025）的节点级密集奖励）。
 7. 覆盖外的 UE：600 m 地图下 UAV 随机摆放时约 41% 的 UE 不在覆盖内（自写模拟），它们的 DAG 只能本地执行（§0.5.1 第 3 条）。文献依据：JTPDTS 覆盖外的设备本地计算（1 GHz）；Zhou INFOCOM 2022 覆盖外卸载到远端云；MRDTS 候选执行节点含用户自己的设备和基站；Zhao TMC 2025 只说覆盖外不能卸载（是否本地计算未核对）。
 8. 中继 / 直连：按独占参考时长比，只要直连连得上，直连总比中继快（自写模拟，600 m、5 架 UAV 随机摆放：上传中继最少慢 19%，约 22% 能直连、78% 只能中继；回传 UAV 用 1 W，水平约 366 m 内能直连，约 96% 能直连，中继最少慢 16%；12 / 20 / 30 MHz 都是如此），这一步比较实际上不改变结果；先保留，跑实验后再看是否简化成“能直连就直连，否则中继”。
 9. 到达概率：0.09 时每时隙约 7.3 个 DAG、约 47 个子任务（在 HyperJet 实验的 20–60 个任务之间），但每架 UAV 只分到 1–2 个 DAG，抢资源的情况少，覆盖、服务这几类超边可能显不出作用。Gate 4 跑通后，到达概率和总带宽一起扫（如 0.06–0.24 × 12 / 20 / 30 MHz），每组跑随机、贪心、全本地、ERS，选贪心明显做不满、几个基线拉得开的点做默认值。不走“DAG 改小、个数变多”：DAG 小到 UE 自己能算完时，完成率分不出好坏（师兄的设置下一个 DAG 全本地最多 1.0 s）。
-10. 飞行基线：热点不动、UE 每时隙约走 1.2 m，最好的 UAV 位置几乎不变。按到达 DAG 加权的覆盖率（自写模拟：600 m、热点 90 m、60 个 UE、1500 次）：UAV 随机摆放 61%，3 架放热点中心 + 2 架随机 76%，知道全部 UE 位置的静态贪心部署 97%（上界参考）。飞行要和随机、网格、往覆盖内用户重心飞等启发式比；热点随时间变化以后作鲁棒性实验。
+10. 飞行基线：热点不动、UE 每时隙约走 1.2 m，最好的 UAV 位置几乎不变。按到达 DAG 加权的覆盖率（自写模拟：600 m、热点 90 m、60 个 UE、1500 次）：UAV 随机摆放 61%，3 架放热点中心 + 2 架随机 76%，知道全部 UE 位置的静态贪心部署 97%（上界参考）。飞行要和随机、网格、往覆盖内用户重心飞等启发式比；动态场景先记录、不实现：episode 内热点变化（例如第 100 个时隙重抽热点中心）、到达率随时间变化（例如某个热点进入高峰），考的是“重新发现热点”；现在只做“热点每个 episode 重抽、episode 内不动”的场景，动态场景放在 §0.5.11 第 11 条 S4 之后作鲁棒性实验。
 11. 非入口子任务的计算量：现在由它自己抽的 `input_bits` 推出（规模 n = `input_bits` ÷ `base_unit_bits`），这个 `input_bits` 只决定计算量、不传输，与前驱的 `output_bits` 无关（相关系数 0.00，Claude 自写模拟）。另一种做法是按各前驱 `output_bits` 之和算规模（更符合“收到的数据越多、要算的越多”），DAG 总计算量均值会从 9.83e8 升到 1.36e9 cycles（+38%，自写模拟），需重新校准常数。先不改；方法层能训练后，两种生成方式各训练一次，看完成率和超边消融结论是否变化再定。方法层不把非入口子任务的 `input_bits` 作为网络特征（与 `cpu_cycles` 重复）。
 
 ### 0.5.8 代码目录（照 MRDTS）
@@ -315,17 +317,25 @@ environment_v2/              # 环境，切换时改为正式名（对应 MRDTS 
     event_runtime.py         #   时隙内事件推进、截止后照样算完
     slot_result.py           #   SlotResult
   simulator.py               # Gate 5：reset / step（对应 MRDTS simulator.py）
-methods/                     # 方法层（对应 MRDTS methods/），环境不 import 它
-  ers.py  scheduling.py      #   ERS 排序与每时隙一次性提交（⚠️ MRDTS 为 Member 内串行逐个决策）
+methods_v2/                  # 方法层（对应 MRDTS methods/），环境不 import 它；11-06 由 methods/ 改名，与 environment_v2/ 成对
+  ers.py                     #   ERS 排序、参考时长、按 ERS 排序提交（⚠️ MRDTS 为 Member 内串行逐个决策）
   baselines/policies.py      #   随机、全本地、贪心、HEFT 式四个基线和随机飞行（§0.5.10）
-  hypergraph/                #   六类超边、KaHyPar 划分、HGNN 编码器（移植旧 clean_incidence.py）
-  mappo/                     #   actor、critic、训练循环
-scripts/                     # 一次性检查与可视化（§0.4.12；对应 MRDTS scripts/）
+  learning/                  #   通用学习代码，不 import 环境（照 MRDTS codex/development 的 methods/learning/；§0.5.11）
+  mappo/                     #   本项目的观测、actor、critic、奖励（§0.5.11）
+  hypergraph/                #   以后：六类超边、KaHyPar 划分、HGNN 编码器（移植旧 clean_incidence.py）
+experiments_v2/              # 实验入口（对应 MRDTS scripts/）
+  checks/                    #   小实验、小测试：几分钟跑完，只回答“对不对”（§0.4.12）
+    env.py  simulator.py  slot_runtime.py  replay.py
+  runs/                      #   正式实验：多种子、多进程，产出进论文的数据
+    baselines.py  sweep.py  train.py  plot.py  metrics.py   # metrics.py：训练、评估、基线共用的指标统计
 ```
 
-1. 与 MRDTS 的差别：reward、observation 放在 `methods/`（MRDTS 放在 `env/step/`），保持“环境只出物理结果”（§0.4.8）；不建 MRDTS 那样的大量 `tests/`，检查用 §0.4.12 的一次性脚本。
+1. 与 MRDTS 的差别：reward、observation 放在 `methods_v2/`（MRDTS 放在 `env/step/`），保持“环境只出物理结果”（§0.4.8）；不建 MRDTS 那样的大量 `tests/`，检查用 §0.4.12 的一次性脚本。
 2. 仓库根目录的旧代码（`environment/`、`marl_models/`、`train.py` 等）本轮不动，Gate 8 再删。
-3. 新代码不 import 旧代码；要用的旧实现（如 typed-gated HGNN）复制到 `methods/` 改写。
+3. 新代码不 import 旧代码；要用的旧实现（如 typed-gated HGNN）复制到 `methods_v2/` 改写。
+4. 命名：文件名一个词，不加目录已表达的前缀（写 `checks/env.py`，不写 `check_env.py`）。正式实验名为“内容_月日”，内容一个词（如 `joint_1106`、`flight_1110`、`sweep_1105`），同一天再跑加 `b`、`c`；同一组实验的不同方案在内容后加“-方案名”（如 `s1-shared_1109`、`s1-id_1109`）。检查类子命令（如 `runs/train.py check-reward`）算小实验，按子命令名写到 `output/checks/<子命令名>/`。
+5. 产物：`output/` 不进 git（写入 `.gitignore`）。小实验写到 `output/checks/<脚本名>/`，每次覆盖、不留历史；正式实验写到 `output/runs/<实验名>/`，内含 `config/`（运行时环境与方法配置的副本）、`seed<k>/`（`metrics.jsonl`、`checkpoints/`）、`figures/`、`summary.json`。Python 虚拟环境放在仓库外。所有实验（含小实验）都在服务器上跑，产物只留在服务器的 `output/`，不拷回本地；本地与服务器只保持代码同步。仓库目录：本地 `D:\CodeFile\HyperUAV-zdq`，服务器 `/data2/zrj2025/HyperUAV-zdq`。
+6. 旧路线的脚本留在 `scripts/`，不动，Gate 8 随旧代码一起删。
 
 ### 0.5.9 Gate 4 运行规则
 
@@ -385,7 +395,7 @@ scripts/                     # 一次性检查与可视化（§0.4.12；对应 M
 
 ### 0.5.10 基线（方法层）
 
-1. 范围：`methods/ers.py`（ERS 排序和参考时长小函数，照 MRDTS `methods/random/ers.py` 改写）、`methods/baselines/policies.py`（四个基线和随机飞行，随机部分照 MRDTS `methods/random/run.py`；HEFT 没有可复用的现成实现，按下面规则写）、`scripts/run_baselines.py`（一次性脚本）。方法层只通过 `Simulator.reset` / `step` 交动作，不直接调用 runtime，不改环境代码；用自己的随机数生成器（§0.4.14 第 6 条）。
+1. 范围：`methods_v2/ers.py`（ERS 排序和参考时长小函数，照 MRDTS `methods/random/ers.py` 改写）、`methods_v2/baselines/policies.py`（四个基线和随机飞行，随机部分照 MRDTS `methods/random/run.py`；HEFT 没有可复用的现成实现，按下面规则写）、`experiments_v2/runs/baselines.py`。方法层只通过 `Simulator.reset` / `step` 交动作，不直接调用 runtime，不改环境代码；用自己的随机数生成器（§0.4.14 第 6 条）。
 2. ERS（照 MRDTS `methods/random/ers.py`，只排序、不选执行节点）：
    - 每个要决策的 DAG 用快照里它的候选集合；平均计算时长 = `cpu_cycles` × 各候选主频倒数的平均（UAV 5 GHz、UE 1 GHz）；
    - 平均每比特传输时长 = 候选两两之间（含同一节点，同节点为 0）按 `Router.predecessor` 的路径、各跳 `transfer_duration_s(跳, 1 bit)` 之和的平均；
@@ -398,4 +408,99 @@ scripts/                     # 一次性检查与可视化（§0.4.12；对应 M
    - HEFT 式（逐个子任务）：按 ERS 顺序逐个子任务（rank 大的先，前驱一定排在后继前面），对每个候选算预计完成 = max(数据就绪, 该节点空闲时刻) + `cpu_cycles` ÷ 主频；数据就绪 = 入口取上传参考时长，非入口取各前驱(预计完成 + 前驱节点到本节点的参考传输时长)的最大；节点空闲时刻 = 该节点上已放子任务的最晚预计完成（单核）；sink 选节点时再加上回传参考时长（UE 为 0；完成以回传到达为准），回传不占 CPU，节点空闲时刻只记计算完成；选最小者，相等取候选元组里靠前的。
    - 参考时长都用 `Router.transfer_duration_s` 沿 Router 给出的路径求和（独占全部带宽和功率，不看排队，同 ERS）。
 4. 飞行：四个基线都随机飞行，每个分量在 [-1, 1] 均匀抽（同 MRDTS Random）。飞行用单独的随机数生成器，四个基线对同一 (seed, episode) 用同一个种子，因而 UAV 轨迹相同；随机基线选节点用另一个生成器，不影响飞行动作。
-5. `scripts/run_baselines.py`：对给定的若干 (seed, episode)，每个基线跑完整 episode，打印按时完成率（COMPLETED ÷ offers）、超时数、四类能耗，以及跨 episode 的均值和标准差、`invalid_placements` 合计（应为 0）；核对同一 (seed, episode) 下四个基线的 offer 序列和每时隙 UAV 位置完全相同。用于 §0.4.12 第 2 条（随机与贪心要有明显差距）和 §0.5.7 第 9 条扫参。
+5. `experiments_v2/runs/baselines.py`：对给定的若干 (seed, episode)，每个基线跑完整 episode，打印按时完成率（COMPLETED ÷ offers）、超时数、四类能耗，以及跨 episode 的均值和标准差、`invalid_placements` 合计（应为 0）；核对同一 (seed, episode) 下四个基线的 offer 序列和每时隙 UAV 位置完全相同。用于 §0.4.12 第 2 条（随机与贪心要有明显差距）和 §0.5.7 第 9 条扫参。
+
+### 0.5.11 MAPPO：MLP 版（方法层，先跑通）
+
+> 师兄意见（11-06）：先不接超图，用 MLP 把强化学习跑通。算法照官方 MAPPO（Yu 等，NeurIPS 2022；代码 https://github.com/marlbenchmark/on-policy ，commit `de66d7a`）；通用学习代码的放法照 MRDTS `codex/development` 分支（`1714042`）的 `methods/learning/`。旧 `marl_models/mappo/` 不搬、不 import（§0.5.7 第 4 条）。⚠️ 超参照官方 MAPPO，不照 MRDTS 的 PPO（MRDTS：γ = 1、4 轮、熵系数 0.001、KL 提前停）。
+
+1. 目录：
+   - `methods/` 整体改名为 `methods_v2/`（与 `environment_v2/` 成对），同步改各调用处的 import；
+   - 新增：
+     ```text
+     methods_v2/learning/        # 通用，不 import 环境
+       valuenorm.py              #   照搬官方 onpolicy/utils/valuenorm.py
+       distributions.py          #   照官方 algorithms/utils/distributions.py：带 mask 的 Categorical、DiagGaussian
+       networks.py               #   照官方 algorithms/utils/mlp.py 与 r_actor_critic.py 的 critic：输入 LayerNorm、两层 64、ReLU + LayerNorm、正交初始化
+       buffer.py                 #   一次更新的样本（按完整 episode 存）+ GAE（照官方 utils/shared_buffer.py 的 compute_returns，只留 GAE + ValueNorm 分支）
+       mappo.py                  #   照官方 algorithms/r_mappo/r_mappo.py：ppo_update、cal_value_loss、train
+     methods_v2/mappo/           # 本项目专用
+       features.py               #   从快照构造局部观测、打分特征、mask、全局状态（第 3、4 条）
+       policy.py                 #   actor（飞行头 + 子任务打分器）与 critic
+       reward.py                 #   第 5 条
+     config/methods/mappo.toml   # 第 6 条超参与 N̄
+     experiments_v2/runs/train.py  # 采样、更新、评估、日志、保存（第 7 条）
+     ```
+   - 照搬的代码只取用到的类和函数，文件头写明来源文件和 commit；不搬 RNN、PopArt、active_masks、并行环境、学习率衰减；不用 `torch.compile`；超参从 toml 读，不用全局 `config`。
+2. 智能体与动作：
+   - 5 架 UAV 各是一个智能体，共用一套 actor 参数。每个时隙每架 UAV 输出：飞行动作（2 维）；它管理的本时隙新 DAG（出现在 `snapshot.candidates` 里、且 `manager_uav[ue_id]` 是它）中每个子任务的执行节点。覆盖外的 DAG 不决策（环境放 UE）；没有要管的 DAG 时只有飞行动作。
+   - 执行节点：固定 N + 1 = 6 格，第 0 格是该 DAG 的 UE（交给 `step` 时写 `None`），第 1 + j 格是 UAV j；不在 `snapshot.candidates[dag_id]` 里的格 logit 置 −1e10（照官方 `distributions.py` 第 64–67 行）。
+   - 各子任务独立采样。一架 UAV 的对数概率 = 飞行对数概率 + 它全部子任务的对数概率之和（§0.5.3 第 4 条；同官方 `act.py` 混合动作分支），PPO 比值按这个和算；熵同样相加。
+   - 交给 `step` 前，placements 用 `methods_v2/ers.py` 的 `sort_placements` 排序（§0.5.9 第 6 条）；飞行动作裁到 [−1, 1] 再交，样本里存裁剪前的值（照官方连续动作）。
+   - 评估用确定性动作：飞行取均值（裁到 [−1, 1]），执行节点取概率最大的格。
+3. Actor 输入（只用该 UAV 能拿到的信息，范围同 §0.5.3 第 2 条；缩放见本条最后一项，第 4 条 critic 的特征同样缩放）：
+   - 局部观测 o_i（定长，5 架 UAV 时 32 维）：自己位置（2）；其余 4 架 UAV 按编号各 5 维：是否邻居、相对位置（2）、邻居负载摘要（它本时隙管理的子任务数、总 cycles，§0.5.3 第 5 条），非邻居全填 0（20）；自己关联的被覆盖 UE：个数、相对重心（2）、相对自己四个象限各占这些 UE 的比例（没有关联 UE 时全 0）（7）；自己本时隙管理的新 DAG：DAG 数、子任务数、总 cycles（3）。
+   - 打分特征（每个（子任务, 候选）一条）：子任务的 `cpu_cycles`、`output_bits`、是否入口、是否 sink、ERS rank、入口的 `input_bits`（非入口填 0，§0.5.7 第 11 条）、所在 DAG 的总 cycles 和子任务数；候选的是否 UE、是否自己、主频、负载摘要（自己用自己的，邻居用摘要，UE 填 0）；子任务在该候选上的计算时长、入口的上传参考时长、sink 的回传参考时长（用 `ERS.compute_duration`、`upload_duration`、`return_duration`，不适用的填 0）。
+   - 网络：o_i → 主干 MLP → h_i；飞行头 = DiagGaussian(h_i)（均值线性层 gain 0.01，log_std 为可学习参数、初值 0，照官方）；打分器 = 小 MLP([h_i, 打分特征]) → 一个 logit，所有 UAV、所有子任务共用。两个 MLP 都照官方 `networks.py`。
+   - 缩放（只在 `features.py` 顶部定义一处；分母能由 settings 算的都由 settings 算；不做运行时统计归一化）：
+     - 个数除以最大可能值：UE 数、网格人数 ÷ `user.count`（60）；DAG 数 ÷ `user.count`（每个 UE 每时隙最多一个 DAG）；子任务数 ÷ (`user.count` × `dag.max_tasks`)（480）；单个 DAG 的子任务数 ÷ `dag.max_tasks`（8）；
+     - 主频 ÷ `uav.cpu_frequency_hz`；单个子任务的 `cpu_cycles` ÷ 1.5e8；比特 ÷ 1e6；时长 ÷ `deadline_s`；位置、相对位置 ÷ `side_length_m`，其中关联 UE 的相对重心 ÷ `air_range_m`（让“用户在哪个方向”这类线索量级接近 1）；是否类特征取 0/1；
+     - 三个总 cycles 除以对应算力（若也除以 1.5e8，典型值约 6.5 / 15 / 127，会压扁其他特征；Claude 按 §0.5.5 均值估算）：所在 DAG 的总 cycles ÷ (`user.cpu_frequency_hz` × `deadline_s`)，即全本地算完要几个截止期；自己管理的、邻居负载摘要里的总 cycles ÷ (`uav.cpu_frequency_hz` × `slot_duration_s`)，即单架 UAV 的负载率；critic 全局状态里的新 DAG 总 cycles ÷ (`uav.count` × `uav.cpu_frequency_hz` × `slot_duration_s`)，即全体 UAV 的负载（§0.5.5）。
+4. Critic（集中式）：
+   - 全局状态 s_t（定长，180 维）：5 架 UAV 的 o_i 拼接（照官方 `use_centralized_V`，160）；本时隙新 DAG 总数（含覆盖外）、其中覆盖外的个数、新 DAG 总 cycles（3）；全部 60 个 UE 在 4 × 4 网格里的人数（16）；剩余时隙比例 (T − t) / T（1）。
+   - 团队奖励相同，所有 UAV 共用一个价值：每个时隙算一次，不加智能体 one-hot（官方 MPE 同；旧代码加了）。
+   - 必须含新 DAG 总数：到达多的时隙奖励更负，与策略无关，靠 critic 扣掉。
+5. 奖励（只做时延，所有 UAV 共用）：
+
+   $$r_t = -\frac{1}{\bar N}\sum_{d\in\mathcal D_t}\frac{f_d-a_d}{D}$$
+
+   - $\mathcal D_t$：本时隙新到的全部 DAG（`SlotResult.completed_dags` + `timed_out_dags`，含覆盖外的）；$a_d$ = `arrival_time_s`（时隙开始）；$f_d$ = `finish_time_s`（超时的 DAG 也有，环境照样算完）；$D$ = `deadline_s` = 1.0 s；$\bar N$ = 每时隙期望到达数，p = 0.24 时 19.5（§0.5.5），写在 `config/methods/mappo.toml`，扫 p 时同步改。
+   - 求和后除以常数，不对本时隙求平均：每个 DAG 权重相同，对应“全部 DAG 平均时延”；没有 DAG 的时隙为 0，不用特判。$\bar N$ 只是缩放，不改变最优策略。
+   - 不设上限（20 MHz、p = 0.24 下超过 3 s 的 DAG 约 0.6%，最长 5.19 s，自写统计；量纲由 ValueNorm 处理；上限会让最慢的 DAG 没有改进动力）；超时不另罚；越界不罚（越界者留在原地，`environment_v2/entities/uav.py` 第 31–37 行）；能耗只作指标（§0.4.13 第 2 条）。
+   - `invalid_placements` 必须为 0；不为 0 说明 mask 有错，直接报错，不进奖励。
+   - 依据：只做时延的 DAG 工作主流是“负时延 / 负时延增量，按全本地时延或截止期归一化”（DRLTO，IEEE TC 2022；Qi 等，NeurIPS 2025；见项目文献清单“11-06 时延奖励补充调研”）。环境每时隙从空队列开始、当场算完（§0.5.1 第 6 条），奖励在本时隙就能结算，不需要 Decima 式跨步记账。
+6. 超参（`config/methods/mappo.toml`，全部照官方 on-policy `onpolicy/config.py` 默认）：
+
+   | 项 | 值 |
+   |---|---|
+   | 学习率（actor、critic） | 5e-4，Adam eps 1e-5，weight_decay 0 |
+   | ppo_epoch / num_mini_batch / clip | 15 / 1 / 0.2 |
+   | entropy_coef / value_loss_coef / max_grad_norm | 0.01 / 1 / 10 |
+   | γ / GAE λ | 0.99 / 0.95；episode 末 `done` 不自举（官方 `use_proper_time_limits` = False） |
+   | ValueNorm、Huber（δ = 10）、value 裁剪（在归一化量纲里）、优势按批归一化 | 全开 |
+   | 网络 | hidden 64、layer_N 1、ReLU、输入 LayerNorm、正交初始化、动作输出层 gain 0.01 |
+   | 每次更新的样本 | 官方 MPE 是 32 个并行环境 × 200 步；本项目每次更新跑 `episodes_per_update` = 32 个完整 episode（每个 200 时隙），由 `rollout_workers` = 32 个子进程同时跑（第 7 条），样本量与官方相同 |
+   | 更新时 torch 线程数 `training_threads` | 8（只影响速度；采样子进程各用 1 个线程） |
+   | $\bar N$ | 19.5（第 5 条） |
+
+7. 训练与评估（`experiments_v2/runs/train.py`）：
+   - 训练用 (seed = 训练种子, episode = 0, 1, 2, …)，episode 不重复；训练种子不用 1（1 留给评估集），多种子时取 10、11、12；评估固定用 (seed = 1, episode = 0–9)，与训练不重叠，确定性动作；基线也在同一组 (seed, episode) 上跑一次（`experiments_v2/runs/baselines.py`），同口径比较。
+   - 方法层用自己的随机数生成器（§0.4.14 第 6 条）：采样用每个 episode 单独派生的 torch 生成器（见下一项）；minibatch 打乱用由训练 seed 派生的 numpy 生成器。CPU 即可。
+   - 并行采样（11-06 起）：每次更新把当前 actor、critic 参数发给子进程，每个子进程跑一个完整 episode，主进程按 episode 编号顺序收样本；32 个 episode 用同一套参数（参数要等全部跑完才更新），与顺序跑等价。每个 episode 的采样随机数由 `np.random.SeedSequence([train_seed, episode])` 单独派生，结果与进程调度无关、可复现。评估的 10 个 episode 同样并行（确定性动作，不用随机数）。理由：服务器上一个 episode 约 6.5 s，顺序跑一次更新约 4.5 min（采样约 3.5 min + 更新约 1 min，按 11-06 冒烟外推），300 次约 22 h；并行后一次更新约 1 min 多。
+   - 每次更新打印：训练 episode 的平均回报、按时完成率、平均时延、被覆盖 DAG 占比；value loss、policy loss、熵、近似 KL、裁剪比例、actor 与 critic 梯度范数；每个 episode 用时。每 10 次更新评估一次，打印评估集上的按时完成率、平均时延、被覆盖 DAG 占比、四类能耗。
+   - checkpoint 和日志写到 `output/runs/<实验名>/seed<k>/`（§0.5.8 第 5 条）。
+8. 验收：
+   - 冒烟（服务器，写到 `output/checks/`）：`episodes_per_update` = 1、2 次更新能跑完；`invalid_placements` 合计为 0；采样到的执行节点都在候选里；ValueNorm 的均值、方差随更新变化；打印每个 episode 用时，据此定服务器上的更新次数。
+   - 奖励核对：用贪心基线跑一个 episode，−Σ r_t × $\bar N$ ÷ 该 episode 的 DAG 总数，应等于该 episode 的平均（时延 ÷ 截止期），只差浮点误差（11-06 冒烟：0.6746593930957117 与 0.674659393095712）。
+   - 并行核对：`episodes_per_update` = 4 时，`rollout_workers` = 1 与 = 4 各跑 2 次更新，每个 episode 的指标和每次更新的损失应完全相同。
+   - 服务器训练：先跑 50 次更新，看回报曲线再定总次数；回报曲线上升、评估按时完成率明显高于随机基线（20 MHz、p = 0.24 时 70.8%，§0.5.5）即算跑通（11-06 评估集 seed = 1、episode 0–9 上：随机 71.1%、全本地 65.5%、贪心 85.8%、HEFT 式 86.3%）。HEFT 式 85.7%、其中覆盖内 99.5%，覆盖是主要瓶颈，超过它要靠学会的飞行，不作为跑通标准。
+9. 先记下、出现再处理（不预先写代码）：
+   - 一架 UAV 管很多子任务时，对数概率之和的比值容易被裁剪（裁剪比例高、KL 大）；出现时改成官方 multi-discrete 的逐子任务比值。
+10. 指标与图（正式实验都按这个记、按这个画）：
+   - 主指标：平均时延（奖励由它算）、按时完成率（§0.4.15）。
+   - 解释指标：被覆盖 DAG 占比（看飞行）；覆盖内 DAG 的按时完成率与平均时延（看放置）；覆盖外 DAG 的按时完成率与平均时延（不受放置影响，作对照）；覆盖内子任务放到 UE、管理 UAV、邻居 UAV 的比例。
+   - 训练健康度：value loss、熵、飞行 log_std（两个分量）、近似 KL、裁剪比例。
+   - 能耗四项只记录，暂不画。
+   - 训练 episode 和评估 episode 都记以上指标；`runs/baselines.py` 在评估集上记同一套主指标和解释指标。
+   - `runs/plot.py` 读一个实验目录（可含多个种子）和基线结果，出四张图：① 评估集平均时延–更新次数；② 评估集按时完成率–更新次数；③ 被覆盖 DAG 占比、覆盖内按时完成率–更新次数（①–③ 多种子画均值 ± 标准差，基线画水平线）；④ 训练健康度 2 × 3（value loss、熵、log_std、近似 KL、裁剪比例、训练回报滑动平均）。轨迹图由 `checks/replay.py` 出。
+   - 判断“学会了”：评估集平均时延持续下降并稳定；稳定后好于对应基线；至少 3 个种子一致；解释指标和轨迹说得通。只看训练回报不够：11-06 的 50 次更新里回报几乎不动，是放置变好与覆盖下降相互抵消。
+   - 论文用图（主对比柱状图、时延 CDF、扫参曲线、消融）等方案定型后再加。
+11. 验证路线（只看时延）：
+   - S1 放置固定为 HEFT 式、只学飞行。目标：评估集平均时延低于 HEFT 式 + 随机飞行（11-06 评估集 0.683 s），被覆盖 DAG 占比明显高于随机飞行（约 61%）；以后再和 §0.5.7 第 10 条的简单飞行启发式比。设置：
+     - 放置每个时隙直接用 `methods_v2/baselines/policies.py` 的 `choose_heft`，不学；飞行单独一个 actor（o_i → 主干 MLP → DiagGaussian），不再和放置共用主干；PPO 的对数概率、比值和熵只算飞行；critic、奖励、超参、评估集同前几条。依据：11-06 的 50 次更新里放置在学（覆盖内按时完成率 75% → 90%），飞行几乎没学到（log_std 0 → 0.2，5 架飞行均值几乎相同，诊断见 `docs/superpowers/reports/2026-11-06-mlp-mappo-results.md`）；师兄 MRDTS `codex/development` 也是飞行、调度两个 actor 分阶段训练，奖励只用时延、不加越界惩罚。越界规则不变、不罚。
+     - 三个方案，只差飞行 actor 的参数怎么共享，用 `config/methods/mappo.toml` 的一项 `flight_actor` 切换：`shared`（5 架共用一套）；`per_uav`（每架一套）；`shared_id`（共用一套，o_i 末尾加 5 维 UAV 编号 one-hot，同官方 on-policy SMAC 环境的 `obs_agent_id`）。
+     - 每个方案 3 个训练种子（10、11、12），各 100 次更新；实验名 `s1-shared_<月日>`、`s1-peruav_<月日>`、`s1-id_<月日>`。
+     - 判据：§0.5.11 第 10 条；另看 5 架的飞行均值是否各不相同、是否朝自己关联用户的方向（`checks/replay.py` 输出飞行均值方向与“指向关联用户重心”方向的平均余弦）。`runs/plot.py` 能把多个方案画在同一张图上对比。
+   - S2 飞行与放置一起学（MLP）：不差于 S1。
+   - S3 换超图编码（论文方法）：优于 MLP 版，负载越高差距越大。
+   - S4 扫负载、带宽，超边类型消融。

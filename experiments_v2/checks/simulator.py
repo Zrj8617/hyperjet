@@ -1,12 +1,13 @@
 """一次性核对完整 episode、非法分配和不同策略下的外生过程复现。"""
 
 from dataclasses import fields
+from contextlib import redirect_stdout
 from pathlib import Path
 import sys
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from environment_v2.contracts import Snapshot
@@ -100,4 +101,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    output = ROOT / "output/checks/simulator"
+    output.mkdir(parents=True, exist_ok=True)
+    log = output / "check.log"
+    with log.open("w", encoding="utf-8") as stream, redirect_stdout(stream):
+        main()
+    print(log.read_text(encoding="utf-8"), end="")
+    print(log.read_text(encoding="utf-8"), end="")

@@ -3,7 +3,7 @@
 import numpy as np
 
 from environment_v2.contracts import FlightActions, Placements, Snapshot
-from methods.ers import ERS, sort_placements
+from methods_v2.ers import ERS, sort_placements
 
 
 def choose_random(snapshot: Snapshot, ers: ERS, rng: np.random.Generator) -> Placements:

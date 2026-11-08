@@ -1,5 +1,6 @@
 # Python 缓存
 __pycache__/
+output/
 *.pyc
 .pytest_cache/
 .mypy_cache/
@@ -47,3 +48,5 @@ logs/
 # 允许收敛图进入仓库（docs/figures 下的图片随文档分发）
 !docs/figures/
 !docs/figures/*.png
+# 给师兄报告的配图随报告进仓库
+!docs/superpowers/reports/assets/**/*.png
