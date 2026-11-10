@@ -11,6 +11,14 @@ import numpy as np
 BASELINE_COLORS = {
     "random": "0.45", "local": "tab:brown", "greedy": "tab:green", "heft": "tab:red",
 }
+SEGMENT_FIELDS = (
+    ("covered_share", "Covered DAG share"),
+    ("speed_mps", "Mean speed / (m/s)"),
+    ("user_cosine", "User direction cosine"),
+    ("lost_share", "Lost UAV share"),
+    ("crowded_share", "Crowded UAV share"),
+    ("empty_hotspot_share", "Empty hotspot share"),
+)
 
 
 def load_seed_rows(run):
@@ -137,29 +145,83 @@ def save_health(output, runs):
     return path
 
 
+def load_segments(path):
+    """读取一个基线或重放汇总，并合并同实验的 checkpoint。"""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if "policies" in data:
+        rows = next(iter(data["policies"].values()))["flight_segments"]
+        return data["name"], rows
+    checkpoints = data["summaries"]
+    rows = []
+    for index, source in enumerate(checkpoints[0]["flight_segments"]):
+        row = {"start_slot": source["start_slot"]}
+        for field, _ in SEGMENT_FIELDS:
+            values = np.asarray([
+                checkpoint["flight_segments"][index][field] for checkpoint in checkpoints
+            ], dtype=float)
+            row[field] = float(np.nanmean(values))
+        rows.append(row)
+    return data["name"], rows
+
+
+def save_segments(output, paths):
+    """绘制多个飞行实验的六项分段统计。"""
+    figure, axes = plt.subplots(2, 3, figsize=(14, 8.5))
+    markers = ("o", "s", "^", "D", "v", "P", "X", "*")
+    linestyles = ("-", "--", "-.", ":", "-", "--", "-.", ":")
+    for index, path in enumerate(paths):
+        label, rows = load_segments(path)
+        slots = np.asarray([row["start_slot"] for row in rows])
+        for axis, (field, title) in zip(axes.flat, SEGMENT_FIELDS):
+            values = np.asarray([
+                np.nan if row[field] is None else row[field] for row in rows
+            ])
+            axis.plot(
+                slots, values, label=label, color=f"C{index}",
+                linestyle=linestyles[index], marker=markers[index], markersize=4,
+            )
+    for axis, (_, title) in zip(axes.flat, SEGMENT_FIELDS):
+        axis.set(xlabel="Start slot", ylabel=title)
+        axis.grid(alpha=0.25)
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    figure.legend(handles, labels, loc="lower center", ncol=4, fontsize=8)
+    figure.tight_layout(rect=(0, 0.08, 1, 1))
+    path = output / "segments.png"
+    figure.savefig(path, dpi=150)
+    plt.close(figure)
+    return path
+
+
 def main():
-    """读取多个实验目录并把四张对比图写入指定正式目录。"""
+    """读取正式实验，绘制学习曲线或飞行分段对比。"""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run", type=Path, nargs="+", required=True)
-    parser.add_argument("--baselines", type=Path, required=True)
+    parser.add_argument("--run", type=Path, nargs="+")
+    parser.add_argument("--baselines", type=Path)
+    parser.add_argument("--segments", type=Path, nargs="+")
     parser.add_argument("--output", type=Path, required=True)
     options = parser.parse_args()
-    (options.output / "figures").mkdir(parents=True, exist_ok=True)
-    runs = [(path.name, load_seed_rows(path)) for path in options.run]
-    baselines = json.loads(
-        (options.baselines / "summary.json").read_text(encoding="utf-8")
-    )["policies"]
-    figures = [
-        save_evaluation(options.output, runs, baselines, "average_delay_s",
-                        "Evaluation average delay / s", "evaluation_delay.png"),
-        save_evaluation(options.output, runs, baselines, "on_time_rate",
-                        "Evaluation on-time rate", "evaluation_on_time.png"),
-        save_coverage(options.output, runs, baselines),
-        save_health(options.output, runs),
-    ]
+    options.output.mkdir(parents=True, exist_ok=True)
+    figures = []
+    if options.run:
+        (options.output / "figures").mkdir(exist_ok=True)
+        runs = [(path.name, load_seed_rows(path)) for path in options.run]
+        baselines = json.loads(
+            (options.baselines / "summary.json").read_text(encoding="utf-8")
+        )["policies"]
+        figures.extend([
+            save_evaluation(options.output, runs, baselines, "average_delay_s",
+                            "Evaluation average delay / s", "evaluation_delay.png"),
+            save_evaluation(options.output, runs, baselines, "on_time_rate",
+                            "Evaluation on-time rate", "evaluation_on_time.png"),
+            save_coverage(options.output, runs, baselines),
+            save_health(options.output, runs),
+        ])
+    if options.segments:
+        figures.append(save_segments(options.output, options.segments))
     (options.output / "summary.json").write_text(json.dumps({
-        "runs": [str(path) for path in options.run],
-        "baselines": str(options.baselines),
+        "runs": [str(path) for path in options.run] if options.run else [],
+        "baselines": str(options.baselines) if options.baselines else None,
+        "segments": [str(path) for path in options.segments] if options.segments else [],
         "figures": [str(path) for path in figures],
     }, ensure_ascii=False, indent=2), encoding="utf-8")
     for path in figures:

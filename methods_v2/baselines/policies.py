@@ -1,8 +1,13 @@
 """四个一次性完整分配基线，以及使用独立随机流的随机飞行。"""
 
+from itertools import permutations
+
 import numpy as np
 
+from environment_v2.communication.routing import Router
 from environment_v2.contracts import FlightActions, Placements, Snapshot
+from environment_v2.entities.region import Region
+from environment_v2.settings import Settings
 from methods_v2.ers import ERS, sort_placements
 
 
@@ -109,3 +114,75 @@ def choose_heft(snapshot: Snapshot, ers: ERS) -> Placements:
 def sample_flight(snapshot: Snapshot, rng: np.random.Generator) -> FlightActions:
     """用独立生成器为每架 UAV 的两个飞行分量均匀采样 [-1, 1]。"""
     return rng.uniform(-1.0, 1.0, (len(snapshot.uav_positions), 2))
+
+
+def fly_to(snapshot: Snapshot, targets: np.ndarray, settings: Settings) -> FlightActions:
+    """按最大水平速度飞向各自目标点。"""
+    step = settings.uav.max_speed * settings.uav.flight_duration_s
+    return np.clip((targets - snapshot.uav_positions[:, :2]) / step, -1.0, 1.0)
+
+
+def follow_users(
+    snapshot: Snapshot, settings: Settings, rng: np.random.Generator,
+) -> FlightActions:
+    """飞向关联且被覆盖 UE 的重心，无关联时随机飞。"""
+    targets = snapshot.uav_positions[:, :2].copy()
+    following = np.zeros(len(snapshot.uav_positions), dtype=bool)
+    for uav in range(len(snapshot.uav_positions)):
+        associated = (snapshot.manager_uav == uav) & snapshot.coverage[:, uav]
+        if associated.any():
+            targets[uav] = snapshot.ue_positions[associated, :2].mean(axis=0)
+            following[uav] = True
+    flight = sample_flight(snapshot, rng)
+    flight[following] = fly_to(snapshot, targets, settings)[following]
+    return flight
+
+
+def _pair_targets(snapshot: Snapshot, targets: np.ndarray) -> np.ndarray:
+    """枚举目标排列，选择水平总距离最小的配对。"""
+    order = min(
+        permutations(range(len(targets))),
+        key=lambda indices: sum(
+            np.linalg.norm(snapshot.uav_positions[uav, :2] - targets[target])
+            for uav, target in enumerate(indices)
+        ),
+    )
+    return targets[np.asarray(order)]
+
+
+def plan_grid(snapshot: Snapshot, settings: Settings) -> np.ndarray:
+    """生成四个四分点和中心点，并按最短总距离配对。"""
+    side = settings.region.side_length_m
+    targets = side * np.asarray([
+        (0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75), (0.5, 0.5),
+    ])
+    return _pair_targets(snapshot, targets)
+
+
+def plan_static(
+    snapshot: Snapshot, router: Router, region: Region, settings: Settings,
+) -> np.ndarray:
+    """按新增覆盖权重贪心选择五个静态目标点，再配对。"""
+    coordinates = np.arange(0.0, settings.region.side_length_m + 1.0, 10.0)
+    targets = np.asarray([(x, y) for y in coordinates for x in coordinates])
+    positions = np.column_stack((
+        targets, np.full(len(targets), settings.uav.altitude_m),
+    ))
+    coverage = np.asarray([
+        [router.can_upload(ue, uav) for ue in snapshot.ue_positions]
+        for uav in positions
+    ])
+    weights = np.where(
+        region.get_region_ids(snapshot.ue_positions) == 1,
+        settings.region.arrival_multiplier,
+        1.0,
+    )
+    uncovered = np.ones(len(snapshot.ue_positions), dtype=bool)
+    selected = []
+    for _ in range(settings.uav.count):
+        gains = (coverage[:, uncovered] * weights[uncovered]).sum(axis=1)
+        gains[selected] = -1.0
+        target = int(np.argmax(gains))
+        selected.append(target)
+        uncovered &= ~coverage[target]
+    return _pair_targets(snapshot, targets[np.asarray(selected)])

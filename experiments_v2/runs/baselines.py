@@ -1,6 +1,7 @@
 """运行四个基线，保存评估指标并核对相同到达与 UAV 轨迹。"""
 
 import argparse
+from dataclasses import replace
 import json
 from pathlib import Path
 import shutil
@@ -14,15 +15,17 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from environment_v2.settings import Settings, load_settings
 from environment_v2.simulator import Simulator
-from experiments_v2.runs.metrics import EpisodeMetrics, summarize
+from experiments_v2.runs.metrics import EpisodeMetrics, FlightStats, summarize
 from methods_v2.baselines.policies import (
-    choose_greedy, choose_heft, choose_local, choose_random, sample_flight,
+    choose_greedy, choose_heft, choose_local, choose_random,
+    fly_to, follow_users, plan_grid, plan_static, sample_flight,
 )
 from methods_v2.ers import ERS
 
 
 NAMES = ("random", "local", "greedy", "heft")
-POLICIES = (choose_random, choose_local, choose_greedy, choose_heft)
+POLICIES = dict(zip(NAMES, (choose_random, choose_local, choose_greedy, choose_heft)))
+FLIGHTS = ("random", "hover", "follow", "grid", "static")
 METRICS = (
     "on_time_rate", "average_delay_s", "covered_share",
     "covered_on_time_rate", "covered_average_delay_s",
@@ -33,7 +36,7 @@ METRICS = (
 )
 
 
-def run_episode(settings: Settings, seed: int, episode: int, policy):
+def run_episode(settings: Settings, seed: int, episode: int, policy, flight_name: str):
     """运行完整回合，返回统一指标、逐时隙 offer 和位置副本。"""
     simulator = Simulator(settings)
     snapshot = simulator.reset(seed, episode)
@@ -41,16 +44,39 @@ def run_episode(settings: Settings, seed: int, episode: int, policy):
     flight_rng = np.random.default_rng(np.random.SeedSequence([seed, episode, 101]))
     placement_rng = np.random.default_rng(np.random.SeedSequence([seed, episode, 102]))
     metrics = EpisodeMetrics()
+    flight_metrics = FlightStats(
+        settings, simulator.region.centers, simulator.region.radius_m,
+    )
+    targets = None
+    if flight_name == "grid":
+        targets = plan_grid(snapshot, settings)
+    elif flight_name == "static":
+        targets = plan_static(snapshot, simulator.router, simulator.region, settings)
     offers, positions = [], [snapshot.uav_positions.copy()]
     while snapshot is not None:
         placements = (policy(snapshot, ers, placement_rng) if policy is choose_random
                       else policy(snapshot, ers))
-        result, following = simulator.step(sample_flight(snapshot, flight_rng), placements)
-        metrics.add(snapshot, result, placements)
+        if flight_name == "random":
+            flight = sample_flight(snapshot, flight_rng)
+        elif flight_name == "hover":
+            flight = np.zeros((settings.uav.count, 2))
+        elif flight_name == "follow":
+            flight = follow_users(snapshot, settings, flight_rng)
+        else:
+            flight = fly_to(snapshot, targets, settings)
+        before = replace(
+            snapshot,
+            uav_positions=snapshot.uav_positions.copy(),
+            ue_positions=snapshot.ue_positions.copy(),
+        )
+        result, following = simulator.step(flight, placements)
+        positions_after = simulator.uav.positions.copy()
+        metrics.add(before, result, placements)
+        flight_metrics.add(before, flight, positions_after)
         offers.append(result.offers)
-        positions.append(simulator.uav.positions.copy())
+        positions.append(positions_after)
         snapshot = following
-    return metrics, offers, np.asarray(positions)
+    return metrics, flight_metrics, offers, np.asarray(positions)
 
 
 def copy_config(source, output):
@@ -67,6 +93,8 @@ def main() -> int:
     parser.add_argument("--name", required=True)
     parser.add_argument("--config", type=Path, default=PROJECT_ROOT / "config")
     parser.add_argument("--pair", type=int, nargs=2, action="append", metavar=("SEED", "EPISODE"))
+    parser.add_argument("--policies", nargs="+", choices=NAMES, default=NAMES)
+    parser.add_argument("--flight", choices=FLIGHTS, default="random")
     options = parser.parse_args()
     pairs = options.pair if options.pair is not None else [(1, episode) for episode in range(10)]
     settings = load_settings(options.config)
@@ -74,35 +102,44 @@ def main() -> int:
     output.mkdir(parents=True, exist_ok=True)
     (output / "figures").mkdir(exist_ok=True)
     copy_config(options.config, output)
-    rows = {name: [] for name in NAMES}
+    rows = {name: [] for name in options.policies}
+    flight_rows = {name: [] for name in options.policies}
     matched = True
     print(f"arrival_slots={settings.scheduling.arrival_slots}; std=population (ddof=0)")
     print("seed episode policy " + " ".join(METRICS), flush=True)
     for seed in sorted({seed for seed, _ in pairs}):
         seed_output = output / f"seed{seed}"
         (seed_output / "checkpoints").mkdir(parents=True, exist_ok=True)
-        seed_rows = {name: [] for name in NAMES}
+        seed_rows = {name: [] for name in options.policies}
+        seed_flights = {name: [] for name in options.policies}
         with (seed_output / "metrics.jsonl").open("w", encoding="utf-8") as log:
             def emit(row):
                 log.write(json.dumps(row, ensure_ascii=False) + "\n")
                 log.flush()
 
             emit(dict(kind="configuration", name=options.name, command="baselines", seed=seed,
+                      flight=options.flight, policies=options.policies,
                       environment={name: vars(value) for name, value in settings._asdict().items()}))
             for _, episode in (pair for pair in pairs if pair[0] == seed):
                 reference_offers = reference_positions = None
-                for name, policy in zip(NAMES, POLICIES):
+                for index, name in enumerate(options.policies):
+                    policy = POLICIES[name]
                     started = perf_counter()
-                    metrics, offers, positions = run_episode(settings, seed, episode, policy)
+                    metrics, flight_metrics, offers, positions = run_episode(
+                        settings, seed, episode, policy, options.flight,
+                    )
                     rows[name].append(metrics)
+                    flight_rows[name].append(flight_metrics)
                     seed_rows[name].append(metrics)
+                    seed_flights[name].append(flight_metrics)
                     report = metrics.report()
                     emit(dict(kind="baseline_episode", policy=name, seed=seed, episode=episode,
-                              elapsed_s=perf_counter() - started, **report))
+                              elapsed_s=perf_counter() - started,
+                              flight_segments=flight_metrics.report(), **report))
                     print(f"{seed} {episode} {name} " + " ".join(
                         f"{report[field]:.6f}" for field in METRICS
                     ), flush=True)
-                    if name == "random":
+                    if index == 0:
                         reference_offers, reference_positions = offers, positions
                     else:
                         same_offers = offers == reference_offers
@@ -112,17 +149,22 @@ def main() -> int:
                                   offers_equal=same_offers, positions_equal=same_positions))
                         print(f"check {seed} {episode} {name}: offers={same_offers} "
                               f"uav_positions={same_positions}", flush=True)
-            for name in NAMES:
+            for name in options.policies:
                 emit(dict(kind="baseline_summary", policy=name, seed=seed,
-                          episodes=len(seed_rows[name]), **summarize(seed_rows[name])))
-    summaries = {name: summarize(rows[name]) for name in NAMES}
-    for name in NAMES:
+                          episodes=len(seed_rows[name]),
+                          flight_segments=FlightStats.combine(seed_flights[name]),
+                          **summarize(seed_rows[name])))
+    summaries = {
+        name: dict(flight_segments=FlightStats.combine(flight_rows[name]), **summarize(rows[name]))
+        for name in options.policies
+    }
+    for name in options.policies:
         print(f"{name} pooled " + " ".join(f"{summaries[name][field]:.6f}" for field in METRICS))
         values = np.asarray([[item.report()[field] for field in METRICS] for item in rows[name]])
         for label, aggregate in (("mean", values.mean(axis=0)), ("std", values.std(axis=0))):
             print(f"{name} {label} " + " ".join(f"{value:.6f}" for value in aggregate))
     invalid = sum(summary["invalid_placements"] for summary in summaries.values())
-    summary = dict(name=options.name, pairs=pairs, policies=summaries,
+    summary = dict(name=options.name, pairs=pairs, flight=options.flight, policies=summaries,
                    invalid_placements=invalid, offers_and_uav_positions_equal=matched)
     (output / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")

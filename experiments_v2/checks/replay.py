@@ -1,6 +1,7 @@
 """重放多个 S1 checkpoint，诊断飞行方向、轨迹与覆盖变化。"""
 
 import argparse
+from dataclasses import replace
 import json
 from pathlib import Path
 import shutil
@@ -15,7 +16,9 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from environment_v2.settings import load_settings
 from environment_v2.simulator import Simulator
-from experiments_v2.runs.metrics import EpisodeMetrics
+from experiments_v2.runs.metrics import (
+    EpisodeMetrics, FlightStats, direction_cosines, summarize,
+)
 from methods_v2.baselines.policies import choose_heft
 from methods_v2.ers import ERS
 from methods_v2.mappo.features import FeatureBuilder
@@ -52,21 +55,9 @@ def pair_distances(positions):
     return float(np.min(values)), float(np.mean(values))
 
 
-def direction_cosines(snapshot, means):
-    """计算飞行均值与各自关联被覆盖 UE 重心方向的余弦。"""
-    values = []
-    for uav, mean in enumerate(means):
-        associated = (snapshot.manager_uav == uav) & snapshot.coverage[:, uav]
-        if not associated.any():
-            values.append(None)
-            continue
-        direction = snapshot.ue_positions[associated, :2].mean(axis=0) - snapshot.uav_positions[uav, :2]
-        denominator = np.linalg.norm(mean) * np.linalg.norm(direction)
-        values.append(float(np.dot(mean, direction) / denominator) if denominator > 0 else None)
-    return values
-
-
-def summarize_case(label, log_std, slot_rows, metrics, final_positions, hotspots):
+def summarize_case(
+    label, log_std, slot_rows, metrics, final_positions, hotspots, flight_segments,
+):
     """汇总一个 checkpoint 的固定评估回合。"""
     means = np.asarray([[uav["flight_mean"] for uav in row["uavs"]] for row in slot_rows])
     cosine_by_uav = []
@@ -76,8 +67,9 @@ def summarize_case(label, log_std, slot_rows, metrics, final_positions, hotspots
                   if row["uavs"][uav]["flight_user_cosine"] is not None]
         cosine_by_uav.append(float(np.mean(values)) if values else None)
         all_cosines.extend(values)
-    early, late = slot_rows[:50], slot_rows[-50:]
-    episode = metrics.report()
+    early = [row for row in slot_rows if row["slot"] < 50]
+    late = [row for row in slot_rows if row["slot"] >= 150]
+    episode = summarize(metrics)
 
     def covered_share(rows):
         total = sum(row["new_dags"] for row in rows)
@@ -86,6 +78,7 @@ def summarize_case(label, log_std, slot_rows, metrics, final_positions, hotspots
     return {
         "checkpoint": label,
         "hotspots": hotspots,
+        "flight_segments": flight_segments,
         "log_std_by_uav": log_std.tolist(),
         "std_by_uav": np.exp(log_std).tolist(),
         "mean_flight_by_uav": means.mean(axis=0).tolist(),
@@ -115,74 +108,109 @@ def summarize_case(label, log_std, slot_rows, metrics, final_positions, hotspots
     }
 
 
-def run_case(settings, policy, label, raw_stream):
-    """确定性重放评估 seed 1、episode 0 并写逐时隙记录。"""
+def run_case(settings, policy, label, episodes, raw_stream):
+    """确定性重放评估集，并写全部 episode 的逐时隙记录。"""
     simulator = Simulator(settings)
     builder = FeatureBuilder(settings, ERS(simulator.router, settings))
-    snapshot = simulator.reset(1, 0)
-    metrics = EpisodeMetrics()
-    hotspots = {"centers": simulator.region.centers.tolist(), "radius_m": simulator.region.radius_m}
-    slot_rows, trajectory, ue_frames = [], [], {}
-    while snapshot is not None:
-        positions = snapshot.uav_positions.copy()
-        trajectory.append(positions[:, :2].copy())
-        if snapshot.slot in (0, settings.scheduling.arrival_slots - 1):
-            ue_frames[snapshot.slot] = snapshot.ue_positions[:, :2].copy()
-        features = builder.build(snapshot)
-        means = flight_mean(policy, features)
-        cosines = direction_cosines(snapshot, means)
-        flight, sample, _ = policy.act(features, None, deterministic=True)
-        placements = choose_heft(snapshot, builder.ers)
-        candidate = positions[:, :2] + flight * settings.uav.max_speed * settings.uav.flight_duration_s
-        out_of_bounds = ((candidate < 0) | (candidate > settings.region.side_length_m)).any(axis=1)
-        pair_min, pair_mean = pair_distances(positions)
-        associated = [int(np.sum((snapshot.manager_uav == uav) & snapshot.coverage[:, uav]))
-                      for uav in range(settings.uav.count)]
-        managed = [sum(dag.id in snapshot.candidates
-                       and int(snapshot.manager_uav[dag.ue_id]) == uav for dag in snapshot.new_dags)
-                   for uav in range(settings.uav.count)]
-        covered_ids = set(snapshot.candidates)
-        result, following = simulator.step(flight, placements)
-        metrics.add(snapshot, result, placements)
-        distances = np.linalg.norm(
-            snapshot.ue_positions[:, None, :2] - simulator.region.centers[None, :, :], axis=2)
-        hotspot_membership = distances <= simulator.region.radius_m
-        row = {
-            "checkpoint": label,
-            "seed": 1,
-            "episode": 0,
-            "slot": snapshot.slot,
-            "covered_dags": len(covered_ids),
-            "new_dags": len(snapshot.new_dags),
-            "pair_min_distance_m": pair_min,
-            "pair_mean_distance_m": pair_mean,
-            "hotspot_ue_counts": hotspot_membership.sum(axis=0).tolist(),
-            "outside_hotspot_ues": int((~hotspot_membership.any(axis=1)).sum()),
-            "uavs": [{
-                "uav": uav,
-                "position": positions[uav, :2].tolist(),
-                "position_after": simulator.uav.positions[uav, :2].tolist(),
-                "boundary_distance_m": float(np.min((
-                    positions[uav, 0], positions[uav, 1],
-                    settings.region.side_length_m - positions[uav, 0],
-                    settings.region.side_length_m - positions[uav, 1],
-                ))),
-                "flight_mean": means[uav].tolist(),
-                "flight_user_cosine": cosines[uav],
-                "sampled_preclip_action": sample["flight"][uav].tolist(),
-                "environment_action": flight[uav].tolist(),
-                "out_of_bounds": bool(out_of_bounds[uav]),
-                "associated_covered_ues": associated[uav],
-                "managed_dags": managed[uav],
-            } for uav in range(settings.uav.count)],
-        }
-        raw_stream.write(json.dumps(row, ensure_ascii=False) + "\n")
-        slot_rows.append(row)
-        snapshot = following
-    trajectory.append(simulator.uav.positions[:, :2].copy())
+    metrics, flight_metrics, slot_rows = [], [], []
+    trajectory, ue_frames = [], {}
+    hotspots = final_positions = None
+    for episode in episodes:
+        snapshot = simulator.reset(1, episode)
+        episode_metrics = EpisodeMetrics()
+        episode_flight = FlightStats(
+            settings, simulator.region.centers, simulator.region.radius_m,
+        )
+        if episode == 0:
+            hotspots = {
+                "centers": simulator.region.centers.tolist(),
+                "radius_m": simulator.region.radius_m,
+            }
+        while snapshot is not None:
+            positions = snapshot.uav_positions.copy()
+            if episode == 0:
+                trajectory.append(positions[:, :2].copy())
+                if snapshot.slot in (0, settings.scheduling.arrival_slots - 1):
+                    ue_frames[snapshot.slot] = snapshot.ue_positions[:, :2].copy()
+            features = builder.build(snapshot)
+            means = flight_mean(policy, features)
+            cosines = direction_cosines(snapshot, means)
+            flight, sample, _ = policy.act(features, None, deterministic=True)
+            placements = choose_heft(snapshot, builder.ers)
+            candidate = (
+                positions[:, :2]
+                + flight * settings.uav.max_speed * settings.uav.flight_duration_s
+            )
+            out_of_bounds = (
+                (candidate < 0) | (candidate > settings.region.side_length_m)
+            ).any(axis=1)
+            pair_min, pair_mean = pair_distances(positions)
+            associated = [
+                int(np.sum((snapshot.manager_uav == uav) & snapshot.coverage[:, uav]))
+                for uav in range(settings.uav.count)
+            ]
+            managed = [
+                sum(
+                    dag.id in snapshot.candidates
+                    and int(snapshot.manager_uav[dag.ue_id]) == uav
+                    for dag in snapshot.new_dags
+                )
+                for uav in range(settings.uav.count)
+            ]
+            covered_ids = set(snapshot.candidates)
+            before = replace(
+                snapshot,
+                uav_positions=snapshot.uav_positions.copy(),
+                ue_positions=snapshot.ue_positions.copy(),
+            )
+            result, following = simulator.step(flight, placements)
+            positions_after = simulator.uav.positions.copy()
+            episode_metrics.add(before, result, placements)
+            episode_flight.add(before, flight, positions_after)
+            distances = np.linalg.norm(
+                before.ue_positions[:, None, :2] - simulator.region.centers[None, :, :], axis=2,
+            )
+            hotspot_membership = distances <= simulator.region.radius_m
+            row = {
+                "checkpoint": label,
+                "seed": 1,
+                "episode": episode,
+                "slot": before.slot,
+                "covered_dags": len(covered_ids),
+                "new_dags": len(before.new_dags),
+                "pair_min_distance_m": pair_min,
+                "pair_mean_distance_m": pair_mean,
+                "hotspot_ue_counts": hotspot_membership.sum(axis=0).tolist(),
+                "outside_hotspot_ues": int((~hotspot_membership.any(axis=1)).sum()),
+                "uavs": [{
+                    "uav": uav,
+                    "position": positions[uav, :2].tolist(),
+                    "position_after": positions_after[uav, :2].tolist(),
+                    "boundary_distance_m": float(np.min((
+                        positions[uav, 0], positions[uav, 1],
+                        settings.region.side_length_m - positions[uav, 0],
+                        settings.region.side_length_m - positions[uav, 1],
+                    ))),
+                    "flight_mean": means[uav].tolist(),
+                    "flight_user_cosine": cosines[uav],
+                    "sampled_preclip_action": sample["flight"][uav].tolist(),
+                    "environment_action": flight[uav].tolist(),
+                    "out_of_bounds": bool(out_of_bounds[uav]),
+                    "associated_covered_ues": associated[uav],
+                    "managed_dags": managed[uav],
+                } for uav in range(settings.uav.count)],
+            }
+            raw_stream.write(json.dumps(row, ensure_ascii=False) + "\n")
+            slot_rows.append(row)
+            snapshot = following
+        metrics.append(episode_metrics)
+        flight_metrics.append(episode_flight)
+        if episode == 0:
+            trajectory.append(simulator.uav.positions[:, :2].copy())
+            final_positions = simulator.uav.positions.copy()
     summary = summarize_case(
         label, policy.actor.log_std_values().detach().numpy(), slot_rows,
-        metrics, simulator.uav.positions.copy(), hotspots,
+        metrics, final_positions, hotspots, FlightStats.combine(flight_metrics),
     )
     return summary, np.asarray(trajectory), ue_frames
 
@@ -235,43 +263,60 @@ def print_table(rows):
 
 
 def main():
-    """一次重放多个最终 checkpoint，并覆盖固定检查目录。"""
+    """一次重放多个最终 checkpoint，并按来源实验覆盖检查目录。"""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=PROJECT_ROOT / "config")
     parser.add_argument("--checkpoint", type=Path, nargs="+", required=True)
+    parser.add_argument("--episodes", type=int, nargs="+", default=list(range(10)))
     parser.add_argument("--plot-seed", type=int, default=10)
     options = parser.parse_args()
-    output = PROJECT_ROOT / "output/checks/replay"
-    if output.exists():
-        shutil.rmtree(output)
-    output.mkdir(parents=True)
+    output_root = PROJECT_ROOT / "output/checks/replay"
+    output_root.mkdir(parents=True, exist_ok=True)
     settings = load_settings(options.config)
     simulator = Simulator(settings)
     builder = FeatureBuilder(settings, ERS(simulator.router, settings))
-    raw_path = output / "slot_records.jsonl"
-    summaries, plots = [], {}
-    with raw_path.open("w", encoding="utf-8") as raw_stream:
-        for checkpoint_path in options.checkpoint:
-            label = checkpoint_label(checkpoint_path)
-            policy, args = load_policy(checkpoint_path, builder)
-            torch.set_num_threads(args.training_threads)
-            summary, trajectory, ue_frames = run_case(settings, policy, label, raw_stream)
-            summaries.append(summary)
-            if checkpoint_path.parents[1].name == f"seed{options.plot_seed}":
-                plots[label] = draw_trajectory(
-                    output, label, trajectory, ue_frames,
-                    summary["hotspots"], settings.region.side_length_m,
+    groups = {}
+    for checkpoint_path in options.checkpoint:
+        groups.setdefault(checkpoint_path.parents[2].name, []).append(checkpoint_path)
+    all_summaries, paths = [], []
+    for experiment, checkpoint_paths in groups.items():
+        output = output_root / experiment
+        if output.exists():
+            shutil.rmtree(output)
+        output.mkdir(parents=True)
+        raw_path = output / "slot_records.jsonl"
+        summaries, plots = [], {}
+        with raw_path.open("w", encoding="utf-8") as raw_stream:
+            for checkpoint_path in checkpoint_paths:
+                label = checkpoint_label(checkpoint_path)
+                policy, args = load_policy(checkpoint_path, builder)
+                torch.set_num_threads(args.training_threads)
+                summary, trajectory, ue_frames = run_case(
+                    settings, policy, label, options.episodes, raw_stream,
                 )
-    summary_path = output / "summary.json"
-    summary_path.write_text(json.dumps(
-        {"summaries": summaries, "plots": plots, "raw_records": str(raw_path)},
-        ensure_ascii=False, indent=2,
-    ), encoding="utf-8")
-    print_table(summaries)
-    print(f"raw={raw_path}")
-    print(f"summary={summary_path}")
-    for path in plots.values():
-        print(f"plot={path}")
+                summaries.append(summary)
+                if (
+                    0 in options.episodes
+                    and checkpoint_path.parents[1].name == f"seed{options.plot_seed}"
+                ):
+                    plots[label] = draw_trajectory(
+                        output, label, trajectory, ue_frames,
+                        summary["hotspots"], settings.region.side_length_m,
+                    )
+        summary_path = output / "summary.json"
+        summary_path.write_text(json.dumps(
+            {"name": experiment, "episodes": options.episodes, "summaries": summaries,
+             "plots": plots, "raw_records": str(raw_path)},
+            ensure_ascii=False, indent=2,
+        ), encoding="utf-8")
+        all_summaries.extend(summaries)
+        paths.append((raw_path, summary_path, plots))
+    print_table(all_summaries)
+    for raw_path, summary_path, plots in paths:
+        print(f"raw={raw_path}")
+        print(f"summary={summary_path}")
+        for path in plots.values():
+            print(f"plot={path}")
 
 
 if __name__ == "__main__":
