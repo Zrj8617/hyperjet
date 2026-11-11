@@ -145,6 +145,87 @@ def save_health(output, runs):
     return path
 
 
+def load_references(paths):
+    """读取单放置基线的平均时延。"""
+    references = []
+    for path in paths or []:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        values = next(iter(data["policies"].values()))
+        references.append((data["name"], values["average_delay_s"]))
+    return references
+
+
+def save_convergence(output, runs, baselines, references):
+    """分开绘制训练与评估时延，并汇总末段收敛数字。"""
+    figure, axes = plt.subplots(
+        2, len(runs), figsize=(5.2 * len(runs), 8), sharey="row", squeeze=False,
+    )
+    convergence = {}
+    header_printed = False
+    for column, (name, seed_rows) in enumerate(runs):
+        convergence[name] = {}
+        for index, (seed, kinds) in enumerate(seed_rows.items()):
+            color = f"C{index}"
+            train_updates = np.asarray([row["update"] for row in kinds["update"]])
+            train_delays = np.asarray([row["average_delay_s"] for row in kinds["update"]])
+            axes[0, column].plot(
+                train_updates, train_delays, color=color, linewidth=0.8, alpha=0.3,
+            )
+            smooth = moving_average(train_delays, 5)
+            axes[0, column].plot(
+                train_updates[4:], smooth, color=color, linewidth=2, label=seed,
+            )
+
+            evaluation = kinds["evaluation"]
+            eval_updates = np.asarray([row["update"] for row in evaluation])
+            eval_delays = np.asarray([row["average_delay_s"] for row in evaluation])
+            axes[1, column].plot(
+                eval_updates, eval_delays, color=color, marker="o", markersize=4, label=seed,
+            )
+
+            slope = float(np.polyfit(train_updates[-20:], train_delays[-20:], 1)[0] * 10)
+            eval_values = {
+                row["update"]: float(row["average_delay_s"])
+                for row in evaluation[-3:]
+            }
+            if not header_printed:
+                print(
+                    "experiment\tseed\tslope_s_per_10_updates\t"
+                    + "\t".join(f"eval_{update}_s" for update in eval_values)
+                )
+                header_printed = True
+            convergence[name][seed] = {
+                "slope_s_per_10_updates": slope,
+                "evaluation_delay_s": {str(update): value for update, value in eval_values.items()},
+            }
+            print(
+                f"{name}\t{seed}\t{slope:.9f}\t"
+                + "\t".join(f"{value:.9f}" for value in eval_values.values())
+            )
+
+        axes[0, column].set(title=name, xlabel="Update")
+        axes[0, column].grid(alpha=0.25)
+        axes[0, column].legend(fontsize=8)
+        axes[1, column].axhline(
+            baselines["heft"]["average_delay_s"], color="0.2", linestyle="--",
+            linewidth=1.1, label="heft+random",
+        )
+        for index, (label, value) in enumerate(references):
+            axes[1, column].axhline(
+                value, color=f"C{index + 3}", linestyle="--", linewidth=1.1, label=label,
+            )
+        axes[1, column].set(xlabel="Update")
+        axes[1, column].grid(alpha=0.25)
+        axes[1, column].legend(fontsize=7)
+    axes[0, 0].set_ylabel("Training average delay / s")
+    axes[1, 0].set_ylabel("Evaluation average delay / s")
+    figure.tight_layout()
+    path = output / "figures/convergence.png"
+    figure.savefig(path, dpi=150)
+    plt.close(figure)
+    return path, convergence
+
+
 def load_segments(path):
     """读取一个基线或重放汇总，并合并同实验的 checkpoint。"""
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -186,7 +267,7 @@ def save_segments(output, paths):
     handles, labels = axes[0, 0].get_legend_handles_labels()
     figure.legend(handles, labels, loc="lower center", ncol=4, fontsize=8)
     figure.tight_layout(rect=(0, 0.08, 1, 1))
-    path = output / "segments.png"
+    path = output / "figures/segments.png"
     figure.savefig(path, dpi=150)
     plt.close(figure)
     return path
@@ -197,17 +278,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", type=Path, nargs="+")
     parser.add_argument("--baselines", type=Path)
+    parser.add_argument("--references", type=Path, nargs="+")
     parser.add_argument("--segments", type=Path, nargs="+")
     parser.add_argument("--output", type=Path, required=True)
     options = parser.parse_args()
     options.output.mkdir(parents=True, exist_ok=True)
     figures = []
+    convergence = {}
     if options.run:
         (options.output / "figures").mkdir(exist_ok=True)
         runs = [(path.name, load_seed_rows(path)) for path in options.run]
         baselines = json.loads(
             (options.baselines / "summary.json").read_text(encoding="utf-8")
         )["policies"]
+        references = load_references(options.references)
         figures.extend([
             save_evaluation(options.output, runs, baselines, "average_delay_s",
                             "Evaluation average delay / s", "evaluation_delay.png"),
@@ -216,13 +300,19 @@ def main():
             save_coverage(options.output, runs, baselines),
             save_health(options.output, runs),
         ])
+        convergence_path, convergence = save_convergence(
+            options.output, runs, baselines, references,
+        )
+        figures.append(convergence_path)
     if options.segments:
+        (options.output / "figures").mkdir(exist_ok=True)
         figures.append(save_segments(options.output, options.segments))
     (options.output / "summary.json").write_text(json.dumps({
         "runs": [str(path) for path in options.run] if options.run else [],
         "baselines": str(options.baselines) if options.baselines else None,
         "segments": [str(path) for path in options.segments] if options.segments else [],
         "figures": [str(path) for path in figures],
+        "convergence": convergence,
     }, ensure_ascii=False, indent=2), encoding="utf-8")
     for path in figures:
         print(path)

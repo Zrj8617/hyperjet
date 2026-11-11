@@ -401,14 +401,15 @@ experiments_v2/              # 实验入口（对应 MRDTS scripts/）
    - 平均每比特传输时长 = 候选两两之间（含同一节点，同节点为 0）按 `Router.predecessor` 的路径、各跳 `transfer_duration_s(跳, 1 bit)` 之和的平均；
    - rank(i) = 平均计算时长(i) + max over 后继 c [`output_bits`(i) × 平均每比特传输时长 + rank(c)]，sink 只有平均计算时长；入口输入的上传不计入（同 MRDTS）；
    - placements 按 rank 从大到小统一排序，相等按 (dag_id, node_id)。⚠️ MRDTS 通信项用每条边的数据量、按核心数加权；这里用前驱的 `output_bits`、单核。
-3. 四个基线，都按 ERS 排好序再交给 `step`：
+3. 基线（原有四个，加 HEFT 式各自版），都按 ERS 排好序再交给 `step`：
    - 随机：每个子任务在候选里均匀随机选（同 MRDTS Random）；
    - 全本地：全部子任务放 UE（`None`）；
    - 贪心（整个 DAG 一个节点）：按 DAG 内最大 rank 从大到小逐个 DAG，放到预计完成最早的候选（含 UE）。预计完成 = max(入口上传参考时长（各入口取最大；UE 为 0）, 该节点本时隙已分到的计算量 ÷ 主频) + 本 DAG 总计算量 ÷ 主频 + 回传参考时长（各 sink 取最大；UE 为 0）（上传和排队同时进行，取较大者）；放完把本 DAG 计算量记到该节点；
-   - HEFT 式（逐个子任务）：按 ERS 顺序逐个子任务（rank 大的先，前驱一定排在后继前面），对每个候选算预计完成 = max(数据就绪, 该节点空闲时刻) + `cpu_cycles` ÷ 主频；数据就绪 = 入口取上传参考时长，非入口取各前驱(预计完成 + 前驱节点到本节点的参考传输时长)的最大；节点空闲时刻 = 该节点上已放子任务的最晚预计完成（单核）；sink 选节点时再加上回传参考时长（UE 为 0；完成以回传到达为准），回传不占 CPU，节点空闲时刻只记计算完成；选最小者，相等取候选元组里靠前的。
+   - HEFT 式（全局版，`heft`；逐个子任务）：按 ERS 顺序逐个子任务（rank 大的先，前驱一定排在后继前面），对每个候选算预计完成 = max(数据就绪, 该节点空闲时刻) + `cpu_cycles` ÷ 主频；数据就绪 = 入口取上传参考时长，非入口取各前驱(预计完成 + 前驱节点到本节点的参考传输时长)的最大；节点空闲时刻 = 该节点上已放子任务的最晚预计完成（单核）；sink 选节点时再加上回传参考时长（UE 为 0；完成以回传到达为准），回传不占 CPU，节点空闲时刻只记计算完成；选最小者，相等取候选元组里靠前的。
+   - HEFT 式（各自版，`heft_uav`，暂定名；11-11 师兄要求）：全局版里“节点空闲时刻”是全体 UAV 共用的一张表，等于有人统一安排，只作集中式参照。各自版改成每架 UAV 只给自己管理的 DAG 做上面的 HEFT 式，各有一张表，只记自己放出去的子任务，看不到别的 UAV 的分配。表的初值：自己为 0；UE 为 0；邻居 j = 邻居负载摘要里 j 本时隙管理的总 cycles ÷ `uav.cpu_frequency_hz`（摘要见 §0.5.3 第 5 条，和放置 actor 拿到的信息相同）。⚠️ 自定规则：这等于假设邻居把自己管理的子任务都放在自己身上、从时隙开始连着算；邻居实际可能分给别人或留在 UE，所以会高估它的忙碌程度。其余（ERS 顺序、参考时长、候选、sink 加回传、相等时取靠前的）同全局版。
    - 参考时长都用 `Router.transfer_duration_s` 沿 Router 给出的路径求和（独占全部带宽和功率，不看排队，同 ERS）。
 4. 飞行：四个基线默认随机飞行（`--flight random`；换成第 6 条的规则见那一条），每个分量在 [-1, 1] 均匀抽（同 MRDTS Random）。飞行用单独的随机数生成器，四个基线对同一 (seed, episode) 用同一个种子，因而 UAV 轨迹相同；随机基线选节点用另一个生成器，不影响飞行动作。
-5. `experiments_v2/runs/baselines.py`：对给定的若干 (seed, episode)，每个基线跑完整 episode，打印按时完成率（COMPLETED ÷ offers）、超时数、四类能耗，以及跨 episode 的均值和标准差、`invalid_placements` 合计（应为 0）；核对同一 (seed, episode) 下四个基线的 offer 序列和每时隙 UAV 位置完全相同。用于 §0.4.12 第 2 条（随机与贪心要有明显差距）和 §0.5.7 第 9 条扫参。另有两个参数：`--policies` 只跑其中几个放置基线（默认四个都跑；一致性核对以第一个跑的为参照）；`--flight` 选飞行方式（第 6 条）。summary.json 和 metrics.jsonl 另记按时间段的飞行统计（§0.5.11 第 10 条）。
+5. `experiments_v2/runs/baselines.py`：对给定的若干 (seed, episode)，每个基线跑完整 episode，打印按时完成率（COMPLETED ÷ offers）、超时数、四类能耗，以及跨 episode 的均值和标准差、`invalid_placements` 合计（应为 0）；核对同一 (seed, episode) 下四个基线的 offer 序列和每时隙 UAV 位置完全相同。用于 §0.4.12 第 2 条（随机与贪心要有明显差距）和 §0.5.7 第 9 条扫参。另有两个参数：`--policies` 只跑其中几个放置基线（可选 `random`、`local`、`greedy`、`heft`、`heft_uav`，默认跑前四个；一致性核对以第一个跑的为参照）；`--flight` 选飞行方式（第 6 条）。summary.json 和 metrics.jsonl 另记按时间段的飞行统计（§0.5.11 第 10 条）。
 6. 飞行规则（放置都用 HEFT 式，作为 S1 学出来的飞行的对照；只评估、不训练）：
    - “飞向目标点”统一写法：动作 = (目标 − 当前水平位置) ÷ (`max_speed` × `flight_duration_s`)，逐分量裁到 [−1, 1]。每个分量一个时隙最多走 15 m：离得远时满速飞，最后一步正好到，到了动作为 0、悬停。
    - `random`：第 4 条的随机飞行。
@@ -418,6 +419,7 @@ experiments_v2/              # 实验入口（对应 MRDTS scripts/）
    - `static`（参考上界）：知道全部 UE 位置和热点的静态部署。第 0 时隙在地图上每 10 m 取一个候选点（UAV 高度），用 `Router.can_upload` 算每个点能覆盖哪些 UE；UE 权重 = 到达概率倍数（在热点内为 `arrival_multiplier`，否则 1）；贪心选 5 个点，每次选新增覆盖权重最大的，相同取编号小的；配对和飞行同 `grid`。只在第 0 时隙算一次（热点 episode 内不动，UE 每时隙约走 1.2 m）。它用了 UAV 拿不到的全局信息，但只看覆盖、不看时延，也没算飞过去的时间，所以只作参考上界，不是严格上界。
    - 预计（Claude 估算，不是实验结果）：开局到目标点最远约 40 个时隙（对角约 850 m ÷ 每时隙最多约 21 m），所以 `grid`、`static` 要看第 3 段以后的时间段统计。§0.5.7 第 10 条自写模拟：随机摆放覆盖 61%，静态贪心 97%。
    - 实验：每个规则一个实验，`experiments_v2/runs/baselines.py --name flight-<规则>_<月日> --policies heft --flight <规则>`，评估集同第 5 条。核对：`flight-random` 的 HEFT 结果应与 11-06 基线完全相同（评估集按时完成率 86.33%、平均时延 0.683 s）。
+   - 各自版对比（11-11）：每个飞行规则再跑一次，同时跑全局版和各自版：`experiments_v2/runs/baselines.py --name heftuav-<规则>_<月日> --policies heft heft_uav --flight <规则>`（实验名暂定），评估集同第 5 条。同一飞行规则下两者的 UAV 轨迹相同（`baselines.py` 自带核对），时延的差别只来自放置，“全局版与各自版差多少”以这组为准。核对：全局版应与 `flight-<规则>_1108` 完全相同（random 0.6833 s、follow 0.6294 s）。看结果时 `random` 作下限参考，`static` 作上限参考（用了全局信息，不是严格上限），`follow` 是和飞行 actor 信息量相同的规则。
 
 ### 0.5.11 MAPPO：MLP 版（方法层，先跑通）
 
@@ -435,22 +437,23 @@ experiments_v2/              # 实验入口（对应 MRDTS scripts/）
        mappo.py                  #   照官方 algorithms/r_mappo/r_mappo.py：ppo_update、cal_value_loss、train
      methods_v2/mappo/           # 本项目专用
        features.py               #   从快照构造局部观测、打分特征、mask、全局状态（第 3、4 条）
-       policy.py                 #   actor（飞行头 + 子任务打分器）与 critic
+       policy.py                 #   飞行 actor、放置 actor 与 critic
        reward.py                 #   第 5 条
      config/methods/mappo.toml   # 第 6 条超参与 N̄
      experiments_v2/runs/train.py  # 采样、更新、评估、日志、保存（第 7 条）
      ```
    - 照搬的代码只取用到的类和函数，文件头写明来源文件和 commit；不搬 RNN、PopArt、active_masks、并行环境、学习率衰减；不用 `torch.compile`；超参从 toml 读，不用全局 `config`。
 2. 智能体与动作：
-   - 5 架 UAV 各是一个智能体，共用一套 actor 参数。每个时隙每架 UAV 输出：飞行动作（2 维）；它管理的本时隙新 DAG（出现在 `snapshot.candidates` 里、且 `manager_uav[ue_id]` 是它）中每个子任务的执行节点。覆盖外的 DAG 不决策（环境放 UE）；没有要管的 DAG 时只有飞行动作。
+   - 5 架 UAV 各是一个智能体。每个时隙要定两样：每架 UAV 的飞行动作（2 维）；它管理的本时隙新 DAG（出现在 `snapshot.candidates` 里、且 `manager_uav[ue_id]` 是它）中每个子任务的执行节点。覆盖外的 DAG 不决策（环境放 UE）。
+   - 谁来定，由 `config/methods/mappo.toml` 的两项配置决定（名字暂定）：`flight` 取 `actor`（飞行网络）或 `follow`（§0.5.10 第 6 条的规则）；`placement` 取 `actor`（放置网络）、`heft` 或 `heft_uav`（§0.5.10 第 3 条 HEFT 式的全局版、各自版）。飞行网络和放置网络是两个独立的 actor，不共用主干，各自 5 架共用一套参数（飞行 actor 的共享方式见第 11 条 S1）；哪一项取 `actor` 就建哪个网络，PPO 只算那一部分。S1：`flight = actor`、`placement = heft`；S2：`flight = follow`、`placement = actor`。两项都不取 `actor` 时没有要学的，用 `runs/baselines.py`。
    - 执行节点：固定 N + 1 = 6 格，第 0 格是该 DAG 的 UE（交给 `step` 时写 `None`），第 1 + j 格是 UAV j；不在 `snapshot.candidates[dag_id]` 里的格 logit 置 −1e10（照官方 `distributions.py` 第 64–67 行）。
-   - 各子任务独立采样。一架 UAV 的对数概率 = 飞行对数概率 + 它全部子任务的对数概率之和（§0.5.3 第 4 条；同官方 `act.py` 混合动作分支），PPO 比值按这个和算；熵同样相加。
+   - 放置：各子任务独立采样；一架 UAV 的对数概率 = 它全部子任务的对数概率之和（没有子任务时为 0），PPO 比值按这个和算；熵 = 本批全部子任务的熵取平均（同官方 `act.py` 的 multi-discrete 分支；数值可以直接和“完全随机”时的 ln(可选格数) 比）。飞行：两个分量的对数概率相加、熵相加（照官方连续动作）。
    - 交给 `step` 前，placements 用 `methods_v2/ers.py` 的 `sort_placements` 排序（§0.5.9 第 6 条）；飞行动作裁到 [−1, 1] 再交，样本里存裁剪前的值（照官方连续动作）。
    - 评估用确定性动作：飞行取均值（裁到 [−1, 1]），执行节点取概率最大的格。
 3. Actor 输入（只用该 UAV 能拿到的信息，范围同 §0.5.3 第 2 条；缩放见本条最后一项，第 4 条 critic 的特征同样缩放）：
-   - 局部观测 o_i（定长，5 架 UAV 时 32 维）：自己位置（2）；其余 4 架 UAV 按编号各 5 维：是否邻居、相对位置（2）、邻居负载摘要（它本时隙管理的子任务数、总 cycles，§0.5.3 第 5 条），非邻居全填 0（20）；自己关联的被覆盖 UE：个数、相对重心（2）、相对自己四个象限各占这些 UE 的比例（没有关联 UE 时全 0）（7）；自己本时隙管理的新 DAG：DAG 数、子任务数、总 cycles（3）。
+   - 局部观测 o_i（定长，5 架 UAV 时 32 维）：自己位置（2）；其余 4 架 UAV 按编号各 5 维：是否邻居、相对位置（2）、邻居负载摘要（它本时隙管理的子任务数、总 cycles，§0.5.3 第 5 条），非邻居全填 0（20）；自己关联的被覆盖 UE：个数、相对重心（2）、相对自己四个象限各占这些 UE 的比例（没有关联 UE 时全 0）（7）；自己本时隙管理的新 DAG：DAG 数、子任务数、总 cycles（3）。actor 实际用哪些关联用户信息由 `config/methods/mappo.toml` 的 `user_info` 决定（默认 `full`，即上面这 32 维；见第 11 条 S1 对照实验）。
    - 打分特征（每个（子任务, 候选）一条）：子任务的 `cpu_cycles`、`output_bits`、是否入口、是否 sink、ERS rank、入口的 `input_bits`（非入口填 0，§0.5.7 第 11 条）、所在 DAG 的总 cycles 和子任务数；候选的是否 UE、是否自己、主频、负载摘要（自己用自己的，邻居用摘要，UE 填 0）；子任务在该候选上的计算时长、入口的上传参考时长、sink 的回传参考时长（用 `ERS.compute_duration`、`upload_duration`、`return_duration`，不适用的填 0）。
-   - 网络：o_i → 主干 MLP → h_i；飞行头 = DiagGaussian(h_i)（均值线性层 gain 0.01，log_std 为可学习参数、初值 0，照官方）；打分器 = 小 MLP([h_i, 打分特征]) → 一个 logit，所有 UAV、所有子任务共用。两个 MLP 都照官方 `networks.py`。
+   - 网络：飞行 actor = o_i → 主干 MLP → DiagGaussian（均值线性层 gain 0.01，log_std 为可学习参数、初值 0，照官方）；放置 actor = o_i → 自己的主干 MLP → h_i，打分器 = 小 MLP([h_i, 打分特征]) → 一个 logit，所有 UAV、所有子任务共用。两个 actor 不共用主干；MLP 都照官方 `networks.py`。
    - 缩放（只在 `features.py` 顶部定义一处；分母能由 settings 算的都由 settings 算；不做运行时统计归一化）：
      - 个数除以最大可能值：UE 数、网格人数 ÷ `user.count`（60）；DAG 数 ÷ `user.count`（每个 UE 每时隙最多一个 DAG）；子任务数 ÷ (`user.count` × `dag.max_tasks`)（480）；单个 DAG 的子任务数 ÷ `dag.max_tasks`（8）；
      - 主频 ÷ `uav.cpu_frequency_hz`；单个子任务的 `cpu_cycles` ÷ 1.5e8；比特 ÷ 1e6；时长 ÷ `deadline_s`；位置、相对位置 ÷ `side_length_m`，其中关联 UE 的相对重心 ÷ `air_range_m`（让“用户在哪个方向”这类线索量级接近 1）；是否类特征取 0/1；
@@ -475,7 +478,7 @@ experiments_v2/              # 实验入口（对应 MRDTS scripts/）
    | 学习率（actor、critic） | 5e-4，Adam eps 1e-5，weight_decay 0 |
    | ppo_epoch / num_mini_batch / clip | 15 / 1 / 0.2 |
    | entropy_coef / value_loss_coef / max_grad_norm | 0.01 / 1 / 10 |
-   | γ / GAE λ | 0.99 / 0.95；episode 末 `done` 不自举（官方 `use_proper_time_limits` = False） |
+   | γ / GAE λ | 0.99 / 0.95；episode 末 `done` 不自举（官方 `use_proper_time_limits` = False）；S2 另跑一组 γ = 0（第 11 条） |
    | ValueNorm、Huber（δ = 10）、value 裁剪（在归一化量纲里）、优势按批归一化 | 全开 |
    | 网络 | hidden 64、layer_N 1、ReLU、输入 LayerNorm、正交初始化、动作输出层 gain 0.01 |
    | 每次更新的样本 | 官方 MPE 是 32 个并行环境 × 200 步；本项目每次更新跑 `episodes_per_update` = 32 个完整 episode（每个 200 时隙），由 `rollout_workers` = 32 个子进程同时跑（第 7 条），样本量与官方相同 |
@@ -494,7 +497,8 @@ experiments_v2/              # 实验入口（对应 MRDTS scripts/）
    - 并行核对：`episodes_per_update` = 4 时，`rollout_workers` = 1 与 = 4 各跑 2 次更新，每个 episode 的指标和每次更新的损失应完全相同。
    - 服务器训练：先跑 50 次更新，看回报曲线再定总次数；回报曲线上升、评估按时完成率明显高于随机基线（20 MHz、p = 0.24 时 70.8%，§0.5.5）即算跑通（11-06 评估集 seed = 1、episode 0–9 上：随机 71.1%、全本地 65.5%、贪心 85.8%、HEFT 式 86.3%）。HEFT 式 85.7%、其中覆盖内 99.5%，覆盖是主要瓶颈，超过它要靠学会的飞行，不作为跑通标准。
 9. 先记下、出现再处理（不预先写代码）：
-   - 一架 UAV 管很多子任务时，对数概率之和的比值容易被裁剪（裁剪比例高、KL 大）；出现时改成官方 multi-discrete 的逐子任务比值。
+   - 一架 UAV 管很多子任务时，对数概率之和的比值容易被裁剪（裁剪比例高、KL 大）；出现时改成官方 multi-discrete 的逐子任务比值。11-06 第一轮同样按 UAV 求和，裁剪比例 2%–6%（`docs/superpowers/reports/2026-11-06-mlp-mappo-results.md` 训练表），没有出现。
+   - 熵按子任务取平均后，“保持随机”的力度比按 UAV 相加弱（follow 飞行下一架 UAV 每时隙约 20 个子任务，Claude 估算）；训练中熵掉得很快、策略过早定死时再调 `entropy_coef`。
 10. 指标与图（正式实验都按这个记、按这个画）：
    - 主指标：平均时延（奖励由它算）、按时完成率（§0.4.15）。
    - 解释指标：被覆盖 DAG 占比（看飞行）；覆盖内 DAG 的按时完成率与平均时延（看放置）；覆盖外 DAG 的按时完成率与平均时延（不受放置影响，作对照）；覆盖内子任务放到 UE、管理 UAV、邻居 UAV 的比例。
@@ -506,13 +510,23 @@ experiments_v2/              # 实验入口（对应 MRDTS scripts/）
    - `runs/plot.py --segments <若干 summary.json>` 另出第五张图：上面六项–时间段（2 × 3），每个实验一条线，同一实验的多个 checkpoint（种子）取平均。
    - 判断“学会了”：评估集平均时延持续下降并稳定；稳定后好于对应基线；至少 3 个种子一致；解释指标和轨迹说得通。只看训练回报不够：11-06 的 50 次更新里回报几乎不动，是放置变好与覆盖下降相互抵消。
    - 论文用图（主对比柱状图、时延 CDF、扫参曲线、消融）等方案定型后再加。
-11. 验证路线（只看时延）：
+11. 验证路线（只看时延）。11-11 起正式训练统一跑 200 次更新，方案之间统一用第 200 次的评估比较（评估每 10 次一次，第 100 次的数仍可读出，用来和以前只跑了 100 次的实验对照）：
    - S1 放置固定为 HEFT 式、只学飞行。目标：评估集平均时延低于 HEFT 式 + 随机飞行（11-06 评估集 0.683 s），被覆盖 DAG 占比明显高于随机飞行（约 61%）；并和 §0.5.10 第 6 条的飞行规则比（同一评估集、同一套时间段统计）。设置：
      - 放置每个时隙直接用 `methods_v2/baselines/policies.py` 的 `choose_heft`，不学；飞行单独一个 actor（o_i → 主干 MLP → DiagGaussian），不再和放置共用主干；PPO 的对数概率、比值和熵只算飞行；critic、奖励、超参、评估集同前几条。依据：11-06 的 50 次更新里放置在学（覆盖内按时完成率 75% → 90%），飞行几乎没学到（log_std 0 → 0.2，5 架飞行均值几乎相同，诊断见 `docs/superpowers/reports/2026-11-06-mlp-mappo-results.md`）；师兄 MRDTS `codex/development` 也是飞行、调度两个 actor 分阶段训练，奖励只用时延、不加越界惩罚。越界规则不变、不罚。
      - 三个方案，只差飞行 actor 的参数怎么共享，用 `config/methods/mappo.toml` 的一项 `flight_actor` 切换：`shared`（5 架共用一套）；`per_uav`（每架一套）；`shared_id`（共用一套，o_i 末尾加 5 维 UAV 编号 one-hot，同官方 on-policy SMAC 环境的 `obs_agent_id`）。
      - 每个方案 3 个训练种子（10、11、12），各 100 次更新；实验名 `s1-shared_<月日>`、`s1-peruav_<月日>`、`s1-id_<月日>`。
      - 重放：`checks/replay.py` 跑完整评估集（seed 1、episode 0–9），轨迹图仍只画 episode 0。
      - 判据：§0.5.11 第 10 条；另看 5 架的飞行均值是否各不相同、是否朝自己关联用户的方向（`checks/replay.py` 输出飞行均值方向与“指向关联用户重心”方向的平均余弦）。`runs/plot.py` 能把多个方案画在同一张图上对比。
-   - S2 飞行与放置一起学（MLP）：不差于 S1。
+     - 对照实验（11-11，看飞行网络靠不靠“用户方向”）：只改 actor 看到的关联用户信息，其他全部同 S1 shared（shared、种子 10/11/12、100 次更新、同一评估集）；critic 的全局状态不变，仍用完整 32 维观测拼接（180 维）。`user_info` 三种：`full`（人数 + 重心 + 象限，32 维，即 S1 shared，不重跑，直接作对照）；`quadrant`（去掉重心，30 维）；`count`（去掉重心和象限，只剩人数，26 维）。只去掉重心时象限仍带方向信息，所以 `quadrant` 要和 `count` 一起看。实验名 `obs-quadrant_<月日>`、`obs-count_<月日>`，对比图放 `obs-compare_<月日>`。判据：与 S1 shared 的评估集平均时延差超过 0.01 s、3 个种子方向一致、逐回合至少 8/10 同方向才算有差别，否则算打平；另用重放的时间段统计看速度、走丢、贴边是否变化。三组已从第 100 次的 checkpoint 接着训练到 200 次（`--resume`，不重头跑），结果另存为 `obs200-full_<月日>`、`obs200-quadrant_<月日>`、`obs200-count_<月日>`，对比图 `obs200-compare_<月日>`；其中 `obs200-full` 从 `s1-shared_1108` 接着跑，就是 S1 shared 的 200 次结果。
+     - 各自版放置（11-11，师兄要求）：只把放置从全局版换成各自版（`placement = heft_uav`，§0.5.10 第 3 条），其他全部同 S1 shared（shared、种子 10/11/12、同一评估集），跑 200 次更新；实验名暂定 `s1-heftuav_<月日>`。目的：最终要做集中训练、分布式执行，执行时飞行和放置都只能用每架 UAV 自己拿得到的信息，而全局版 HEFT 式用了全局信息。对照：S1 shared 的 200 次结果（全局版，`obs200-full_<月日>`）；§0.5.10 第 6 条“各自版对比”里各自版 + 五种飞行规则。判据同上一项。两次训练学出的飞行不一样，所以这个实验看的是整套分布式系统的水平；全局版与各自版本身差多少，以 §0.5.10 第 6 条同一飞行规则下的对比为准。
+   - S2 飞行固定为规则、只学放置（MLP）。目标：飞行相同的条件下，学出来的放置不差于 HEFT 式，和全局版、各自版（§0.5.10 第 3 条）分别比。设置：
+     - 配置：`flight = follow`、`placement = actor`（第 2 条）。飞行每个时隙用 `methods_v2/baselines/policies.py` 的 `follow_users`，随机数生成器同 `runs/baselines.py`（`SeedSequence([seed, episode, 101])`）。飞行规则不看放置，所以评估集上 UAV 轨迹与 `--flight follow` 的基线逐时隙相同，时延的差别只来自放置。
+     - 网络：只建放置 actor 和 critic（第 3、4 条），不建飞行 actor；观测（`user_info = full`）、打分特征、critic、奖励都不改。对数概率、比值、熵按第 2 条的放置部分；评估取概率最大的格。
+     - γ 跑两组，只差这一项：`gamma = 0`（⚠️ 偏离官方默认）和 `gamma = 0.99`（官方默认）。依据：飞行由规则定，每个时隙队列从空开始（§0.5.1 第 6 条），本时隙的放置只影响本时隙的奖励；γ = 0 时优势就是 r_t − V(s_t)，γ = 0.99 时优势里还带着后面时隙的奖励波动，这些和本时隙的放置无关。“γ = 0 学得更好”是按原理的推断，由这组对照检验；以后飞行和放置一起学时用 0.99。
+     - 每组 3 个训练种子（10、11、12），各 200 次更新；实验名暂定 `s2-gamma0_<月日>`、`s2-gamma99_<月日>`，对比图 `s2-compare_<月日>`。
+     - 参照线（不训练）：`runs/baselines.py --flight follow` 跑随机、全本地、贪心、HEFT 式全局版和各自版；全局版应与 `flight-follow_1108` 相同（平均时延 0.6294 s、被覆盖 DAG 占比 82.97%）。
+     - 核对：`invalid_placements` 为 0；评估集的被覆盖 DAG 占比、覆盖外的按时完成率和平均时延必须与参照线完全相等（轨迹相同时这三项不随放置变，不等说明代码有错）。
+     - 判据：与 HEFT 式的评估集平均时延差超过 0.01 s、3 个种子方向一致、逐回合至少 8/10 同方向才算有差别，否则算打平；是否收敛，把训练时延每 10 次更新分一段，看相邻两段平均之差是否小于段内波动；另看覆盖内平均时延与按时完成率、子任务放到 UE / 管理 UAV / 邻居的比例。
+     - MLP 版已知的不足：每个子任务单独打分，不知道同一个 DAG 里前驱放在哪，也不知道别的 UAV 往哪放（后一点各自版 HEFT 式也不知道）；前一点留给 S3 的超图。
    - S3 换超图编码（论文方法）：优于 MLP 版，负载越高差距越大。
    - S4 扫负载、带宽，超边类型消融。

@@ -25,10 +25,11 @@ from methods_v2.mappo.features import FeatureBuilder
 from methods_v2.mappo.policy import Policy
 
 
-def load_policy(checkpoint_path, builder):
+def load_policy(checkpoint_path, settings, router):
     """按 checkpoint 保存的有效参数建立飞行策略。"""
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     args = SimpleNamespace(**checkpoint["args"])
+    builder = FeatureBuilder(settings, ERS(router, settings), args.user_info)
     policy = Policy(builder, args)
     policy.actor.load_state_dict(checkpoint["actor"])
     policy.critic.load_state_dict(checkpoint["critic"])
@@ -108,10 +109,10 @@ def summarize_case(
     }
 
 
-def run_case(settings, policy, label, episodes, raw_stream):
+def run_case(settings, policy, user_info, label, episodes, raw_stream):
     """确定性重放评估集，并写全部 episode 的逐时隙记录。"""
     simulator = Simulator(settings)
-    builder = FeatureBuilder(settings, ERS(simulator.router, settings))
+    builder = FeatureBuilder(settings, ERS(simulator.router, settings), user_info)
     metrics, flight_metrics, slot_rows = [], [], []
     trajectory, ue_frames = [], {}
     hotspots = final_positions = None
@@ -274,7 +275,6 @@ def main():
     output_root.mkdir(parents=True, exist_ok=True)
     settings = load_settings(options.config)
     simulator = Simulator(settings)
-    builder = FeatureBuilder(settings, ERS(simulator.router, settings))
     groups = {}
     for checkpoint_path in options.checkpoint:
         groups.setdefault(checkpoint_path.parents[2].name, []).append(checkpoint_path)
@@ -289,10 +289,10 @@ def main():
         with raw_path.open("w", encoding="utf-8") as raw_stream:
             for checkpoint_path in checkpoint_paths:
                 label = checkpoint_label(checkpoint_path)
-                policy, args = load_policy(checkpoint_path, builder)
+                policy, args = load_policy(checkpoint_path, settings, simulator.router)
                 torch.set_num_threads(args.training_threads)
                 summary, trajectory, ue_frames = run_case(
-                    settings, policy, label, options.episodes, raw_stream,
+                    settings, policy, args.user_info, label, options.episodes, raw_stream,
                 )
                 summaries.append(summary)
                 if (

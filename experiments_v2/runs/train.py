@@ -33,7 +33,7 @@ def initialize_worker(settings, args):
     global worker_state
     torch.set_num_threads(1)
     simulator = Simulator(settings)
-    builder = FeatureBuilder(settings, ERS(simulator.router, settings))
+    builder = FeatureBuilder(settings, ERS(simulator.router, settings), args.user_info)
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(args.train_seed)
         policy = Policy(builder, args)
@@ -88,7 +88,9 @@ def train(settings, args, updates, seed_output, emit, checkpoint):
     numpy_seed, torch_seed = np.random.SeedSequence(args.train_seed).spawn(2)
     rng = np.random.default_rng(numpy_seed)
     generator = torch.Generator().manual_seed(int(torch_seed.generate_state(1, dtype=np.uint64)[0]))
-    builder = FeatureBuilder(settings, ERS(Simulator(settings).router, settings))
+    builder = FeatureBuilder(
+        settings, ERS(Simulator(settings).router, settings), args.user_info,
+    )
     with torch.random.fork_rng(devices=[]):
         torch.set_rng_state(generator.get_state())
         policy = Policy(builder, args)
@@ -221,6 +223,8 @@ def load_args(options):
         args.train_seed = options.seed
     if options.flight_actor is not None:
         args.flight_actor = options.flight_actor
+    if options.user_info is not None:
+        args.user_info = options.user_info
     if options.episodes_per_update is not None:
         args.episodes_per_update = options.episodes_per_update
     if options.rollout_workers is not None:
@@ -240,6 +244,7 @@ def main():
     parser.add_argument("--rollout-workers", type=int)
     parser.add_argument("--seed", type=int)
     parser.add_argument("--flight-actor", choices=("shared", "per_uav", "shared_id"))
+    parser.add_argument("--user-info", choices=("full", "quadrant", "count"))
     parser.add_argument("--resume", type=Path, help="从 checkpoint 接着训练")
     options = parser.parse_args()
     if options.command == "train" and options.name is None:

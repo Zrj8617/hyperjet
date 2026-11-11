@@ -9,6 +9,11 @@ import numpy as np
 TASK_CYCLES = 1.5e8
 BITS = 1e6
 GRID_SIDE = 4
+USER_INFO_DROP_COLUMNS = {
+    "full": (),
+    "quadrant": (23, 24),
+    "count": (23, 24, 25, 26, 27, 28),
+}
 
 
 def get_feature_scales(settings):# 定义归一化尺度 （分母）
@@ -46,13 +51,15 @@ class Features:
 class FeatureBuilder:
     """共享特征定义，训练和评估使用同一入口。"""
 
-    def __init__(self, settings, ers):
+    def __init__(self, settings, ers, user_info):
         self.settings, self.ers = settings, ers
         self.scales = get_feature_scales(settings)
         # 下面这三个都没懂
-        self.observation_dim = 2 + (settings.uav.count - 1) * 5 + 7 + 3 
-        self.state_dim = settings.uav.count * self.observation_dim + 3 + GRID_SIDE ** 2 + 1
+        full_observation_dim = 2 + (settings.uav.count - 1) * 5 + 7 + 3
+        self.observation_dim = full_observation_dim - len(USER_INFO_DROP_COLUMNS[user_info])
+        self.state_dim = settings.uav.count * full_observation_dim + 3 + GRID_SIDE ** 2 + 1
         self.task_dim = 16
+        self.drop_columns = USER_INFO_DROP_COLUMNS[user_info]
 
     def build(self, snapshot):
         """候选和邻居负载均来自本时隙快照，不含分配后的信息。"""
@@ -90,7 +97,7 @@ class FeatureBuilder:
             values.extend((len(relative) / scales.users, *(centroid / scales.associated_position),
                            *proportions, *scaled_loads[owner]))
             observations.append(values)
-        observations = np.asarray(observations, dtype=np.float32)
+        full_observations = np.asarray(observations, dtype=np.float32)
         # 构建ue空间分布
         grid, _, _ = np.histogram2d(
             snapshot.ue_positions[:, 0], snapshot.ue_positions[:, 1],
@@ -98,7 +105,7 @@ class FeatureBuilder:
            bins=GRID_SIDE, range=((0, scales.position), (0, scales.position)),
         )
         # 构建集中式全局状态 state
-        state = np.concatenate((observations.ravel(), ( # 拼接所有uav的局部观测
+        state = np.concatenate((full_observations.ravel(), ( # 拼接所有uav的局部观测
             len(snapshot.new_dags) / scales.dags, # 统计当前时隙新产生的 DAG 数量，并归一化
             (len(snapshot.new_dags) - len(snapshot.candidates)) / scales.dags, # 非候选
             sum(dag.cpu_cycles.sum() for dag in snapshot.new_dags) / scales.global_cycles, # 当前时隙所产生的所有DAG的总计算量/理论上所有UAV的计算能力
@@ -149,6 +156,7 @@ class FeatureBuilder:
                 owners.append(owner) # 保存子任务所属UAV
                 task_features.append(candidates) # 保存子任务在各个候选执行节点上的特征
                 masks.append(mask)
+        observations = np.delete(full_observations, self.drop_columns, axis=1)
         return Features(observations, state,
                         np.asarray(task_features, dtype=np.float32).reshape(-1, count + 1, self.task_dim),
                         np.asarray(masks, dtype=bool).reshape(-1, count + 1),

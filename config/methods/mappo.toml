@@ -32,6 +32,8 @@ layer_N = 1
 gain = 0.01
 # 飞行 actor 参数共享方式：shared、per_uav、shared_id。
 flight_actor = "shared"
+# actor 看到的关联用户信息：full = 人数 + 重心 + 象限（32 维），quadrant = 人数 + 象限（30 维），count = 只有人数（26 维）。
+user_info = "full"
 
 # 每次更新前采样的完整回合数。
 episodes_per_update = 32
