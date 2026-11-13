@@ -53,7 +53,7 @@ def add_baselines(axis, summaries, field):
     """增加四个固定评估基线的水平线。"""
     for name, values in summaries.items():
         axis.axhline(values[field], linestyle=":", linewidth=1.1,
-                     color=BASELINE_COLORS[name], label=name)
+                     color=BASELINE_COLORS.get(values["policy"], "tab:purple"), label=name)
 
 
 def save_evaluation(output, runs, baselines, field, ylabel, filename):
@@ -115,13 +115,17 @@ def save_health(output, runs):
         axis.grid(alpha=0.25)
     for index, (name, rows) in enumerate(runs):
         updates = sorted({row["update"] for kinds in rows.values() for row in kinds["update"]})
-        log_std = np.asarray([[next(row["flight_log_std"] for row in kinds["update"]
-                                          if row["update"] == update)
-                               for update in updates] for kinds in rows.values()])
-        for component, linestyle in ((0, "-"), (1, "--")):
-            per_seed = log_std[:, :, :, component].mean(axis=2)
-            plot_series(axes[0, 2], np.asarray(updates), per_seed.mean(axis=0),
-                        per_seed.std(axis=0), f"{name} dim {component}", f"C{index}", linestyle)
+        if "flight_log_std" in next(iter(rows.values()))["update"][0]:
+            log_std = np.asarray([[next(row["flight_log_std"] for row in kinds["update"]
+                                              if row["update"] == update)
+                                   for update in updates] for kinds in rows.values()])
+            for component, linestyle in ((0, "-"), (1, "--")):
+                per_seed = log_std[:, :, :, component].mean(axis=2)
+                plot_series(axes[0, 2], np.asarray(updates), per_seed.mean(axis=0),
+                            per_seed.std(axis=0), f"{name} dim {component}", f"C{index}", linestyle)
+        else:
+            axes[0, 2].text(0.5, 0.5, "Fixed follow flight\nlog_std: not applicable",
+                            ha="center", va="center", transform=axes[0, 2].transAxes)
         returns = np.asarray([[next(row["episode_return"] for row in kinds["update"]
                                          if row["update"] == update)
                               for update in updates] for kinds in rows.values()])
@@ -146,16 +150,17 @@ def save_health(output, runs):
 
 
 def load_references(paths):
-    """读取单放置基线的平均时延。"""
-    references = []
+    """逐 policy 读取参照，标签注明飞行方式和来源实验。"""
+    references = {}
     for path in paths or []:
         data = json.loads(path.read_text(encoding="utf-8"))
-        values = next(iter(data["policies"].values()))
-        references.append((data["name"], values["average_delay_s"]))
+        for policy, values in data["policies"].items():
+            label = f"{policy}+{data.get('flight', 'random')} ({data['name']})"
+            references[label] = dict(values, policy=policy)
     return references
 
 
-def save_convergence(output, runs, baselines, references):
+def save_convergence(output, runs, baselines):
     """分开绘制训练与评估时延，并汇总末段收敛数字。"""
     figure, axes = plt.subplots(
         2, len(runs), figsize=(5.2 * len(runs), 8), sharey="row", squeeze=False,
@@ -171,9 +176,10 @@ def save_convergence(output, runs, baselines, references):
             axes[0, column].plot(
                 train_updates, train_delays, color=color, linewidth=0.8, alpha=0.3,
             )
-            smooth = moving_average(train_delays, 5)
+            window = min(5, len(train_updates))
+            smooth = moving_average(train_delays, window)
             axes[0, column].plot(
-                train_updates[4:], smooth, color=color, linewidth=2, label=seed,
+                train_updates[window - 1:], smooth, color=color, linewidth=2, label=seed,
             )
 
             evaluation = kinds["evaluation"]
@@ -198,6 +204,22 @@ def save_convergence(output, runs, baselines, references):
                 "slope_s_per_10_updates": slope,
                 "evaluation_delay_s": {str(update): value for update, value in eval_values.items()},
             }
+            segments = []
+            for first in range(1, int(train_updates.max()) + 1, 10):
+                selected = (train_updates >= first) & (train_updates < first + 10)
+                if selected.sum() != 10:
+                    continue
+                values = train_delays[selected]
+                segments.append(dict(start_update=first, end_update=first + 9,
+                                     values_s=values.tolist(), mean_s=float(values.mean()),
+                                     std_s=float(values.std(ddof=0))))
+            convergence[name][seed]["segments"] = segments
+            if len(segments) >= 2:
+                convergence[name][seed].update(
+                    last_two_difference_s=segments[-1]["mean_s"] - segments[-2]["mean_s"],
+                    last_segment_std_s=segments[-1]["std_s"],
+                )
+            print(json.dumps(dict(experiment=name, seed=seed, **convergence[name][seed])))
             print(
                 f"{name}\t{seed}\t{slope:.9f}\t"
                 + "\t".join(f"{value:.9f}" for value in eval_values.values())
@@ -206,14 +228,7 @@ def save_convergence(output, runs, baselines, references):
         axes[0, column].set(title=name, xlabel="Update")
         axes[0, column].grid(alpha=0.25)
         axes[0, column].legend(fontsize=8)
-        axes[1, column].axhline(
-            baselines["heft"]["average_delay_s"], color="0.2", linestyle="--",
-            linewidth=1.1, label="heft+random",
-        )
-        for index, (label, value) in enumerate(references):
-            axes[1, column].axhline(
-                value, color=f"C{index + 3}", linestyle="--", linewidth=1.1, label=label,
-            )
+        add_baselines(axes[1, column], baselines, "average_delay_s")
         axes[1, column].set(xlabel="Update")
         axes[1, column].grid(alpha=0.25)
         axes[1, column].legend(fontsize=7)
@@ -288,10 +303,9 @@ def main():
     if options.run:
         (options.output / "figures").mkdir(exist_ok=True)
         runs = [(path.name, load_seed_rows(path)) for path in options.run]
-        baselines = json.loads(
-            (options.baselines / "summary.json").read_text(encoding="utf-8")
-        )["policies"]
-        references = load_references(options.references)
+        reference_paths = ([options.baselines / "summary.json"] if options.baselines else [])
+        reference_paths += options.references or []
+        baselines = load_references(reference_paths)
         figures.extend([
             save_evaluation(options.output, runs, baselines, "average_delay_s",
                             "Evaluation average delay / s", "evaluation_delay.png"),
@@ -301,7 +315,7 @@ def main():
             save_health(options.output, runs),
         ])
         convergence_path, convergence = save_convergence(
-            options.output, runs, baselines, references,
+            options.output, runs, baselines,
         )
         figures.append(convergence_path)
     if options.segments:
@@ -310,6 +324,7 @@ def main():
     (options.output / "summary.json").write_text(json.dumps({
         "runs": [str(path) for path in options.run] if options.run else [],
         "baselines": str(options.baselines) if options.baselines else None,
+        "references": [str(path) for path in options.references or []],
         "segments": [str(path) for path in options.segments] if options.segments else [],
         "figures": [str(path) for path in figures],
         "convergence": convergence,

@@ -68,6 +68,30 @@ def choose_greedy(snapshot: Snapshot, ers: ERS) -> Placements:
 
 def choose_heft(snapshot: Snapshot, ers: ERS) -> Placements:
     """按 ERS 逐个子任务选择预计完成最早的候选，并更新节点空闲时刻。"""
+    uav_available = np.zeros(len(snapshot.uav_positions))
+    ue_available = np.zeros(len(snapshot.ue_positions))
+    tables = [(uav_available, ue_available)] * len(snapshot.uav_positions)
+    return _choose_heft(snapshot, ers, tables)
+
+
+def choose_heft_uav(snapshot: Snapshot, ers: ERS) -> Placements:
+    """各管理 UAV 独立记账，用邻居管理负载初始化其空闲时刻。"""
+    count = len(snapshot.uav_positions)
+    loads = np.zeros(count)
+    for dag in snapshot.new_dags:
+        if dag.id in snapshot.candidates:
+            loads[snapshot.manager_uav[dag.ue_id]] += dag.cpu_cycles.sum()
+    available = loads / ers.settings.uav.cpu_frequency_hz
+    tables = []
+    for owner in range(count):
+        uav_available = available.copy()
+        uav_available[owner] = 0.0
+        tables.append((uav_available, np.zeros(len(snapshot.ue_positions))))
+    return _choose_heft(snapshot, ers, tables)
+
+
+def _choose_heft(snapshot: Snapshot, ers: ERS, tables) -> Placements:
+    """共用 ERS 决策循环，按 DAG 管理者选取节点空闲时刻表。"""
     ranks = ers.rank_tasks(snapshot)
     order = sort_placements([(key, None) for key in ranks], ranks)
     dags = {dag.id: dag for dag in snapshot.new_dags if dag.id in snapshot.candidates}
@@ -77,13 +101,12 @@ def choose_heft(snapshot: Snapshot, ers: ERS) -> Placements:
         for parent, child in dag.edges:
             predecessors[dag.id, child].append(parent)
             parents.add((dag.id, parent))
-    uav_available = np.zeros(len(snapshot.uav_positions))
-    ue_available = np.zeros(len(snapshot.ue_positions))
     finishes, assignments = {}, {}
     placements = []
     for key, _ in order:
         dag_id, task = key
         dag = dags[dag_id]
+        uav_available, ue_available = tables[snapshot.manager_uav[dag.ue_id]]
         estimates = []
         for node in snapshot.candidates[dag_id]:
             if predecessors[key]:

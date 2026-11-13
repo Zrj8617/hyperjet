@@ -1,4 +1,4 @@
-"""并行采样完整回合，训练只控制飞行的 MLP MAPPO。"""
+"""并行采样完整回合，训练独立飞行或放置的 MLP MAPPO。"""
 
 import argparse
 import json
@@ -19,12 +19,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from environment_v2.settings import load_settings
 from environment_v2.simulator import Simulator
 from experiments_v2.runs.metrics import EpisodeMetrics, summarize
-from methods_v2.baselines.policies import choose_greedy, choose_heft, sample_flight
+from methods_v2.baselines.policies import choose_greedy, choose_heft, choose_heft_uav, sample_flight, follow_users
 from methods_v2.ers import ERS
 from methods_v2.learning.mappo import MAPPO
-from methods_v2.mappo.buffer import FlightRolloutBuffer
+from methods_v2.mappo.buffer import FlightRolloutBuffer, PlacementRolloutBuffer
 from methods_v2.mappo.features import FeatureBuilder
-from methods_v2.mappo.policy import Policy
+from methods_v2.mappo.policy import Policy, checkpoint_args
 from methods_v2.mappo.reward import compute_reward
 
 
@@ -52,7 +52,7 @@ def numpy_state(module):
 
 
 def collect_episode(job):
-    """装载本批参数，用飞行 actor 和固定 HEFT 放置运行完整回合。"""
+    """装载本批参数，用当前 actor 和另一项固定规则运行完整回合。"""
     started = perf_counter()
     seed, episode, actor, critic, deterministic = job
     simulator, builder, policy, args = worker_state
@@ -63,13 +63,18 @@ def collect_episode(job):
         sampling_seed = np.random.SeedSequence([seed, episode]).generate_state(1, dtype=np.uint64)[0]
         generator = torch.Generator().manual_seed(int(sampling_seed))
     snapshot = simulator.reset(seed, episode)
+    flight_rng = np.random.default_rng(np.random.SeedSequence([seed, episode, 101]))
     metrics, samples, rewards, values = EpisodeMetrics(), [], [], []
     policy.actor.eval()
     policy.critic.eval()
     while snapshot is not None:
         features = builder.build(snapshot)
-        flight, sample, value = policy.act(features, generator, deterministic=deterministic)
-        placements = choose_heft(snapshot, builder.ers)
+        action, sample, value = policy.act(features, generator, deterministic=deterministic)
+        if args.flight == "follow":
+            flight, placements = follow_users(snapshot, simulator.settings, flight_rng), action
+        else:
+            flight = action
+            placements = {"heft": choose_heft, "heft_uav": choose_heft_uav}[args.placement](snapshot, builder.ers)
         result, following = simulator.step(flight, placements)
         reward = compute_reward(result, simulator.settings.scheduling.deadline_s, args.expected_arrivals)
         metrics.add(snapshot, result, placements)
@@ -108,7 +113,8 @@ def train(settings, args, updates, seed_output, emit, checkpoint):
     with mp.get_context("spawn").Pool(args.rollout_workers, initializer=initialize_worker,
                                       initargs=(settings, args)) as pool:
         for update in range(first_update, updates + 1):
-            buffer, metrics = FlightRolloutBuffer(args), []
+            buffer_class = FlightRolloutBuffer if args.flight == "actor" else PlacementRolloutBuffer
+            buffer, metrics = buffer_class(args), []
             actor, critic = numpy_state(policy.actor), numpy_state(policy.critic)
             jobs = [(args.train_seed, index, actor, critic, False)
                     for index in range(episode, episode + args.episodes_per_update)]
@@ -121,12 +127,16 @@ def train(settings, args, updates, seed_output, emit, checkpoint):
             episode += args.episodes_per_update
             sampling_s = perf_counter() - started
             updating = perf_counter()
+            task_count = sum(len(sample["owners"]) for samples, _, _ in buffer.episodes
+                             for sample in samples) if args.placement == "actor" else None
             losses = trainer.train(buffer, rng)
             update_s = perf_counter() - updating
             mean, variance = trainer.value_normalizer.running_mean_var()
+            actor_log = ({"flight_log_std": policy.actor.log_std_values().detach().cpu().tolist()}
+                         if args.flight == "actor" else {"placement_tasks": task_count})
             emit(dict(kind="update", update=update, elapsed_s=perf_counter() - started,
                       sampling_s=sampling_s, update_s=update_s,
-                      flight_log_std=policy.actor.log_std_values().detach().cpu().tolist(),
+                      **actor_log,
                       **summarize(metrics), **losses,
                       valuenorm_mean=mean.tolist(), valuenorm_variance=variance.tolist()))
             if update % args.evaluation_interval == 0:
@@ -218,13 +228,19 @@ def load_args(options):
             args = SimpleNamespace(**tomllib.load(stream))
     else:
         checkpoint = torch.load(options.resume, map_location="cpu", weights_only=False)
-        args = SimpleNamespace(**checkpoint["args"])
+        args = checkpoint_args(checkpoint["args"])
     if options.seed is not None:
         args.train_seed = options.seed
     if options.flight_actor is not None:
         args.flight_actor = options.flight_actor
     if options.user_info is not None:
         args.user_info = options.user_info
+    if options.flight is not None:
+        args.flight = options.flight
+    if options.gamma is not None:
+        args.gamma = options.gamma
+    if options.placement is not None:
+        args.placement = options.placement
     if options.episodes_per_update is not None:
         args.episodes_per_update = options.episodes_per_update
     if options.rollout_workers is not None:
@@ -245,6 +261,9 @@ def main():
     parser.add_argument("--seed", type=int)
     parser.add_argument("--flight-actor", choices=("shared", "per_uav", "shared_id"))
     parser.add_argument("--user-info", choices=("full", "quadrant", "count"))
+    parser.add_argument("--flight", choices=("actor", "follow"))
+    parser.add_argument("--gamma", type=float)
+    parser.add_argument("--placement", choices=("actor", "heft", "heft_uav"))
     parser.add_argument("--resume", type=Path, help="从 checkpoint 接着训练")
     options = parser.parse_args()
     if options.command == "train" and options.name is None:
@@ -269,8 +288,9 @@ def main():
         if output.exists():
             shutil.rmtree(output)
     else:
-        name = f"smoke-{args.flight_actor}"
-        output = PROJECT_ROOT / "output/checks/smoke" / args.flight_actor
+        name = (f"s2-gamma{str(args.gamma).replace('0.', '').removesuffix('.0')}"
+                if args.flight == "follow" else args.flight_actor)
+        output = PROJECT_ROOT / "output/checks/smoke" / name
         if output.exists():
             shutil.rmtree(output)
     seed_output = output / f"seed{args.train_seed}"
@@ -287,8 +307,11 @@ def main():
             log.flush()
 
         emit(dict(kind="configuration", name=name, command=options.command,
-                  output=str(output), method=vars(args), ppo_action_fields=["flight"],
-                  rollout_sample_fields=["observations", "state", "flight", "log_probs"],
+                  output=str(output), method=vars(args),
+                  ppo_action_fields=["flight" if args.flight == "actor" else "placements"],
+                  rollout_sample_fields=(["observations", "state", "flight", "log_probs"]
+                      if args.flight == "actor" else ["observations", "state", "task_features",
+                          "available_actions", "owners", "placements", "log_probs"]),
                   environment={key: vars(value) for key, value in settings._asdict().items()}))
         if options.command in ("train", "smoke"):
             train(settings, args, options.updates, seed_output, emit, checkpoint)

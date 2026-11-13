@@ -1,9 +1,10 @@
-"""S1 飞行 actor、预留的放置 actor 与集中式 critic。"""
+"""独立的飞行或放置 actor，与每时隙一个值的集中式 critic。"""
 
 import numpy as np
 import torch
 from torch import nn
 
+from methods_v2.ers import sort_placements
 from methods_v2.learning.distributions import Categorical, DiagGaussian, FixedNormal
 from methods_v2.learning.networks import Critic, MLPBase
 
@@ -54,7 +55,7 @@ class FlightActor(nn.Module):
 
 
 class PlacementActor(nn.Module):
-    """为 S2 保留的独立局部主干和候选打分器。"""
+    """S2 独立局部主干和候选打分器。"""
 
     def __init__(self, observation_dim, task_dim, args):
         super().__init__()
@@ -74,32 +75,62 @@ class PlacementActor(nn.Module):
         return self.placement(scores, available_actions)
 
 
+def checkpoint_args(values):
+    """在一个入口补齐旧 S1 checkpoint 已知缺失的配置。"""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(**(dict(flight="actor", placement="heft", user_info="full") | values))
+
+
 class Policy:
-    """S1 只创建飞行 actor；critic 每个时隙计算一个团队价值。"""
+    """只创建当前学习的 actor；critic 每个时隙计算一个团队价值。"""
 
     def __init__(self, builder, args):
-        self.actor = FlightActor(builder.observation_dim, builder.settings.uav.count, args)
+        self.flight = args.flight
+        if (args.flight, args.placement) not in (
+            ("actor", "heft"), ("actor", "heft_uav"), ("follow", "actor"),
+        ):
+            raise ValueError("本轮只支持 S1 actor+heft/heft_uav 和 S2 follow+actor")
+        self.actor = (FlightActor(builder.observation_dim, builder.settings.uav.count, args)
+                      if self.flight == "actor" else
+                      PlacementActor(builder.observation_dim, builder.task_dim, args))
         self.critic = Critic(builder.state_dim, args)
 
     @torch.no_grad()
     def act(self, features, generator, deterministic=False):
-        """返回环境飞行动作、flight-only PPO 样本和团队价值。"""
-        sample = {
-            "observations": features.observations,
-            "state": features.state,
-        }
+        """返回当前 actor 的环境动作、未排序 PPO 样本和团队价值。"""
+        sample = {"observations": features.observations, "state": features.state}
         observations = torch.from_numpy(features.observations)
-        distribution = self.actor(observations)
-        flight = distribution.mode() if deterministic else distribution.sample(generator)
-        sample.update(
-            flight=flight.numpy(),
-            log_probs=distribution.log_probs(flight).numpy(),
-        )
         value = self.critic(torch.from_numpy(features.state).unsqueeze(0)).item()
-        return np.clip(sample["flight"], -1, 1).astype(np.float64), sample, value
+        if self.flight == "actor":
+            distribution = self.actor(observations)
+            flight = distribution.mode() if deterministic else distribution.sample(generator)
+            sample.update(flight=flight.numpy(), log_probs=distribution.log_probs(flight).numpy())
+            return np.clip(sample["flight"], -1, 1).astype(np.float64), sample, value
+
+        sample.update(task_features=features.task_features,
+                      available_actions=features.available_actions, owners=features.owners)
+        distribution = self.actor(observations, torch.from_numpy(features.task_features),
+                                  torch.from_numpy(features.owners),
+                                  torch.from_numpy(features.available_actions))
+        if distribution is None:
+            sample.update(placements=np.empty((0, 1), dtype=np.int64),
+                          log_probs=np.empty((0, 1), dtype=np.float32))
+        else:
+            actions = distribution.mode() if deterministic else distribution.sample(generator)
+            sample.update(placements=actions.numpy(), log_probs=distribution.log_probs(actions).numpy())
+        placements = [(key, None if action == 0 else int(action - 1))
+                      for key, action in zip(features.keys, sample["placements"].ravel())]
+        return sort_placements(placements, features.ranks), sample, value
 
     def evaluate_actions(self, batch):
-        """只用飞行动作重算 PPO 概率、熵和团队价值。"""
-        distribution = self.actor(batch["observations"])
-        log_probs = distribution.log_probs(batch["flight"])
-        return self.critic(batch["states"]), log_probs, distribution.entropy().mean()
+        """飞行按 UAV、放置按子任务重算概率；价值始终按时隙。"""
+        if self.flight == "actor":
+            distribution = self.actor(batch["observations"])
+            actions = batch["flight"]
+        else:
+            distribution = self.actor(batch["observations"], batch["task_features"],
+                                      batch["owners"], batch["available_actions"])
+            actions = batch["placements"]
+        return (self.critic(batch["states"]), distribution.log_probs(actions),
+                distribution.entropy().mean())

@@ -34,6 +34,10 @@ gain = 0.01
 flight_actor = "shared"
 # actor 看到的关联用户信息：full = 人数 + 重心 + 象限（32 维），quadrant = 人数 + 象限（30 维），count = 只有人数（26 维）。
 user_info = "full"
+# 飞行方式：actor（学习）或 follow（固定规则）。
+flight = "actor"
+# 放置方式：actor（学习）、heft（全局版）或 heft_uav（各自版）。
+placement = "heft"
 
 # 每次更新前采样的完整回合数。
 episodes_per_update = 32

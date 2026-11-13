@@ -17,7 +17,7 @@ from environment_v2.settings import Settings, load_settings
 from environment_v2.simulator import Simulator
 from experiments_v2.runs.metrics import EpisodeMetrics, FlightStats, summarize
 from methods_v2.baselines.policies import (
-    choose_greedy, choose_heft, choose_local, choose_random,
+    choose_greedy, choose_heft, choose_heft_uav, choose_local, choose_random,
     fly_to, follow_users, plan_grid, plan_static, sample_flight,
 )
 from methods_v2.ers import ERS
@@ -25,6 +25,7 @@ from methods_v2.ers import ERS
 
 NAMES = ("random", "local", "greedy", "heft")
 POLICIES = dict(zip(NAMES, (choose_random, choose_local, choose_greedy, choose_heft)))
+POLICIES["heft_uav"] = choose_heft_uav
 FLIGHTS = ("random", "hover", "follow", "grid", "static")
 METRICS = (
     "on_time_rate", "average_delay_s", "covered_share",
@@ -93,7 +94,7 @@ def main() -> int:
     parser.add_argument("--name", required=True)
     parser.add_argument("--config", type=Path, default=PROJECT_ROOT / "config")
     parser.add_argument("--pair", type=int, nargs=2, action="append", metavar=("SEED", "EPISODE"))
-    parser.add_argument("--policies", nargs="+", choices=NAMES, default=NAMES)
+    parser.add_argument("--policies", nargs="+", choices=POLICIES, default=NAMES)
     parser.add_argument("--flight", choices=FLIGHTS, default="random")
     options = parser.parse_args()
     pairs = options.pair if options.pair is not None else [(1, episode) for episode in range(10)]

@@ -1,4 +1,4 @@
-"""重放多个 S1 checkpoint，诊断飞行方向、轨迹与覆盖变化。"""
+"""重放 S1/S2 checkpoint，记录飞行、放置与固定评估指标。"""
 
 import argparse
 from dataclasses import replace
@@ -19,16 +19,17 @@ from environment_v2.simulator import Simulator
 from experiments_v2.runs.metrics import (
     EpisodeMetrics, FlightStats, direction_cosines, summarize,
 )
-from methods_v2.baselines.policies import choose_heft
+from methods_v2.baselines.policies import choose_heft, choose_heft_uav, follow_users
 from methods_v2.ers import ERS
 from methods_v2.mappo.features import FeatureBuilder
-from methods_v2.mappo.policy import Policy
+from methods_v2.mappo.policy import Policy, checkpoint_args
+from methods_v2.mappo.reward import compute_reward
 
 
 def load_policy(checkpoint_path, settings, router):
     """按 checkpoint 保存的有效参数建立飞行策略。"""
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    args = SimpleNamespace(**checkpoint["args"])
+    args = checkpoint_args(checkpoint["args"])
     builder = FeatureBuilder(settings, ERS(router, settings), args.user_info)
     policy = Policy(builder, args)
     policy.actor.load_state_dict(checkpoint["actor"])
@@ -57,10 +58,11 @@ def pair_distances(positions):
 
 
 def summarize_case(
-    label, log_std, slot_rows, metrics, final_positions, hotspots, flight_segments,
+    label, log_std, slot_rows, metrics, final_positions, hotspots, flight_segments, flight_mode,
 ):
     """汇总一个 checkpoint 的固定评估回合。"""
-    means = np.asarray([[uav["flight_mean"] for uav in row["uavs"]] for row in slot_rows])
+    action_field = "flight_mean" if flight_mode == "actor" else "environment_action"
+    means = np.asarray([[uav[action_field] for uav in row["uavs"]] for row in slot_rows])
     cosine_by_uav = []
     all_cosines = []
     for uav in range(means.shape[1]):
@@ -80,9 +82,10 @@ def summarize_case(
         "checkpoint": label,
         "hotspots": hotspots,
         "flight_segments": flight_segments,
-        "log_std_by_uav": log_std.tolist(),
-        "std_by_uav": np.exp(log_std).tolist(),
-        "mean_flight_by_uav": means.mean(axis=0).tolist(),
+        "flight": flight_mode,
+        **({"log_std_by_uav": log_std.tolist(), "std_by_uav": np.exp(log_std).tolist(),
+            "mean_flight_by_uav": means.mean(axis=0).tolist()} if flight_mode == "actor" else
+           {"mean_follow_action_by_uav": means.mean(axis=0).tolist()}),
         "flight_user_cosine_by_uav": cosine_by_uav,
         "flight_user_cosine": float(np.mean(all_cosines)),
         "out_of_bounds_uav_slot_share": float(np.mean([
@@ -109,15 +112,16 @@ def summarize_case(
     }
 
 
-def run_case(settings, policy, user_info, label, episodes, raw_stream):
+def run_case(settings, policy, args, label, episodes, raw_stream):
     """确定性重放评估集，并写全部 episode 的逐时隙记录。"""
     simulator = Simulator(settings)
-    builder = FeatureBuilder(settings, ERS(simulator.router, settings), user_info)
+    builder = FeatureBuilder(settings, ERS(simulator.router, settings), args.user_info)
     metrics, flight_metrics, slot_rows = [], [], []
     trajectory, ue_frames = [], {}
     hotspots = final_positions = None
     for episode in episodes:
         snapshot = simulator.reset(1, episode)
+        flight_rng = np.random.default_rng(np.random.SeedSequence([1, episode, 101]))
         episode_metrics = EpisodeMetrics()
         episode_flight = FlightStats(
             settings, simulator.region.centers, simulator.region.radius_m,
@@ -134,10 +138,14 @@ def run_case(settings, policy, user_info, label, episodes, raw_stream):
                 if snapshot.slot in (0, settings.scheduling.arrival_slots - 1):
                     ue_frames[snapshot.slot] = snapshot.ue_positions[:, :2].copy()
             features = builder.build(snapshot)
-            means = flight_mean(policy, features)
+            action, sample, _ = policy.act(features, None, deterministic=True)
+            if args.flight == "follow":
+                flight, placements = follow_users(snapshot, settings, flight_rng), action
+                means = flight
+            else:
+                flight, means = action, sample["flight"]
+                placements = {"heft": choose_heft, "heft_uav": choose_heft_uav}[args.placement](snapshot, builder.ers)
             cosines = direction_cosines(snapshot, means)
-            flight, sample, _ = policy.act(features, None, deterministic=True)
-            placements = choose_heft(snapshot, builder.ers)
             candidate = (
                 positions[:, :2]
                 + flight * settings.uav.max_speed * settings.uav.flight_duration_s
@@ -167,6 +175,7 @@ def run_case(settings, policy, user_info, label, episodes, raw_stream):
             result, following = simulator.step(flight, placements)
             positions_after = simulator.uav.positions.copy()
             episode_metrics.add(before, result, placements)
+            episode_metrics.reward += compute_reward(result, settings.scheduling.deadline_s, args.expected_arrivals)
             episode_flight.add(before, flight, positions_after)
             distances = np.linalg.norm(
                 before.ue_positions[:, None, :2] - simulator.region.centers[None, :, :], axis=2,
@@ -192,9 +201,10 @@ def run_case(settings, policy, user_info, label, episodes, raw_stream):
                         settings.region.side_length_m - positions[uav, 0],
                         settings.region.side_length_m - positions[uav, 1],
                     ))),
-                    "flight_mean": means[uav].tolist(),
+                    **({"flight_mean": means[uav].tolist(),
+                        "sampled_preclip_action": sample["flight"][uav].tolist()}
+                       if args.flight == "actor" else {}),
                     "flight_user_cosine": cosines[uav],
-                    "sampled_preclip_action": sample["flight"][uav].tolist(),
                     "environment_action": flight[uav].tolist(),
                     "out_of_bounds": bool(out_of_bounds[uav]),
                     "associated_covered_ues": associated[uav],
@@ -210,8 +220,8 @@ def run_case(settings, policy, user_info, label, episodes, raw_stream):
             trajectory.append(simulator.uav.positions[:, :2].copy())
             final_positions = simulator.uav.positions.copy()
     summary = summarize_case(
-        label, policy.actor.log_std_values().detach().numpy(), slot_rows,
-        metrics, final_positions, hotspots, FlightStats.combine(flight_metrics),
+        label, policy.actor.log_std_values().detach().numpy() if args.flight == "actor" else None,
+        slot_rows, metrics, final_positions, hotspots, FlightStats.combine(flight_metrics), args.flight,
     )
     return summary, np.asarray(trajectory), ue_frames
 
@@ -251,10 +261,10 @@ def draw_trajectory(output, label, trajectory, ue_frames, hotspots, side_length)
 
 def print_table(rows):
     """打印每架 UAV 的平均飞行均值与朝向用户的余弦。"""
-    print("| checkpoint | mean flight UAV0..4 | cosine UAV0..4 | overall cosine | covered share | delay/s | on-time |")
+    print("| checkpoint | mean actor/follow action UAV0..4 | cosine UAV0..4 | overall cosine | covered share | delay/s | on-time |")
     print("|---|---|---|---:|---:|---:|---:|")
     for row in rows:
-        means = "; ".join(f"({x:.4f},{y:.4f})" for x, y in row["mean_flight_by_uav"])
+        means = "; ".join(f"({x:.4f},{y:.4f})" for x, y in row.get("mean_flight_by_uav", row.get("mean_follow_action_by_uav")))
         cosines = ", ".join("n/a" if value is None else f"{value:.4f}"
                             for value in row["flight_user_cosine_by_uav"])
         episode = row["episode"]
@@ -290,9 +300,10 @@ def main():
             for checkpoint_path in checkpoint_paths:
                 label = checkpoint_label(checkpoint_path)
                 policy, args = load_policy(checkpoint_path, settings, simulator.router)
-                torch.set_num_threads(args.training_threads)
+                # 训练内的确定性评估在采样 worker 中固定使用一个线程；重放保持相同。
+                torch.set_num_threads(1)
                 summary, trajectory, ue_frames = run_case(
-                    settings, policy, args.user_info, label, options.episodes, raw_stream,
+                    settings, policy, args, label, options.episodes, raw_stream,
                 )
                 summaries.append(summary)
                 if (
